@@ -1,0 +1,442 @@
+{
+  "cases": [
+    {
+      "action": "read",
+      "body": {
+        "protocol": 1,
+        "roomId": "00000000-0000-4000-8000-000000000001",
+        "afterSequence": 0
+      },
+      "response": {
+        "roomId": "00000000-0000-4000-8000-000000000001",
+        "roomRevision": 1,
+        "roomMode": "ACTIVE",
+        "events": [
+          {
+            "eventId": "00000000-0000-4000-8000-000000000010",
+            "roomId": "00000000-0000-4000-8000-000000000001",
+            "sequence": 1,
+            "createdAt": "2026-10-01T00:00:00.000Z",
+            "kind": "SPEECH",
+            "senderKind": "HUMAN",
+            "senderAlias": "소유자",
+            "publicText": "공동 발언",
+            "cycleId": null,
+            "requestId": null,
+            "questionId": null,
+            "replyTo": null,
+            "roomRevision": 1,
+            "bindingEpoch": null,
+            "agentId": null,
+            "requestKind": null,
+            "runState": null,
+            "terminal": null,
+            "roomMode": null,
+            "adoption": "NONE"
+          }
+        ],
+        "runs": [
+          {
+            "requestId": "00000000-0000-4000-8000-000000000006",
+            "cycleId": "00000000-0000-4000-8000-000000000004",
+            "agentId": "00000000-0000-4000-8000-000000000002",
+            "ownerAlias": "소유자",
+            "sessionAlias": "공개 세션",
+            "requestKind": "ORIGIN",
+            "roomRevision": 1,
+            "bindingEpoch": 1,
+            "state": "QUEUED",
+            "questionId": null,
+            "createdAt": "2026-10-01T00:00:00.000Z",
+            "updatedAt": "2026-10-01T00:00:00.000Z"
+          }
+        ],
+        "bindings": [
+          {
+            "agentId": "00000000-0000-4000-8000-000000000002",
+            "ownerAlias": "소유자",
+            "sessionAlias": "공개 세션",
+            "repositoryAlias": "공개 저장소",
+            "runtime": "codex",
+            "bindingEpoch": 1,
+            "owned": true,
+            "reportedReady": true,
+            "validUntil": "2026-10-01T00:00:00.000Z"
+          }
+        ],
+        "cycle": {
+          "cycleId": "00000000-0000-4000-8000-000000000004",
+          "originAgentId": "00000000-0000-4000-8000-000000000002",
+          "peerAgentId": "00000000-0000-4000-8000-000000000003",
+          "generation": 1,
+          "roomRevision": 1,
+          "originEpoch": 1,
+          "peerEpoch": 1,
+          "state": "ACTIVE",
+          "runsReserved": 1,
+          "peerRoundsReserved": 0,
+          "deadline": "2026-10-01T00:00:00.000Z"
+        },
+        "nextCursor": 1,
+        "highWaterSequence": 1,
+        "hasMore": false
+      }
+    },
+    {
+      "action": "speak",
+      "body": {
+        "protocol": 1,
+        "roomId": "00000000-0000-4000-8000-000000000001",
+        "operationId": "00000000-0000-4000-8000-000000000008",
+        "publicText": "공동 발언"
+      },
+      "response": {
+        "eventId": "00000000-0000-4000-8000-000000000010",
+        "sequence": 1
+      }
+    },
+    {
+      "action": "start",
+      "body": {
+        "protocol": 1,
+        "roomId": "00000000-0000-4000-8000-000000000001",
+        "operationId": "00000000-0000-4000-8000-000000000008",
+        "originAgentId": "00000000-0000-4000-8000-000000000002",
+        "peerAgentId": "00000000-0000-4000-8000-000000000003",
+        "originEpoch": 1,
+        "peerEpoch": 1,
+        "expectedRoomRevision": 1,
+        "publicText": "공유 방향",
+        "confirmed": true
+      },
+      "response": {
+        "cycleId": "00000000-0000-4000-8000-000000000004",
+        "requestId": "00000000-0000-4000-8000-000000000006",
+        "accepted": true,
+        "roomRevision": 1,
+        "cycleState": "ACTIVE"
+      }
+    },
+    {
+      "action": "interrupt",
+      "body": {
+        "protocol": 1,
+        "roomId": "00000000-0000-4000-8000-000000000001",
+        "operationId": "00000000-0000-4000-8000-000000000008",
+        "agentId": "00000000-0000-4000-8000-000000000002",
+        "bindingEpoch": 1,
+        "expectedRoomRevision": 1
+      },
+      "response": {
+        "controlId": null,
+        "requestId": null,
+        "state": "NO_ACTIVE_RUN"
+      }
+    },
+    {
+      "action": "pause",
+      "body": {
+        "protocol": 1,
+        "roomId": "00000000-0000-4000-8000-000000000001",
+        "operationId": "00000000-0000-4000-8000-000000000008",
+        "expectedRoomRevision": 1
+      },
+      "response": {
+        "roomId": "00000000-0000-4000-8000-000000000001",
+        "roomRevision": 2,
+        "roomMode": "PAUSED"
+      }
+    },
+    {
+      "action": "resume",
+      "body": {
+        "protocol": 1,
+        "roomId": "00000000-0000-4000-8000-000000000001",
+        "operationId": "00000000-0000-4000-8000-000000000008",
+        "mode": "room",
+        "expectedRoomRevision": 1
+      },
+      "response": {
+        "roomId": "00000000-0000-4000-8000-000000000001",
+        "roomRevision": 2,
+        "roomMode": "ACTIVE",
+        "cycleId": null,
+        "requestId": null,
+        "accepted": true,
+        "cycleState": null
+      }
+    },
+    {
+      "action": "ready",
+      "body": {
+        "protocol": 1,
+        "operationId": "00000000-0000-4000-8000-000000000008",
+        "agentId": "00000000-0000-4000-8000-000000000002",
+        "bindingEpoch": 1,
+        "reportedReady": true
+      },
+      "response": {
+        "agentId": "00000000-0000-4000-8000-000000000002",
+        "bindingEpoch": 1,
+        "reportedReady": true,
+        "validUntil": "2026-10-01T00:00:00.000Z",
+        "verification": "reported"
+      }
+    },
+    {
+      "action": "poll",
+      "body": {
+        "protocol": 1,
+        "agentId": "00000000-0000-4000-8000-000000000002",
+        "bindingEpoch": 1
+      },
+      "response": {
+        "roomId": "00000000-0000-4000-8000-000000000001",
+        "roomRevision": 1,
+        "roomMode": "ACTIVE",
+        "agentId": "00000000-0000-4000-8000-000000000002",
+        "bindingEpoch": 1,
+        "reportedReady": true,
+        "validUntil": "2026-10-01T00:00:00.000Z",
+        "queuedRequest": {
+          "requestId": "00000000-0000-4000-8000-000000000006",
+          "cycleId": "00000000-0000-4000-8000-000000000004",
+          "agentId": "00000000-0000-4000-8000-000000000002",
+          "bindingEpoch": 1,
+          "roomRevision": 1,
+          "requestKind": "ORIGIN",
+          "questionId": null,
+          "publicText": "공유 방향",
+          "replyText": null,
+          "deadline": "2026-10-01T00:00:00.000Z"
+        },
+        "attempt": {
+          "requestId": "00000000-0000-4000-8000-000000000006",
+          "attemptId": "00000000-0000-4000-8000-000000000007",
+          "agentId": "00000000-0000-4000-8000-000000000002",
+          "bindingEpoch": 1,
+          "fence": 1,
+          "state": "LEASED",
+          "leaseExpiresAt": "2026-10-01T00:00:00.000Z",
+          "startIntentAt": null,
+          "payload": {
+            "requestId": "00000000-0000-4000-8000-000000000006",
+            "cycleId": "00000000-0000-4000-8000-000000000004",
+            "agentId": "00000000-0000-4000-8000-000000000002",
+            "bindingEpoch": 1,
+            "roomRevision": 1,
+            "requestKind": "ORIGIN",
+            "questionId": null,
+            "publicText": "공유 방향",
+            "replyText": null,
+            "deadline": "2026-10-01T00:00:00.000Z"
+          }
+        },
+        "control": {
+          "controlId": "00000000-0000-4000-8000-000000000009",
+          "requestId": "00000000-0000-4000-8000-000000000006",
+          "attemptId": "00000000-0000-4000-8000-000000000007",
+          "fence": 1,
+          "state": "REQUESTED"
+        }
+      }
+    },
+    {
+      "action": "claim",
+      "body": {
+        "protocol": 1,
+        "operationId": "00000000-0000-4000-8000-000000000008",
+        "agentId": "00000000-0000-4000-8000-000000000002",
+        "bindingEpoch": 1,
+        "requestId": "00000000-0000-4000-8000-000000000006"
+      },
+      "response": {
+        "requestId": "00000000-0000-4000-8000-000000000006",
+        "attemptId": "00000000-0000-4000-8000-000000000007",
+        "agentId": "00000000-0000-4000-8000-000000000002",
+        "bindingEpoch": 1,
+        "fence": 1,
+        "state": "LEASED",
+        "leaseExpiresAt": "2026-10-01T00:00:00.000Z",
+        "startIntentAt": null,
+        "payload": {
+          "requestId": "00000000-0000-4000-8000-000000000006",
+          "cycleId": "00000000-0000-4000-8000-000000000004",
+          "agentId": "00000000-0000-4000-8000-000000000002",
+          "bindingEpoch": 1,
+          "roomRevision": 1,
+          "requestKind": "ORIGIN",
+          "questionId": null,
+          "publicText": "공유 방향",
+          "replyText": null,
+          "deadline": "2026-10-01T00:00:00.000Z"
+        }
+      }
+    },
+    {
+      "action": "start-intent",
+      "body": {
+        "protocol": 1,
+        "operationId": "00000000-0000-4000-8000-000000000008",
+        "agentId": "00000000-0000-4000-8000-000000000002",
+        "bindingEpoch": 1,
+        "requestId": "00000000-0000-4000-8000-000000000006",
+        "attemptId": "00000000-0000-4000-8000-000000000007",
+        "fence": 1
+      },
+      "response": {
+        "requestId": "00000000-0000-4000-8000-000000000006",
+        "attemptId": "00000000-0000-4000-8000-000000000007",
+        "agentId": "00000000-0000-4000-8000-000000000002",
+        "bindingEpoch": 1,
+        "fence": 1,
+        "state": "EXECUTING",
+        "leaseExpiresAt": "2026-10-01T00:00:00.000Z",
+        "startIntentAt": "2026-10-01T00:00:00.000Z",
+        "payload": {
+          "requestId": "00000000-0000-4000-8000-000000000006",
+          "cycleId": "00000000-0000-4000-8000-000000000004",
+          "agentId": "00000000-0000-4000-8000-000000000002",
+          "bindingEpoch": 1,
+          "roomRevision": 1,
+          "requestKind": "ORIGIN",
+          "questionId": null,
+          "publicText": "공유 방향",
+          "replyText": null,
+          "deadline": "2026-10-01T00:00:00.000Z"
+        }
+      }
+    },
+    {
+      "action": "lease",
+      "body": {
+        "protocol": 1,
+        "operationId": "00000000-0000-4000-8000-000000000008",
+        "agentId": "00000000-0000-4000-8000-000000000002",
+        "bindingEpoch": 1,
+        "requestId": "00000000-0000-4000-8000-000000000006",
+        "attemptId": "00000000-0000-4000-8000-000000000007",
+        "fence": 1
+      },
+      "response": {
+        "requestId": "00000000-0000-4000-8000-000000000006",
+        "attemptId": "00000000-0000-4000-8000-000000000007",
+        "agentId": "00000000-0000-4000-8000-000000000002",
+        "bindingEpoch": 1,
+        "fence": 1,
+        "state": "LEASED",
+        "leaseExpiresAt": "2026-10-01T00:00:00.000Z",
+        "startIntentAt": null,
+        "payload": {
+          "requestId": "00000000-0000-4000-8000-000000000006",
+          "cycleId": "00000000-0000-4000-8000-000000000004",
+          "agentId": "00000000-0000-4000-8000-000000000002",
+          "bindingEpoch": 1,
+          "roomRevision": 1,
+          "requestKind": "ORIGIN",
+          "questionId": null,
+          "publicText": "공유 방향",
+          "replyText": null,
+          "deadline": "2026-10-01T00:00:00.000Z"
+        }
+      }
+    },
+    {
+      "action": "question",
+      "body": {
+        "protocol": 1,
+        "operationId": "00000000-0000-4000-8000-000000000008",
+        "agentId": "00000000-0000-4000-8000-000000000002",
+        "bindingEpoch": 1,
+        "requestId": "00000000-0000-4000-8000-000000000006",
+        "attemptId": "00000000-0000-4000-8000-000000000007",
+        "fence": 1,
+        "publicText": "공개 질문",
+        "confirmed": true
+      },
+      "response": {
+        "cycleId": "00000000-0000-4000-8000-000000000004",
+        "questionId": "00000000-0000-4000-8000-000000000005",
+        "peerRequestId": "00000000-0000-4000-8000-000000000011",
+        "accepted": true,
+        "cycleState": "ACTIVE"
+      }
+    },
+    {
+      "action": "complete",
+      "body": {
+        "protocol": 1,
+        "operationId": "00000000-0000-4000-8000-000000000008",
+        "agentId": "00000000-0000-4000-8000-000000000002",
+        "bindingEpoch": 1,
+        "requestId": "00000000-0000-4000-8000-000000000006",
+        "attemptId": "00000000-0000-4000-8000-000000000007",
+        "fence": 1,
+        "terminal": "COMPLETED",
+        "publicText": "공개 답변"
+      },
+      "response": {
+        "requestId": "00000000-0000-4000-8000-000000000006",
+        "attemptId": "00000000-0000-4000-8000-000000000007",
+        "terminal": "COMPLETED",
+        "adoption": "PENDING",
+        "continuationRequestId": null
+      }
+    },
+    {
+      "action": "interrupt-ack",
+      "body": {
+        "protocol": 1,
+        "operationId": "00000000-0000-4000-8000-000000000008",
+        "agentId": "00000000-0000-4000-8000-000000000002",
+        "bindingEpoch": 1,
+        "requestId": "00000000-0000-4000-8000-000000000006",
+        "attemptId": "00000000-0000-4000-8000-000000000007",
+        "fence": 1,
+        "controlId": "00000000-0000-4000-8000-000000000009"
+      },
+      "response": {
+        "controlId": "00000000-0000-4000-8000-000000000009",
+        "requestId": "00000000-0000-4000-8000-000000000006",
+        "attemptId": "00000000-0000-4000-8000-000000000007",
+        "fence": 1,
+        "state": "ACKNOWLEDGED"
+      }
+    },
+    {
+      "action": "observe",
+      "body": {
+        "protocol": 1,
+        "operationId": "00000000-0000-4000-8000-000000000008",
+        "agentId": "00000000-0000-4000-8000-000000000002",
+        "bindingEpoch": 1,
+        "requestId": "00000000-0000-4000-8000-000000000006",
+        "attemptId": "00000000-0000-4000-8000-000000000007",
+        "fence": 1,
+        "terminal": "INTERRUPTED",
+        "publicText": ""
+      },
+      "response": {
+        "requestId": "00000000-0000-4000-8000-000000000006",
+        "attemptId": "00000000-0000-4000-8000-000000000007",
+        "terminal": "INTERRUPTED",
+        "adoption": "HISTORICAL",
+        "continuationRequestId": null
+      }
+    }
+  ],
+  "cycleResume": {
+    "protocol": 1,
+    "roomId": "00000000-0000-4000-8000-000000000001",
+    "operationId": "00000000-0000-4000-8000-000000000008",
+    "mode": "cycle",
+    "cycleId": "00000000-0000-4000-8000-000000000004",
+    "originAgentId": "00000000-0000-4000-8000-000000000002",
+    "peerAgentId": "00000000-0000-4000-8000-000000000003",
+    "originEpoch": 1,
+    "peerEpoch": 1,
+    "expectedRoomRevision": 1,
+    "publicText": "공유 방향",
+    "confirmed": true
+  }
+}

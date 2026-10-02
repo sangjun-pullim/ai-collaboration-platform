@@ -1,0 +1,28 @@
+{
+  "compilerOptions": {
+    "target": "ES2022",
+    "lib": [
+      "ES2022",
+      "DOM"
+    ],
+    "module": "NodeNext",
+    "moduleResolution": "NodeNext",
+    "strict": true,
+    "skipLibCheck": true,
+    "types": [
+      "node"
+    ],
+    "noEmit": true
+  },
+  "include": [
+    "tests/e2e/**/*.ts",
+    "playwright.config.ts",
+    "playwright.auth.config.ts",
+    "playwright.device.config.ts",
+    "playwright.workflow.config.ts"
+  ],
+  "exclude": [
+    "experiments",
+    "node_modules"
+  ]
+}

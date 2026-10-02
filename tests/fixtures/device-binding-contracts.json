@@ -1,0 +1,280 @@
+{
+  "version": 1,
+  "cases": [
+    {
+      "kind": "alias",
+      "input": "조사 저장소",
+      "valid": true
+    },
+    {
+      "kind": "alias",
+      "input": "repo alpha",
+      "valid": true
+    },
+    {
+      "kind": "alias",
+      "input": "device-01",
+      "valid": true
+    },
+    {
+      "kind": "alias",
+      "input": "../repo",
+      "valid": false
+    },
+    {
+      "kind": "alias",
+      "input": "/private/synthetic",
+      "valid": false
+    },
+    {
+      "kind": "alias",
+      "input": "https://synthetic.invalid",
+      "valid": false
+    },
+    {
+      "kind": "alias",
+      "input": "00000000-0000-4000-8000-000000000001",
+      "valid": false
+    },
+    {
+      "kind": "alias",
+      "input": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "valid": false
+    },
+    {
+      "kind": "alias",
+      "input": "abCDefghijklmnopqrstuvwxyz",
+      "valid": false
+    },
+    {
+      "kind": "alias",
+      "input": " repo",
+      "valid": false
+    },
+    {
+      "kind": "alias",
+      "input": "repo..name",
+      "valid": false
+    },
+    {
+      "kind": "alias",
+      "input": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "valid": false
+    },
+    {
+      "kind": "branch",
+      "input": "main",
+      "valid": true
+    },
+    {
+      "kind": "branch",
+      "input": "feature/device",
+      "valid": true
+    },
+    {
+      "kind": "branch",
+      "input": "unknown",
+      "valid": true
+    },
+    {
+      "kind": "branch",
+      "input": "/absolute",
+      "valid": false
+    },
+    {
+      "kind": "branch",
+      "input": "../main",
+      "valid": false
+    },
+    {
+      "kind": "branch",
+      "input": "refs//main",
+      "valid": false
+    },
+    {
+      "kind": "branch",
+      "input": "https://synthetic.invalid",
+      "valid": false
+    },
+    {
+      "kind": "branch",
+      "input": "main.lock",
+      "valid": false
+    },
+    {
+      "kind": "branch",
+      "input": "branch.",
+      "valid": false
+    },
+    {
+      "kind": "body",
+      "action": "workspace",
+      "input": {
+        "operationId": "00000000-0000-4000-8000-000000000001",
+        "repositoryAlias": "조사 저장소",
+        "branch": "feature/device",
+        "commit": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "dirty": "unknown"
+      },
+      "valid": true
+    },
+    {
+      "kind": "body",
+      "action": "workspace",
+      "input": {
+        "operationId": "00000000-0000-4000-8000-000000000001",
+        "repositoryAlias": "조사 저장소",
+        "branch": "feature/device",
+        "commit": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "dirty": "unknown",
+        "root": "/private/synthetic"
+      },
+      "valid": false
+    },
+    {
+      "kind": "body",
+      "action": "agent",
+      "input": {
+        "operationId": "00000000-0000-4000-8000-000000000001",
+        "workspaceId": "00000000-0000-4000-8000-000000000001",
+        "sessionAlias": "세션",
+        "runtime": "codex"
+      },
+      "valid": true
+    },
+    {
+      "kind": "body",
+      "action": "begin",
+      "input": {
+        "codeHash": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "proofHash": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+        "deviceAlias": "기기",
+        "protocol": 1
+      },
+      "valid": true
+    },
+    {
+      "kind": "body",
+      "action": "begin",
+      "input": {
+        "codeHash": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "proofHash": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+        "deviceAlias": "기기",
+        "protocol": 2
+      },
+      "valid": false
+    },
+    {
+      "kind": "body",
+      "action": "begin",
+      "input": {
+        "codeHash": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "proofHash": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+        "deviceAlias": "기기",
+        "protocol": "1"
+      },
+      "valid": false
+    },
+    {
+      "kind": "body",
+      "action": "heartbeat",
+      "input": {
+        "ownerUserId": "00000000-0000-4000-8000-000000000001"
+      },
+      "valid": false
+    },
+    {
+      "kind": "body",
+      "action": "approve",
+      "input": {
+        "code": "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+        "organizationId": "00000000-0000-4000-8000-000000000001",
+        "roomId": "00000000-0000-4000-8000-000000000001",
+        "confirmed": true
+      },
+      "valid": true
+    },
+    {
+      "kind": "body",
+      "action": "rotate",
+      "input": {
+        "operationId": "00000000-0000-4000-8000-000000000001",
+        "credentialHash": "zzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzz"
+      },
+      "valid": false
+    },
+    {
+      "kind": "response",
+      "action": "bindings",
+      "input": {
+        "protocol": 1,
+        "bindings": [
+          {
+            "workspaceId": "00000000-0000-4000-8000-000000000001",
+            "agentId": "00000000-0000-4000-8000-000000000001",
+            "deviceAlias": "개인 기기",
+            "ownerAlias": "소유자",
+            "repositoryAlias": "조사 저장소",
+            "branch": "main",
+            "commit": "unknown",
+            "dirty": "unknown",
+            "sessionAlias": "조사 세션",
+            "runtime": "codex",
+            "bindingEpoch": 1,
+            "state": "registered",
+            "verification": "unverified",
+            "lastSeenAt": null
+          }
+        ]
+      },
+      "valid": true
+    },
+    {
+      "kind": "response",
+      "action": "bindings",
+      "input": {
+        "protocol": 1,
+        "bindings": [
+          {
+            "workspaceId": "00000000-0000-4000-8000-000000000001",
+            "agentId": "00000000-0000-4000-8000-000000000001",
+            "deviceAlias": "개인 기기",
+            "ownerAlias": "소유자",
+            "repositoryAlias": "조사 저장소",
+            "branch": "main",
+            "commit": "unknown",
+            "dirty": "unknown",
+            "sessionAlias": "조사 세션",
+            "runtime": "codex",
+            "bindingEpoch": 1,
+            "state": "registered",
+            "verification": "unverified",
+            "lastSeenAt": null,
+            "nativeSessionId": "synthetic-native"
+          }
+        ]
+      },
+      "valid": false
+    },
+    {
+      "kind": "response",
+      "action": "workspace",
+      "input": {
+        "protocol": 1,
+        "workspaceId": "00000000-0000-4000-8000-000000000001",
+        "privateRoot": "/private/synthetic"
+      },
+      "valid": false
+    },
+    {
+      "kind": "response",
+      "action": "exchange",
+      "input": {
+        "protocol": 2,
+        "deviceId": "00000000-0000-4000-8000-000000000001",
+        "expiresAt": "2026-10-01T00:00:00Z"
+      },
+      "valid": false
+    }
+  ]
+}

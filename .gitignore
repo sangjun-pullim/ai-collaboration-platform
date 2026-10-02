@@ -1,0 +1,15 @@
+node_modules/
+.next/
+.test-build/
+test-results/
+playwright-report/
+*.tsbuildinfo
+
+.integration-build/
+.env*
+!.env.example
+
+packages/local-connector/dist/
+
+.workflow-artifacts/
+.DS_Store

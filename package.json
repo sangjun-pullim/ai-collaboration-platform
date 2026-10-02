@@ -1,0 +1,44 @@
+{
+  "name": "ai-collaboration-platform",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "engines": {
+    "node": ">=24 <25"
+  },
+  "dependencies": {
+    "@supabase/ssr": "0.12.7",
+    "@supabase/supabase-js": "2.117.2",
+    "next": "16.3.7",
+    "react": "19.3.0",
+    "react-dom": "19.3.0",
+    "server-only": "0.0.1"
+  },
+  "devDependencies": {
+    "@playwright/test": "1.63.0",
+    "@types/node": "24.7.0",
+    "@types/pg": "8.23.1",
+    "@types/react": "^19",
+    "@types/react-dom": "^19",
+    "eslint": "^9",
+    "eslint-config-next": "16.3.7",
+    "pg": "8.23.1",
+    "typescript": "5.9.3"
+  },
+  "scripts": {
+    "dev": "next dev",
+    "build": "next build --webpack",
+    "start": "next start",
+    "lint": "eslint src tests scripts/access-web-server.mjs next.config.ts playwright.config.ts playwright.auth.config.ts playwright.device.config.ts playwright.workflow.config.ts packages/local-connector/src packages/local-connector/tests eslint.config.mjs",
+    "typecheck": "next typegen && tsc --noEmit -p tsconfig.json && tsc --noEmit -p tsconfig.test.json && tsc --noEmit -p tsconfig.e2e.json && tsc --noEmit -p tsconfig.integration.json",
+    "test": "tsc -p tsconfig.test.json && node --test .test-build/tests/unit/*.test.js",
+    "test:e2e": "playwright test",
+    "test:integration": "tsc -p tsconfig.integration.json && node --test --test-concurrency=1 .integration-build/tests/integration/web-auth-room-access.test.js",
+    "test:e2e:auth": "tsc -p tsconfig.integration.json && node .integration-build/tests/helpers/local-access-stack.js --e2e-runner",
+    "test:integration:devices": "npm --prefix packages/local-connector run build && tsc -p tsconfig.integration.json && node --test --test-concurrency=1 .integration-build/tests/integration/device-workspace-binding.test.js",
+    "test:e2e:devices": "npm --prefix packages/local-connector run build && tsc -p tsconfig.integration.json && node .integration-build/tests/helpers/local-access-stack.js --device-e2e-runner",
+    "test:integration:workflow": "npm --prefix packages/local-connector run build && tsc -p tsconfig.integration.json && node --test --test-concurrency=1 .integration-build/tests/integration/investigation-coordinator.test.js",
+    "test:e2e:workflow": "npm --prefix packages/local-connector run build && tsc -p tsconfig.integration.json && node .integration-build/tests/helpers/workflow-fixture.js --workflow-e2e-runner",
+    "test:integration:runtime": "npm --prefix packages/local-connector run build && tsc -p tsconfig.integration.json && node --test --test-concurrency=1 .integration-build/tests/integration/owned-codex-workflow.test.js"
+  }
+}

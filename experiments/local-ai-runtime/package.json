@@ -1,0 +1,23 @@
+{
+  "name": "local-ai-runtime-spike",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "engines": {
+    "node": ">=24 <25"
+  },
+  "scripts": {
+    "typecheck": "tsc --noEmit",
+    "build": "tsc",
+    "test": "npm run build && node --test dist/test/*.test.js",
+    "probe": "npm run build && node dist/src/cli.js probe",
+    "run-experiment": "npm run build && node dist/src/cli.js run",
+    "resume-experiment": "npm run build && node dist/src/cli.js resume",
+    "tools-run": "npm run build && node dist/src/tools-cli.js run",
+    "tools-resume": "npm run build && node dist/src/tools-cli.js resume"
+  },
+  "devDependencies": {
+    "@types/node": "24.7.0",
+    "typescript": "5.9.3"
+  }
+}

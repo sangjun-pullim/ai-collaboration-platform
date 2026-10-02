@@ -1,0 +1,30 @@
+{
+  "compilerOptions": {
+    "target": "ES2022",
+    "lib": [
+      "ES2022",
+      "DOM"
+    ],
+    "module": "NodeNext",
+    "moduleResolution": "NodeNext",
+    "strict": true,
+    "skipLibCheck": true,
+    "types": [
+      "node"
+    ],
+    "rootDir": ".",
+    "outDir": ".integration-build",
+    "rewriteRelativeImportExtensions": true
+  },
+  "include": [
+    "tests/integration/**/*.ts",
+    "tests/helpers/local-access-stack.ts",
+    "tests/helpers/device-binding-fixture.ts",
+    "tests/helpers/workflow-fixture.ts",
+    "tests/helpers/owned-runtime-fixture.ts"
+  ],
+  "exclude": [
+    "experiments",
+    "node_modules"
+  ]
+}

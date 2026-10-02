@@ -1,0 +1,30 @@
+{
+  "compilerOptions": {
+    "target": "ES2022",
+    "lib": [
+      "ES2022"
+    ],
+    "module": "NodeNext",
+    "moduleResolution": "NodeNext",
+    "strict": true,
+    "skipLibCheck": true,
+    "types": [
+      "node"
+    ],
+    "rootDir": ".",
+    "outDir": ".test-build",
+    "rewriteRelativeImportExtensions": true
+  },
+  "include": [
+    "src/features/investigation-prototype/prototype-state.ts",
+    "src/features/investigation-prototype/mock-scenario.ts",
+    "tests/unit/**/*.ts",
+    "src/features/investigation-coordinator/contracts.ts",
+    "src/features/investigation-coordinator/history-state.ts",
+    "packages/local-connector/src/workflow-contracts.ts"
+  ],
+  "exclude": [
+    "experiments",
+    "node_modules"
+  ]
+}
