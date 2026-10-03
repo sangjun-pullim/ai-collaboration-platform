@@ -19,9 +19,12 @@ import { execFile } from "node:child_process";
 import { promisify } from "node:util";
 import { fileURLToPath } from "node:url";
 import { randomUUID, randomBytes } from "node:crypto";
+import { runInNewContext } from "node:vm";
+import ts from "typescript";
 import { StateStore, type ConnectorState } from "../src/state-store.ts";
 import { CentralClient, serviceOrigin } from "../src/central-client.ts";
 import { Connector, hash, main } from "../src/cli.ts";
+import { parseCliOptions } from "../src/cli/parse-options.ts";
 import {
   canonicalRoot,
   workspaceBody,
@@ -33,6 +36,95 @@ import { runnerFixture } from "./runner-fixture.ts";
 import { CodexAdapter } from "../src/codex-adapter.ts";
 import { RuntimeStore } from "../src/runtime-store.ts";
 import { RuntimeError, digest, stableJson } from "../src/runtime-contracts.ts";
+
+test("should guard the CLI environment before parsing options", async (t) => {
+  const source = await readFile(new URL("../../src/cli.ts", import.meta.url), "utf8");
+  const file = ts.createSourceFile("cli.ts", source, ts.ScriptTarget.ES2022, true);
+  const declaration = file.statements.find(
+    (statement): statement is ts.FunctionDeclaration =>
+      ts.isFunctionDeclaration(statement) && statement.name?.text === "main",
+  );
+  assert.ok(declaration?.body);
+  const code = ts.transpileModule(declaration.getText(file).replace(/^export\s+/, ""), {
+    compilerOptions: { target: ts.ScriptTarget.ES2022, module: ts.ModuleKind.None },
+  }).outputText;
+  const actualEnvironment = { platform: process.platform, node: process.versions.node };
+  for (const { platform, node, expected } of [
+    { platform: "linux", node: "24.21.0", expected: "UNAVAILABLE" },
+    { platform: "win32", node: "24.21.0", expected: "UNAVAILABLE" },
+    { platform: "linux", node: "23.0.0", expected: "UNAVAILABLE" },
+    { platform: "darwin", node: "22.0.0", expected: "UNAVAILABLE" },
+    { platform: "darwin", node: "23.0.0", expected: "UNAVAILABLE" },
+    { platform: "darwin", node: "25.0.0", expected: "UNAVAILABLE" },
+    { platform: "darwin", node: "24.0.0", expected: "INVALID_BODY" },
+    { platform: "darwin", node: "24.21.0", expected: "INVALID_BODY" },
+  ]) {
+    await t.test(`${platform} Node ${node}`, async () => {
+      // Only these globals are available: reaching store/client/runner is a test failure.
+      const isolatedMain = runInNewContext(`${code}\nmain`, {
+        process: { platform, versions: { node } },
+        ConnectionError,
+        parseCliOptions,
+      }) as typeof main;
+      const input = ["status", "--unknown", "synthetic-value"];
+      Object.freeze(input);
+      await assert.rejects(
+        () => isolatedMain(input),
+        (error: unknown) => {
+          assert.ok(error instanceof ConnectionError);
+          assert.equal(error.constructor, ConnectionError);
+          assert.equal(error.code, expected);
+          assert.equal(error.message, expected);
+          return true;
+        },
+      );
+      assert.deepEqual(input, ["status", "--unknown", "synthetic-value"]);
+    });
+  }
+  assert.deepEqual({ platform: process.platform, node: process.versions.node }, actualEnvironment);
+});
+
+test("should retain CLI error output for malformed options", async (t) => {
+  const execute = promisify(execFile);
+  const cli = fileURLToPath(new URL("../src/cli.js", import.meta.url));
+  for (const [name, options] of [
+    ["unknown key", ["--unknown", "synthetic-value"]],
+    ["invalid prefix", ["-server", "synthetic-value"]],
+    ["duplicate", ["--profile", "synthetic-one", "--profile", "synthetic-two"]],
+    ["missing value", ["--server"]],
+    ["empty value", ["--server", ""]],
+  ] as const) {
+    await t.test(name, async () => {
+      await assert.rejects(
+        () =>
+          execute(process.execPath, [cli, "status", ...options], {
+            env: { PATH: process.env.PATH, LANG: "C", TMPDIR: process.env.TMPDIR },
+            timeout: 10000,
+            maxBuffer: 4096,
+          }),
+        (error: unknown) => {
+          assert.ok(error instanceof Error);
+          const result = error as Error & {
+            code: number;
+            signal: string | null;
+            stdout: string;
+            stderr: string;
+          };
+          assert.equal(result.code, 1);
+          assert.equal(result.signal, null);
+          assert.equal(result.stdout, "");
+          assert.equal(result.stderr, '{"state":"disconnected","error":"INVALID_BODY"}\n');
+          assert.deepEqual(JSON.parse(result.stderr), {
+            state: "disconnected",
+            error: "INVALID_BODY",
+          });
+          return true;
+        },
+      );
+    });
+  }
+});
+
 async function temporary(run: (root: string) => Promise<void>) {
   const base = await realpath(tmpdir());
   const root = await mkdtemp(join(base, "device-unit-"));

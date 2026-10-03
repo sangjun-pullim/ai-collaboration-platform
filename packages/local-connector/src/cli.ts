@@ -1,6 +1,4 @@
 #!/usr/bin/env node
-import { constants } from "node:fs";
-import { lstat, open, unlink } from "node:fs/promises";
 import { createHash, randomBytes, randomUUID } from "node:crypto";
 import { homedir } from "node:os";
 import { join, resolve } from "node:path";
@@ -16,12 +14,14 @@ import {
 } from "./contracts.ts";
 import { canonicalRoot, gitMetadata, workspaceBody, agentBody } from "./workspace-registration.ts";
 import { RuntimeStore } from "./runtime-store.ts";
-import { RuntimeError, stableJson } from "./runtime-contracts.ts";
+import { RuntimeError } from "./runtime-contracts.ts";
 import { RuntimeFilePolicy } from "./runtime-file-policy.ts";
 import { WorkflowRunner } from "./workflow-runner.ts";
 import { WorkflowClient } from "./workflow-client.ts";
 import { CodexAdapter } from "./codex-adapter.ts";
 import type { PublicBinding } from "./contracts.ts";
+import { parseCliOptions } from "./cli/parse-options.ts";
+import { revokeLocalProfile } from "./cli/remove-local-profile.ts";
 export const hash = (value: string) => createHash("sha256").update(value).digest("hex");
 export class Connector {
   constructor(
@@ -393,39 +393,7 @@ export async function main(args: string[]) {
   if (process.platform !== "darwin" || Number(process.versions.node.split(".")[0]) !== 24)
     throw new ConnectionError("UNAVAILABLE");
   const [command, ...rest] = args;
-  const options: Record<string, string> = {};
-  const allowed = new Set([
-    "server",
-    "state-dir",
-    "profile",
-    "device-alias",
-    "confirm-scope",
-    "root",
-    "native-session",
-    "repository-alias",
-    "session-alias",
-    "agent-id",
-    "confirm-public",
-    "model",
-    "effort",
-    "runtime-default",
-    "files",
-    "handoff",
-    "confirm-new-context",
-    "confirm-auto-questions",
-    "once",
-  ]);
-  for (let i = 0; i < rest.length; i += 2) {
-    const key = rest[i]?.slice(2);
-    if (
-      !rest[i]?.startsWith("--") ||
-      !allowed.has(key) ||
-      !rest[i + 1] ||
-      Object.hasOwn(options, key)
-    )
-      throw new ConnectionError("INVALID_BODY");
-    options[key] = rest[i + 1];
-  }
+  const options = parseCliOptions(rest);
   const required = (key: string) => {
     if (!options[key]) throw new ConnectionError("INVALID_BODY");
     return options[key];
@@ -517,88 +485,7 @@ export async function main(args: string[]) {
       else throw new ConnectionError("INVALID_BODY");
     }
   } else if (command === "revoke-local") {
-    const snapshot = await store.read(),
-      storedAgents = await RuntimeStore.agents(store.dir, store.profile);
-    const agents = [
-      ...new Set([
-        ...storedAgents,
-        ...(snapshot?.mappings.flatMap((mapping) => (mapping.agentId ? [mapping.agentId] : [])) ??
-          []),
-      ]),
-    ].sort();
-    const protections: { check(): void; validate(): Promise<void>; remove(): Promise<void> }[] = [];
-    const check = () => {
-      for (const proof of protections) proof.check();
-    };
-    const remove = async (index: number): Promise<unknown> => {
-      if (index < agents.length)
-        return runner(agents[index]).guardLocalRemoval(async (proof) => {
-          protections.push(proof);
-          try {
-            return await remove(index + 1);
-          } finally {
-            protections.pop();
-          }
-        });
-      return store.transaction(async () => {
-        check();
-        const current = await store.read();
-        check();
-        if (stableJson(current) !== stableJson(snapshot)) throw new RuntimeError("AUTHORITY_LOST");
-        const currentAgents = await RuntimeStore.agents(store.dir, store.profile);
-        check();
-        if (currentAgents.some((agent) => !agents.includes(agent)))
-          throw new RuntimeError("RUNTIME_BUSY");
-        for (const proof of protections) {
-          await proof.validate();
-          check();
-        }
-        for (const proof of protections) {
-          check();
-          await proof.remove();
-          check();
-        }
-        if (protections.length && snapshot) {
-          const before = await lstat(store.file);
-          check();
-          const final = await store.read();
-          check();
-          if (stableJson(final) !== stableJson(snapshot)) throw new RuntimeError("AUTHORITY_LOST");
-          const current = await lstat(store.file);
-          check();
-          if (
-            !current.isFile() ||
-            current.isSymbolicLink() ||
-            current.uid !== process.getuid?.() ||
-            (current.mode & 0o777) !== 0o600 ||
-            current.nlink !== 1 ||
-            current.ino !== before.ino ||
-            current.dev !== before.dev ||
-            current.size !== before.size ||
-            current.mtimeMs !== before.mtimeMs ||
-            current.ctimeMs !== before.ctimeMs
-          )
-            throw new RuntimeError("UNSAFE_STORAGE");
-          check();
-          await unlink(store.file);
-          check();
-          const directory = await open(store.dir, constants.O_RDONLY | constants.O_NOFOLLOW);
-          try {
-            check();
-            await directory.sync();
-            check();
-          } finally {
-            await directory.close();
-          }
-        } else {
-          check();
-          await store.remove();
-          check();
-        }
-        return { state: "removed", scope: "local profile" };
-      }, check);
-    };
-    result = await remove(0);
+    result = await revokeLocalProfile(store, runner);
   } else if (command === "replace") {
     const agentId = required("agent-id");
     result = await runner(agentId).guardMutation(() =>
