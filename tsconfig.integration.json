@@ -21,7 +21,8 @@
     "tests/helpers/local-access-stack.ts",
     "tests/helpers/device-binding-fixture.ts",
     "tests/helpers/workflow-fixture.ts",
-    "tests/helpers/owned-runtime-fixture.ts"
+    "tests/helpers/owned-runtime-fixture.ts",
+    "tests/helpers/human-direct-upgrade-fixture.ts"
   ],
   "exclude": [
     "experiments",

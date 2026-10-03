@@ -49,11 +49,46 @@ async function call(action: HumanAction, body: Body, signal: AbortSignal) {
   }
 }
 
-type Props = { roomId: string; role: "owner" | "participant" | "observer" };
-export function InvestigationView(props: Props) {
-  return <RoomInvestigation key={props.roomId} {...props} />;
+type DirectIntent = { action: "ask" | "cancel"; body: Body };
+type Props = { userId: string; roomId: string; role: "owner" | "participant" | "observer" };
+
+function directIntentKey(userId: string, roomId: string) {
+  return `human-direct-question:${userId}:${roomId}`;
 }
-function RoomInvestigation({ roomId, role }: Props) {
+
+function restoreDirectIntent(storage: Storage, userId: string, roomId: string): DirectIntent | null {
+  const key = directIntentKey(userId, roomId);
+  try {
+    // A legacy intent has no authenticated actor; never adopt it into a new namespace.
+    storage.removeItem(`human-direct-question:${roomId}`);
+    const saved = storage.getItem(key);
+    if (!saved) return null;
+    const value = JSON.parse(saved);
+    if (!value || typeof value !== "object" || Array.isArray(value) || Object.keys(value).length !== 2 ||
+      (value.action !== "ask" && value.action !== "cancel")) throw new WorkflowError("INVALID_BODY");
+    const body = validateBody(value.action, value.body);
+    if (body.roomId !== roomId || body.expectedUserId !== userId) throw new WorkflowError("FORBIDDEN");
+    return { action: value.action, body };
+  } catch {
+    try { storage.removeItem(key); } catch { /* Unavailable storage cannot authorize restoration. */ }
+    return null;
+  }
+}
+
+function mutationBody(action: HumanAction, fields: Body, userId: string, roomId: string, retryBody?: Body) {
+  const direct = action === "ask" || action === "cancel";
+  const body = validateBody(action, retryBody ?? {
+    protocol: 1, roomId, operationId: crypto.randomUUID(), ...fields,
+    ...(direct ? { expectedUserId: userId } : {}),
+  });
+  if (direct && (body.expectedUserId !== userId || body.roomId !== roomId)) throw new WorkflowError("FORBIDDEN");
+  return body;
+}
+
+export function InvestigationView(props: Props) {
+  return <RoomInvestigation key={`${props.userId}:${props.roomId}`} {...props} />;
+}
+function RoomInvestigation({ userId, roomId, role }: Props) {
   const [history, setHistory] = useState(() => emptyHistory(roomId));
   const historyRef = useRef(history);
   const [pollError, setPollError] = useState<string | null>(null);
@@ -62,6 +97,8 @@ function RoomInvestigation({ roomId, role }: Props) {
   const [busy, setBusy] = useState(false);
   const [originId, setOriginId] = useState("");
   const [peerId, setPeerId] = useState("");
+  const [targetPin, setTargetPin] = useState<{ agentId: string; epoch: number } | null>(null);
+  const [pendingDirect, setPendingDirect] = useState<DirectIntent | null>(null);
   const [tick, setTick] = useState(0);
   const [observedAt, setObservedAt] = useState(0);
   const errorRef = useRef<HTMLParagraphElement>(null);
@@ -69,12 +106,18 @@ function RoomInvestigation({ roomId, role }: Props) {
   const mutationAbort = useRef<AbortController | null>(null);
   const mutationPending = useRef(false);
   const mounted = useRef(false);
+  const pendingKey = directIntentKey(userId, roomId);
   const error = actionError ?? pollError;
 
   useEffect(() => {
     mounted.current = true;
+    // Restore only this authenticated actor's exact public intent.
+    try {
+      const intent = restoreDirectIntent(sessionStorage, userId, roomId);
+      if (intent) queueMicrotask(() => { if (mounted.current) setPendingDirect(intent); });
+    } catch { /* Access to sessionStorage itself may be unavailable; fail closed. */ }
     return () => { mounted.current = false; mutationAbort.current?.abort(); };
-  }, []);
+  }, [userId, roomId]);
   useEffect(() => {
     if (permissionDenied || mutationPending.current) return;
     let stopped = false;
@@ -122,26 +165,49 @@ function RoomInvestigation({ roomId, role }: Props) {
   const origin = bindings.find(binding => binding.agentId === originId);
   const peer = bindings.find(binding => binding.agentId === peerId);
   const cycle = snapshot?.cycle;
+  const pairedCycle = cycle && !("mode" in cycle) ? cycle : null;
+  const directCycle = cycle && "mode" in cycle ? cycle : null;
   const writable = role !== "observer" && !permissionDenied;
-  const cycleOwned = !!cycle && bindings.some(binding => binding.agentId === cycle.originAgentId && binding.owned);
-  const blocked = history.runs.some(run => ["LEASED", "RUNNING", "UNKNOWN"].includes(run.state));
+  const cycleOwned = !!pairedCycle && bindings.some(binding => binding.agentId === pairedCycle.originAgentId && binding.owned);
+  const blocked = history.runs.some(run => ["QUEUED", "LEASED", "RUNNING", "UNKNOWN"].includes(run.state));
   const ready = (binding: PublicBinding | undefined) => !!binding?.reportedReady &&
     !!binding.validUntil && Date.parse(binding.validUntil) > observedAt;
+  const availableTargets = bindings.filter(binding => !binding.owned && ready(binding));
+  const target = targetPin ? availableTargets.find(binding => binding.agentId === targetPin.agentId && binding.bindingEpoch === targetPin.epoch) :
+    availableTargets.length === 1 ? availableTargets[0] : undefined;
+  const directRun = directCycle ? snapshot?.runs.find(run => run.cycleId === directCycle.cycleId) : undefined;
 
-  async function mutate(action: HumanAction, fields: Body) {
-    if (!snapshot || !writable || mutationPending.current) return false;
+  async function mutate(action: HumanAction, fields: Body, retryBody?: Body) {
+    if (!snapshot || !writable || mutationPending.current || pendingDirect && !retryBody) return false;
     mutationPending.current = true;
     pollAbort.current?.abort();
     const controller = new AbortController();
     mutationAbort.current = controller;
     setBusy(true);
     setActionError(null);
+    let directIntent = false;
+    const clearIntent = () => {
+      try { sessionStorage.removeItem(pendingKey); } catch { throw new WorkflowError("UNAVAILABLE"); }
+      setPendingDirect(null);
+    };
     try {
-      await call(action, { protocol: 1, roomId, operationId: crypto.randomUUID(), ...fields }, controller.signal);
-      return mounted.current && !controller.signal.aborted;
+      const body = mutationBody(action, fields, userId, roomId, retryBody);
+      if (action === "ask" || action === "cancel") {
+        const intent = { action, body };
+        sessionStorage.setItem(pendingKey, JSON.stringify(intent));
+        setPendingDirect(intent);
+        directIntent = true;
+      }
+      await call(action, body, controller.signal);
+      if (!mounted.current || controller.signal.aborted) return false;
+      if (directIntent) clearIntent();
+      return true;
     } catch (failure) {
       if (!mounted.current || controller.signal.aborted) return false;
       const code = failure instanceof WorkflowError ? failure.code : "UNAVAILABLE";
+      if (directIntent && code !== "UNAVAILABLE") {
+        try { clearIntent(); } catch { /* Retain the exact intent if storage removal fails. */ }
+      }
       setActionError(code === "CONFLICT" ? "상태가 바뀌었습니다. 기록을 갱신한 뒤 다시 시도해 주세요." :
         "요청을 완료할 수 없습니다. 접근 권한과 연결 보고를 확인해 주세요.");
       if (denied(code)) {
@@ -171,6 +237,15 @@ function RoomInvestigation({ roomId, role }: Props) {
       confirmed: true, ...(resume && cycle ? { mode: "cycle", cycleId: cycle.cycleId } : {}),
     })) form.reset();
   }
+  async function ask(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    if (!target || !snapshot) return;
+    const form = event.currentTarget;
+    if (await mutate("ask", {
+      targetAgentId: target.agentId, targetEpoch: target.bindingEpoch,
+      expectedRoomRevision: snapshot.roomRevision, publicText: String(new FormData(form).get("humanQuestion")), confirmed: true,
+    })) form.reset();
+  }
   function bindingOption(binding: PublicBinding) {
     return <option value={binding.agentId} key={binding.agentId}>{binding.ownerAlias} · {binding.sessionAlias}</option>;
   }
@@ -189,6 +264,37 @@ function RoomInvestigation({ roomId, role }: Props) {
       {event.adoption !== "NONE" && <small>{labels[event.adoption]}</small>}
     </li>)}</ol>
     {writable && <>
+      <form aria-label="상대 AI에 직접 질문" onSubmit={ask}>
+        <h3>상대 AI에 직접 질문</h3>
+        <p>내 AI 연결 없이 질문합니다. 선택한 상대만 답하며 자동 후속 조사는 시작하지 않습니다.</p>
+        <label>직접 질문 대상<select aria-label="직접 질문 대상" value={targetPin?.agentId ?? target?.agentId ?? ""} onChange={event => {
+          const selected = availableTargets.find(binding => binding.agentId === event.target.value);
+          setTargetPin(selected ? { agentId: selected.agentId, epoch: selected.bindingEpoch } : null);
+        }}>
+          <option value="">대상을 선택하세요</option>
+          {targetPin && !target && <option value={targetPin.agentId}>기존 대상 변경 또는 준비 보고 만료 · 다시 선택하세요</option>}
+          {availableTargets.map(binding => <option value={binding.agentId} key={binding.agentId}>
+            {binding.ownerAlias} · {binding.runtime} · {binding.repositoryAlias} · {binding.sessionAlias}
+          </option>)}
+        </select></label>
+        {target && <p>{target.ownerAlias} · {target.runtime} · {target.repositoryAlias} · {target.sessionAlias} · 준비 보고 · 미검증</p>}
+        {!availableTargets.length && <p>준비 보고가 유효한 상대가 없습니다. 상대가 연결 상태를 확인해야 합니다.</p>}
+        {availableTargets.length > 1 && !targetPin && <p>여러 대상 중 질문받을 상대를 명시적으로 선택하세요.</p>}
+        <label>상대에게 보낼 질문<textarea name="humanQuestion" required maxLength={4000} style={{ display: "block", maxWidth: "100%" }} /></label>
+        <label><input type="checkbox" required /> 이 질문을 선택한 상대에게 공유합니다</label>
+        <button className="button" disabled={busy || !!pendingDirect || !target || snapshot?.roomMode !== "ACTIVE" || cycle?.state === "ACTIVE" || blocked}>상대 AI에 질문 보내기</button>
+      </form>
+      {pendingDirect && <p role="status">전송 결과 미확정 · 새 질문으로 재전송하지 않습니다.
+        <button className="button" disabled={busy || !snapshot} onClick={() => mutate(pendingDirect.action, {}, pendingDirect.body)}>같은 요청 확인</button>
+      </p>}
+      {directCycle && <div aria-label="직접 질문 상태">
+        <p>대상 답변: {labels[directRun?.state ?? directCycle.state]}</p>
+        {Date.parse(directCycle.deadline) <= observedAt && <p>직접 질문 기한이 지났습니다. 늦은 답변은 현재 결과로 채택하지 않습니다.</p>}
+        {!ready(bindings.find(binding => binding.agentId === directCycle.targetAgentId && binding.bindingEpoch === directCycle.targetEpoch)) && <p>대상 준비 보고 만료 또는 연결 변경 · 실제 종결을 기다립니다.</p>}
+        {directCycle.canInterrupt && directRun && <button className="button" disabled={busy || !!pendingDirect} onClick={() => mutate("cancel", {
+          requestId: directRun.requestId, expectedRoomRevision: snapshot!.roomRevision,
+        })}>이 직접 질문 중단 요청</button>}
+      </div>}
       <form onSubmit={speak}><label>공동 발언<textarea name="speech" required maxLength={4000} style={{ display: "block", maxWidth: "100%" }} /></label>
         <button className="button" disabled={busy || !snapshot}>공동 발언 저장</button></form>
       <p>조사 시작에는 서로 다른 참가자의 현재 준비 보고 두 개와 공유 확인이 필요합니다.</p>
@@ -203,10 +309,10 @@ function RoomInvestigation({ roomId, role }: Props) {
         <button className="button" disabled={busy || !snapshot} onClick={() => mutate("interrupt", { agentId: binding.agentId, bindingEpoch: binding.bindingEpoch, expectedRoomRevision: snapshot!.roomRevision })}>내 {binding.sessionAlias} 중단 요청</button></p>)}
       <button className="button" disabled={busy || !snapshot || snapshot.roomMode !== "ACTIVE"} onClick={() => mutate("pause", { expectedRoomRevision: snapshot!.roomRevision })}>방 일시정지 요청</button>
       <button className="button" disabled={busy || !snapshot || snapshot.roomMode === "ACTIVE" || blocked} onClick={() => mutate("resume", { mode: "room", expectedRoomRevision: snapshot!.roomRevision })}>방 발언·조사 접수 재개</button>
-      {cycleOwned && cycle?.state === "HUMAN_INPUT_REQUIRED" && cycle.runsReserved < 11 && cycle.peerRoundsReserved < 5 && Date.parse(cycle.deadline) > observedAt &&
+      {cycleOwned && pairedCycle?.state === "HUMAN_INPUT_REQUIRED" && pairedCycle.runsReserved < 11 && pairedCycle.peerRoundsReserved < 5 && Date.parse(pairedCycle.deadline) > observedAt &&
         <form onSubmit={event => start(event, true)}><label>재개할 공유 조사 방향<textarea name="direction" required maxLength={4000} style={{ display: "block", maxWidth: "100%" }} /></label>
           <label><input type="checkbox" required /> 현재 두 binding에 공유합니다</label>
-          <button className="button" disabled={busy || blocked || originId !== cycle.originAgentId || peerId !== cycle.peerAgentId || !ready(origin) || !ready(peer)}>기존 조사 명시적 재개</button>
+          <button className="button" disabled={busy || blocked || originId !== pairedCycle.originAgentId || peerId !== pairedCycle.peerAgentId || !ready(origin) || !ready(peer)}>기존 조사 명시적 재개</button>
           <p>위에서 원래 두 binding을 선택하세요. 남은 실행 예약과 기한을 유지합니다.</p></form>}
     </>}
   </section>;

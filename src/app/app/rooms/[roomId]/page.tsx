@@ -16,5 +16,5 @@ export default async function RoomPage({ params }: { params: Promise<{ roomId: s
     if (error instanceof AccessError && error.code === "UNAUTHENTICATED") redirect("/login");
     if (error instanceof AccessError && error.code === "NOT_FOUND") notFound();
   }
-  return data ? <RoomAccessView investigation={<InvestigationView key={`${data.userId}:${data.room.id}`} roomId={data.room.id} role={data.role} />} {...data} bindings={bindingUnavailable ? <p role="alert">기기 등록 정보를 불러올 수 없습니다.</p> : <RoomBindings bindings={bindings} />} /> : <main><p>{messages.UNAVAILABLE}</p></main>;
+  return data ? <RoomAccessView investigation={<InvestigationView key={`${data.userId}:${data.room.id}`} userId={data.userId} roomId={data.room.id} role={data.role} />} {...data} bindings={bindingUnavailable ? <p role="alert">기기 등록 정보를 불러올 수 없습니다.</p> : <RoomBindings bindings={bindings} />} /> : <main><p>{messages.UNAVAILABLE}</p></main>;
 }
