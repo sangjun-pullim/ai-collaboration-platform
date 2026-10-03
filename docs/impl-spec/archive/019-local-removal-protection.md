@@ -1,5 +1,5 @@
 ---
-status: active
+status: done
 date: 2026-10-03
 risk-surface: permission
 ---
@@ -9,9 +9,9 @@ risk-surface: permission
 
 ## Context
 
-`WorkflowRunner.guardLocalRemoval`에 모인 소유 정보 검증·파일 삭제를 내부 모듈로 분리한다. 실행기의 잠금과 종료 상태는 기존 클래스가 계속 소유한다. [아키텍처](../ARCHITECTURE.md)의 공개 실행·제거 계약을 유지하며, 큰 파일 정리를 실제 공급자·두 PC 검증 완료로 표현하지 않는다.
+`WorkflowRunner.guardLocalRemoval`에 모인 소유 정보 검증·파일 삭제를 내부 모듈로 분리한다. 실행기의 잠금과 종료 상태는 기존 클래스가 계속 소유한다. [아키텍처](../../ARCHITECTURE.md)의 공개 실행·제거 계약을 유지하며, 큰 파일 정리를 실제 공급자·두 PC 검증 완료로 표현하지 않는다.
 
-사용자가 계획·구현·검증까지 자율 진행하도록 승인한 범위다. 실제 Claude 추가 입력은 [009](009-claude-code-runtime-compatibility.md)의 별도 상한 확인에 계속 의존한다. 이번 명세는 실제 AI 입력·새 승인·예산·제품 Claude 등록·DB·API·개인 설정 변경을 포함하지 않는다.
+사용자가 계획·구현·검증까지 자율 진행하도록 승인한 범위다. 실제 Claude 추가 입력은 [009](../009-claude-code-runtime-compatibility.md)의 별도 상한 확인에 계속 의존한다. 이번 명세는 실제 AI 입력·새 승인·예산·제품 Claude 등록·DB·API·개인 설정 변경을 포함하지 않는다.
 
 ## Affected Files
 
@@ -59,7 +59,7 @@ risk-surface: permission
 - 새 모듈의 비교 헬퍼는 같은 `stableJson` 의미를 사용한다. 기존 실행기의 공유 helper·RuntimeScope·unresolvedRuntime import는 다른 경로가 사용하므로 유지한다.
 - 공개 클래스·메서드·proof 계약, 파일·저널·중단·복구·오류 코드·공급자 호출 0회를 유지한다. 새 모듈은 패키지의 공개 진입점으로 노출하지 않는다.
 
-### [ ] Step 3: 회귀·독립 검토·문서 수명주기
+### [x] Step 3: 회귀·독립 검토·문서 수명주기
 
 **Files**: 관련 검증 및 위 문서 2개
 
@@ -100,3 +100,5 @@ risk-surface: permission
 | Finding | Severity | Disposition | Rationale |
 |---|---|---|---|
 | 독립 계획 리뷰 round 1 | none | ACCEPTED | C0/H0/M0/L0/INFO0. 현재 코드·호출부·오류/잠금/정리 순서 및 새 경계 검사 구성을 확인했다. 입력 hash가 같은 기존 272개는 변경 전 기준으로만 재사용한다. |
+| 독립 구현 리뷰 round 1 | INFO1 | ACCEPTED | C0/H0/M0/L0/INFO1. 기준 body·공개 proof·다른 실행기 멤버 78개·호출자·두 종료 대기·파일 속성·삭제/정리·오류 순서와 전후 검사 입력을 확인했다. 원래 위치의 진단 로깅은 통과한 실행에서 호출되지 않았고 기대값은 그대로다. |
+| 직접 질문 HTTP 원본 두 실패 | INFO | REJECTED — 이번 회귀의 차단 사유 | 원본은 두 번 10/11, 진단 복사본 단독 1/1·전체 11/11, 원래 위치 진단 11/11이다. 직접 질문과 정리 호출 경로는 변경된 제거 보호를 쓰지 않고 나머지 실행기 멤버는 보존됐다. 독립 리뷰는 범위 내 완료를 위한 추가 반복 실행을 요구하지 않았다. 최초 원인은 미확인으로 보존하며 진단 통과를 원인 수정으로 기록하지 않는다. |
