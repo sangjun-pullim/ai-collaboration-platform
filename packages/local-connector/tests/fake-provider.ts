@@ -40,6 +40,7 @@ export class FakeProvider implements ProviderTransport {
   closed = false;
   response?: (method: string, params: Record<string, unknown>) => unknown | Promise<unknown>;
   thread: Record<string, unknown> = {};
+  defaultHistoryMode: "legacy" | "paginated" = "legacy";
   constructor(readonly storedThreads = new Map<string, Record<string, unknown>>()) {}
   installed: unknown = { marketplaces: [], marketplaceLoadErrors: [] };
   pluginDetails = new Map<string, unknown>();
@@ -66,7 +67,7 @@ export class FakeProvider implements ProviderTransport {
       return { data, nextCursor: null };
     }
     if (method === "model/list") return { data: capabilities().models.map(m => ({ id: m.id, model: m.model, defaultReasoningEffort: m.defaultEffort, isDefault: m.isDefault, supportedReasoningEfforts: m.efforts.map(reasoningEffort => ({ reasoningEffort })) })), nextCursor: null };
-    if (method === "thread/start") { this.thread = { id: "synthetic-thread", cwd: params.cwd, status: { type: "idle" }, turns: [], historyMode: "legacy", model: params.model, modelProvider: "openai", reasoningEffort: (params.config as Record<string, unknown>).model_reasoning_effort }; return { thread: this.thread, model: this.thread.model, modelProvider: "openai", reasoningEffort: this.thread.reasoningEffort }; }
+    if (method === "thread/start") { this.thread = { id: "synthetic-thread", cwd: params.cwd, status: { type: "idle" }, turns: [], historyMode: params.historyMode ?? this.defaultHistoryMode, model: params.model, modelProvider: "openai", reasoningEffort: (params.config as Record<string, unknown>).model_reasoning_effort }; return { thread: this.thread, model: this.thread.model, modelProvider: "openai", reasoningEffort: this.thread.reasoningEffort }; }
     if (method === "thread/name/set") {
       if (params.threadId !== this.thread.id || typeof params.name !== "string") throw new RuntimeError("CONTEXT_UNCONFIRMED");
       this.thread.name = params.name; this.storedThreads.set(String(this.thread.id), structuredClone(this.thread)); return {};

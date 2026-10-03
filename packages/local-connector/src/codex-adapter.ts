@@ -247,7 +247,7 @@ export class CodexAdapter implements RuntimeAdapter {
     live(); const client = await this.connect(root.path, live); live(); selectSettings(await this.capabilities(root.path, live), settings.requested); live();
     await new RuntimeFilePolicy(root, settings.files).assertUnchanged(live); live();
     await this.revalidate(client, root.path, live); live();
-    const response = asRecord(await client.request("thread/start", { cwd: root.path, model: settings.requested.model, config: { ...structuredClone(this.overlay), model_reasoning_effort: settings.requested.effort }, approvalPolicy: "never", sandbox: "read-only", approvalsReviewer: "user", dynamicTools: scopedTools(settings.files), environments: [], selectedCapabilityRoots: [] })); live();
+    const response = asRecord(await client.request("thread/start", { cwd: root.path, historyMode: "legacy", model: settings.requested.model, config: { ...structuredClone(this.overlay), model_reasoning_effort: settings.requested.effort }, approvalPolicy: "never", sandbox: "read-only", approvalsReviewer: "user", dynamicTools: scopedTools(settings.files), environments: [], selectedCapabilityRoots: [] })); live();
     const thread = asRecord(response.thread); threadReport(response, settings);
     if (!text(thread.id) || thread.cwd !== root.path || asRecord(thread.status).type !== "idle" || !Array.isArray(thread.turns) || thread.turns.length) throw new RuntimeError("CONTEXT_UNCONFIRMED");
     const candidate: OwnedContext = { ownership: "CONNECTOR_CREATED", generation, threadId: thread.id, root, epoch, level: "L1", ownedTurns: [] };

@@ -160,6 +160,46 @@ test("should never notify owned creation for malformed or unowned start acknowle
   } finally { await f.close(); }
 });
 
+test("should prepare a restartable legacy context when the native history default is paginated", async () => {
+  const f = await runtimeFixture(), stored = new Map<string, Record<string, unknown>>(), p = new FakeProvider(stored), a = new CodexAdapter({ transportFactory: (_cwd, overrides) => p.launch(overrides) });
+  p.defaultHistoryMode = "paginated";
+  let restarted: CodexAdapter | undefined;
+  try {
+    const context = await a.prepare(f.policy.root, f.settings, uuid(), 2, () => {});
+    assert.equal(p.calls.find(c => c.method === "thread/start")!.params.historyMode, "legacy");
+    assert.equal(p.defaultHistoryMode, "paginated");
+    assert.equal(stored.get(context.threadId)!.historyMode, "legacy");
+    assert.deepEqual(stored.get(context.threadId)!.turns, []);
+    assert.deepEqual(p.calls.filter(c => c.method.startsWith("thread/")).map(c => c.method), ["thread/start", "thread/name/set", "thread/read"]);
+    await a.close();
+    const next = new FakeProvider(stored); next.defaultHistoryMode = "paginated";
+    restarted = new CodexAdapter({ transportFactory: (_cwd, overrides) => next.launch(overrides) });
+    await restarted.validate(context, f.settings, () => {});
+    assert.deepEqual(next.calls.filter(c => c.method.startsWith("thread/")).map(c => c.method), ["thread/read", "thread/resume"]);
+    assert.equal(next.thread.historyMode, "legacy");
+    assert.ok([...p.calls, ...next.calls].every(c => c.method !== "turn/start"));
+  } finally { await restarted?.close(); await a.close(); await f.close(); }
+});
+
+test("should fail closed without another start when the provider ignores explicit legacy history", async () => {
+  const f = await runtimeFixture(), p = new FakeProvider(), a = new CodexAdapter({ transportFactory: (_cwd, overrides) => p.launch(overrides) });
+  const created: string[] = [];
+  p.response = (method, params) => {
+    if (method !== "thread/start") return;
+    p.thread = { id: "synthetic-thread", cwd: params.cwd, status: { type: "idle" }, turns: [], historyMode: "paginated", model: params.model, modelProvider: "openai", reasoningEffort: (params.config as Record<string, unknown>).model_reasoning_effort };
+    return { thread: p.thread, model: p.thread.model, modelProvider: "openai", reasoningEffort: p.thread.reasoningEffort };
+  };
+  try {
+    await assert.rejects(a.prepare(f.policy.root, f.settings, uuid(), 2, () => {}, async context => { created.push(context.threadId); }), { code: "CONTEXT_UNCONFIRMED" });
+    assert.equal(p.calls.filter(c => c.method === "thread/start").length, 1);
+    assert.equal(p.calls.find(c => c.method === "thread/start")!.params.historyMode, "legacy");
+    assert.equal(created.length, 1);
+    assert.equal(p.storedThreads.get(created[0])!.historyMode, "paginated");
+    assert.deepEqual(p.calls.filter(c => c.method.startsWith("thread/")).map(c => c.method), ["thread/start", "thread/name/set", "thread/read"]);
+    assert.ok(p.calls.every(c => !["thread/resume", "turn/start"].includes(c.method)));
+  } finally { await a.close(); await f.close(); }
+});
+
 test("should materialize only a newly owned empty thread before delivering a restartable candidate", async () => {
   const f = await runtimeFixture(), stored = new Map<string, Record<string, unknown>>(), p = new FakeProvider(stored), a = new CodexAdapter({ transportFactory: (_cwd, overrides) => p.launch(overrides) });
   let restarted: CodexAdapter | undefined;
@@ -200,7 +240,7 @@ test("should fail closed on naming acknowledgement or materialization failure wi
 });
 test("should refuse a named candidate with wrong ownership or nonempty incomplete stored history", async () => {
   const f = await runtimeFixture(); try {
-    for (const changed of [{ id: "synthetic-unowned" }, { cwd: "/synthetic/other" }, { status: { type: "active" } }, { status: { type: "notLoaded" } }, { turns: [{ id: "unowned", status: "completed", itemsView: "full", items: [] }] }, { turns: null }, { historyMode: "paginated" }, { historyMode: null }]) {
+    for (const changed of [{ id: "synthetic-unowned" }, { cwd: "/synthetic/other" }, { status: { type: "active" } }, { status: { type: "notLoaded" } }, { turns: [{ id: "unowned", status: "completed", itemsView: "full", items: [] }] }, { turns: null }, { historyMode: "paginated" }, { historyMode: "mixed" }, { historyMode: "unknown" }, { historyMode: null }]) {
       const p = new FakeProvider(), a = new CodexAdapter({ transportFactory: (_cwd, overrides) => p.launch(overrides) });
       p.response = method => method === "thread/read" ? { thread: { ...p.thread, ...changed } } : undefined;
       try {
