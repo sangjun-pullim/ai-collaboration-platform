@@ -8,7 +8,7 @@ import {
 } from "@playwright/test";
 import { installAuthArtifactPolicy } from "../helpers/auth-browser-artifact-policy.js";
 installAuthArtifactPolicy(test);
-const stages = [
+type Stages = [
   "test.start",
   "test.contexts-ready",
   "test.pages-ready",
@@ -73,7 +73,7 @@ const stages = [
   "join.fields-filled",
   "join.clicked",
   "join.room-visible",
-] as const;
+];
 const responsePaths = {
   "login.code-response": "/api/auth/code",
   "login.verify-response": "/api/auth/verify",
@@ -85,7 +85,7 @@ const responsePaths = {
   "test.remove-response": "/api/access/revoke-room-member",
 } as const;
 type ResponseStage = keyof typeof responsePaths;
-type Stage = (typeof stages)[number] | ResponseStage;
+type Stage = Stages[number] | ResponseStage;
 type DiagnosticTest = "invited-room" | "observer-removal";
 function diagnostics(testCase: DiagnosticTest, info: TestInfo) {
   const project =
