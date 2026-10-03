@@ -12,11 +12,11 @@ import {
   writeFile,
   type FileHandle,
 } from "node:fs/promises";
-import { existsSync, readFileSync } from "node:fs";
+import { existsSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { RuntimeArchive, journalByteLimit } from "../src/runtime-archive.ts";
 import { RuntimeStore } from "../src/runtime-store.ts";
-import { digest } from "../src/runtime-contracts.ts";
+import { digest, RuntimeError } from "../src/runtime-contracts.ts";
 import { runtimeFixture, appendFixtureCompletion, uuid } from "./runtime-fixture.ts";
 
 function archivePath(f: Awaited<ReturnType<typeof runtimeFixture>>, hash: string) {
@@ -221,5 +221,323 @@ test("should reject archive metadata beyond the reference or request bounds befo
     assert.equal(existsSync(archive.dir), false);
   } finally {
     await f.close();
+  }
+});
+
+async function trackArchiveHandles(paths: string[], pendingPaths: string[] = []) {
+  const identities = await Promise.all(paths.map((path) => lstat(path)));
+  const probe = await open(paths[0], "r");
+  const prototype = Object.getPrototypeOf(probe) as FileHandle;
+  const originalStat = prototype.stat;
+  const originalRead = prototype.read;
+  await probe.close();
+  const handles = new Set<FileHandle>();
+  const closed = new Set<FileHandle>();
+  const closeRestores: (() => void)[] = [];
+  let closeFailure = false;
+  let duringRead: ((handle: FileHandle) => void) | undefined;
+  const statMock = mock.method(prototype, "stat", async function (this: FileHandle) {
+    const stat = await originalStat.call(this);
+    const currentIdentities = [...identities];
+    for (const path of pendingPaths) {
+      try {
+        currentIdentities.push(await lstat(path));
+      } catch (error) {
+        if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
+      }
+    }
+    if (
+      currentIdentities.some((file) => file.dev === stat.dev && file.ino === stat.ino) &&
+      !handles.has(this)
+    ) {
+      handles.add(this);
+      const originalClose = this.close;
+      const closeMock = mock.method(this, "close", async function (this: FileHandle) {
+        closed.add(this);
+        await originalClose.call(this);
+        if (closeFailure) {
+          closeFailure = false;
+          throw new Error("SYNTHETIC_CLOSE");
+        }
+      });
+      closeRestores.push(() => closeMock.mock.restore());
+    }
+    return stat;
+  });
+  const readMock = mock.method(
+    prototype,
+    "read",
+    async function (this: FileHandle, ...args: Parameters<FileHandle["read"]>) {
+      const result = await originalRead.apply(this, args);
+      if (handles.has(this)) duringRead?.(this);
+      return result;
+    },
+  );
+  return {
+    handles,
+    closed,
+    failClose: () => {
+      closeFailure = true;
+    },
+    onRead: (run: (handle: FileHandle) => void) => {
+      duringRead = run;
+    },
+    restore: () => {
+      readMock.mock.restore();
+      statMock.mock.restore();
+      closeRestores.forEach((restore) => restore());
+    },
+  };
+}
+
+test("should close all owned archive handles after scoped validation failures", async () => {
+  for (const boundary of [
+    "success",
+    "batch",
+    "callback",
+    "guard",
+    "read-guard",
+    "read-io",
+    "close",
+    "callback-close",
+    "guard-close",
+  ] as const) {
+    const f = await runtimeFixture();
+    let tracking: Awaited<ReturnType<typeof trackArchiveHandles>> | undefined;
+    try {
+      const archive = new RuntimeArchive(f.store.dir, f.scope.agentId);
+      const hashes = [
+        await archive.save(Buffer.from('"first"')),
+        await archive.save(Buffer.from('"second"')),
+      ];
+      const paths = hashes.map((hash) => archivePath(f, hash));
+      const refs = hashes.map((hash) => ({ hash, requestIds: [uuid()] }));
+      tracking = await trackArchiveHandles(paths);
+      if (boundary === "batch") await unlink(paths[1]);
+      if (boundary.includes("close")) tracking.failClose();
+      const sentinel = new Error(`SYNTHETIC_${boundary}`);
+      if (boundary === "read-io")
+        tracking.onRead(() => {
+          if (tracking!.handles.size === 2) throw sentinel;
+        });
+      let callbackRan = false;
+      const work = archive.withVerifiedContents(
+        refs,
+        (contents) => {
+          callbackRan = true;
+          assert.equal(Object.isFrozen(contents), true);
+          assert.deepEqual(contents, ['"first"', '"second"']);
+          if (boundary.startsWith("callback")) throw sentinel;
+          return "serialized";
+        },
+        () => {
+          if (
+            (boundary.startsWith("guard") && callbackRan) ||
+            (boundary === "read-guard" && tracking!.handles.size === 2)
+          )
+            throw sentinel;
+        },
+      );
+      if (boundary === "success") assert.equal(await work, "serialized");
+      else if (boundary === "batch" || boundary === "close" || boundary === "read-io")
+        await assert.rejects(work, { code: "UNSAFE_STORAGE" });
+      else await assert.rejects(work, (error) => error === sentinel);
+      assert.equal(tracking.handles.size, boundary === "batch" ? 1 : 2);
+      assert.deepEqual(tracking.closed, tracking.handles);
+      for (const handle of tracking.handles) await assert.rejects(handle.stat(), { code: "EBADF" });
+      if (boundary === "batch" || boundary === "read-guard" || boundary === "read-io")
+        assert.equal(callbackRan, false);
+    } finally {
+      tracking?.restore();
+      await f.close();
+    }
+  }
+});
+
+test("should revalidate earlier held archives before invoking a scoped callback", async () => {
+  const f = await runtimeFixture();
+  let tracking: Awaited<ReturnType<typeof trackArchiveHandles>> | undefined;
+  try {
+    const archive = new RuntimeArchive(f.store.dir, f.scope.agentId);
+    const hashes = [
+      await archive.save(Buffer.from('"first"')),
+      await archive.save(Buffer.from('"second"')),
+    ];
+    const paths = hashes.map((hash) => archivePath(f, hash));
+    tracking = await trackArchiveHandles(paths);
+    let changed = false,
+      callbackRan = false;
+    tracking.onRead(() => {
+      if (tracking!.handles.size === 2 && !changed) {
+        changed = true;
+        writeFileSync(paths[0], '"other"');
+      }
+    });
+    await assert.rejects(
+      archive.withVerifiedContents(
+        hashes.map((hash) => ({ hash, requestIds: [uuid()] })),
+        () => {
+          callbackRan = true;
+          return "serialized";
+        },
+      ),
+      { code: "UNSAFE_STORAGE" },
+    );
+    assert.equal(changed, true);
+    assert.equal(callbackRan, false);
+    assert.deepEqual(tracking.closed, tracking.handles);
+  } finally {
+    tracking?.restore();
+    await f.close();
+  }
+});
+
+test("should preserve archive read bytes and scoped UTF8 BOM decoding", async () => {
+  const f = await runtimeFixture();
+  try {
+    const archive = new RuntimeArchive(f.store.dir, f.scope.agentId);
+    const bytes = Buffer.concat([Buffer.from([0xef, 0xbb, 0xbf]), Buffer.from('"한글"')]);
+    const hash = await archive.save(bytes);
+    assert.deepEqual(await archive.read(hash), bytes);
+    assert.equal(
+      await archive.withVerifiedContents([{ hash, requestIds: [uuid()] }], (contents) => {
+        assert.deepEqual(contents, ['"한글"']);
+        return JSON.stringify(JSON.parse(contents[0]));
+      }),
+      '"한글"',
+    );
+  } finally {
+    await f.close();
+  }
+});
+
+test("should reject asynchronous scoped results without retaining archive handles", async () => {
+  const f = await runtimeFixture();
+  let tracking: Awaited<ReturnType<typeof trackArchiveHandles>> | undefined;
+  try {
+    const archive = new RuntimeArchive(f.store.dir, f.scope.agentId);
+    const hash = await archive.save(Buffer.from('"first"'));
+    tracking = await trackArchiveHandles([archivePath(f, hash)]);
+    const asyncResult = (() => Promise.resolve("serialized")) as unknown as (
+      contents: readonly string[],
+    ) => string;
+    await assert.rejects(
+      archive.withVerifiedContents([{ hash, requestIds: [uuid()] }], asyncResult),
+      { code: "UNSAFE_STORAGE" },
+    );
+    assert.equal(tracking.handles.size, 1);
+    assert.deepEqual(tracking.closed, tracking.handles);
+  } finally {
+    tracking?.restore();
+    await f.close();
+  }
+});
+
+for (const route of ["read", "verify", "save-existing", "save-new"] as const) {
+  for (const failure of [
+    "plain-guard",
+    "runtime-guard",
+    "runtime-guard-close",
+    "success-close",
+  ] as const) {
+    test(`should preserve public archive ${route} error semantics for ${failure}`, async () => {
+      const f = await runtimeFixture();
+      let tracking: Awaited<ReturnType<typeof trackArchiveHandles>> | undefined;
+      try {
+        const archive = new RuntimeArchive(f.store.dir, f.scope.agentId);
+        const bytes = Buffer.from('"public read guard evidence"');
+        const hash = digest(bytes);
+        const path = archivePath(f, hash);
+        if (route === "save-new") {
+          const seed = await archive.save(Buffer.from('"seed"'));
+          tracking = await trackArchiveHandles([archivePath(f, seed)], [path]);
+        } else {
+          await archive.save(bytes);
+          tracking = await trackArchiveHandles([path]);
+        }
+        const primary =
+          failure === "plain-guard" ? new Error("SYNTHETIC_GUARD") : new RuntimeError("UNKNOWN");
+        if (failure.endsWith("close")) tracking.failClose();
+        let payloadRead = false,
+          guardThrown = false;
+        tracking.onRead(() => {
+          payloadRead = true;
+        });
+        const check = () => {
+          // save also checks directory/fsync: inject only after its actual payload read.
+          if (payloadRead && failure !== "success-close") {
+            guardThrown = true;
+            throw primary;
+          }
+        };
+        const work =
+          route === "read"
+            ? archive.read(hash, check)
+            : route === "verify"
+              ? archive.verify([{ hash, requestIds: [uuid()] }], check)
+              : archive.save(bytes, check);
+        if (failure === "runtime-guard") await assert.rejects(work, (error) => error === primary);
+        else await assert.rejects(work, { code: "UNSAFE_STORAGE" });
+        assert.equal(payloadRead, true);
+        assert.equal(guardThrown, failure !== "success-close");
+        assert.equal(tracking.handles.size, 1);
+        assert.deepEqual(tracking.closed, tracking.handles);
+        for (const handle of tracking.handles)
+          await assert.rejects(handle.stat(), { code: "EBADF" });
+      } finally {
+        tracking?.restore();
+        await f.close();
+      }
+    });
+  }
+}
+
+test("should preserve scoped guard identity when failed reads or validation also fail to close", async () => {
+  for (const boundary of ["read", "validation"] as const) {
+    for (const kind of ["plain", "runtime"] as const) {
+      const f = await runtimeFixture();
+      let tracking: Awaited<ReturnType<typeof trackArchiveHandles>> | undefined;
+      try {
+        const archive = new RuntimeArchive(f.store.dir, f.scope.agentId);
+        const hashes = [
+          await archive.save(Buffer.from('"first"')),
+          await archive.save(Buffer.from('"second"')),
+        ];
+        tracking = await trackArchiveHandles(hashes.map((hash) => archivePath(f, hash)));
+        tracking.failClose();
+        let payloadRead = false,
+          callbackRan = false;
+        const primary =
+          kind === "plain" ? new Error("SYNTHETIC_GUARD") : new RuntimeError("UNKNOWN");
+        tracking.onRead(() => {
+          payloadRead = true;
+        });
+        await assert.rejects(
+          archive.withVerifiedContents(
+            hashes.map((hash) => ({ hash, requestIds: [uuid()] })),
+            () => {
+              callbackRan = true;
+              return "serialized";
+            },
+            () => {
+              if (
+                (boundary === "read" && payloadRead) ||
+                (boundary === "validation" && callbackRan)
+              )
+                throw primary;
+            },
+          ),
+          (error) => error === primary,
+        );
+        assert.equal(tracking.handles.size, boundary === "read" ? 1 : 2);
+        assert.equal(callbackRan, boundary === "validation");
+        assert.deepEqual(tracking.closed, tracking.handles);
+        for (const handle of tracking.handles)
+          await assert.rejects(handle.stat(), { code: "EBADF" });
+      } finally {
+        tracking?.restore();
+        await f.close();
+      }
+    }
   }
 });

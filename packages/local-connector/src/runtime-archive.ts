@@ -1,5 +1,5 @@
 import { constants, type Stats } from "node:fs";
-import { lstat, mkdir, open, realpath, unlink } from "node:fs/promises";
+import { lstat, mkdir, open, realpath, unlink, type FileHandle } from "node:fs/promises";
 import { dirname, join, parse, resolve } from "node:path";
 import { digest, RuntimeError, type RuntimeArchiveReference } from "./runtime-contracts.ts";
 
@@ -34,6 +34,23 @@ function sameIdentity(before: Stats, after: Stats) {
     unsafe();
 }
 
+type HeldArchive = {
+  path: string;
+  handle: FileHandle;
+  opened: Stats;
+  data: Buffer;
+  content: string;
+};
+
+async function storageIO<T>(operation: Promise<T>): Promise<T> {
+  try {
+    return await operation;
+  } catch (error) {
+    if (error instanceof RuntimeError) throw error;
+    unsafe();
+  }
+}
+
 /** Owned file evidence only. Permission to remove journals remains in RuntimeStore. */
 export class RuntimeArchive {
   readonly dir: string;
@@ -55,21 +72,21 @@ export class RuntimeArchive {
       let stat: Stats;
       try {
         stat = await lstat(part);
-        check();
       } catch (error) {
-        if (!create || (error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
+        if (!create) unsafe();
+        if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
         check();
         await mkdir(part, { mode: 0o700 });
         check();
         stat = await lstat(part);
-        check();
       }
+      check();
       if (!stat.isDirectory() || stat.isSymbolicLink()) unsafe();
       if (part === dirname(this.dir) || part === this.dir) {
         if (stat.uid !== process.getuid?.() || (stat.mode & 0o777) !== 0o700) unsafe();
       }
     }
-    const canonical = await realpath(this.dir);
+    const canonical = await (create ? realpath(this.dir) : storageIO(realpath(this.dir)));
     check();
     if (canonical !== this.dir) unsafe();
   }
@@ -95,51 +112,130 @@ export class RuntimeArchive {
       await handle.close();
     }
   }
+  private async revalidate(file: HeldArchive, check: () => void) {
+    const after = await storageIO(file.handle.stat());
+    check();
+    sameIdentity(file.opened, after);
+    const current = await storageIO(lstat(file.path));
+    check();
+    sameIdentity(file.opened, current);
+  }
+  private async heldRead(
+    hash: string,
+    check: () => void,
+    cleanupError: "override" | "preserve-primary",
+  ): Promise<HeldArchive> {
+    await this.directory(false, check);
+    const path = this.path(hash);
+    const before = await storageIO(lstat(path));
+    check();
+    secureFile(before);
+    const handle = await storageIO(
+      open(path, constants.O_RDONLY | constants.O_NOFOLLOW | constants.O_NONBLOCK),
+    );
+    try {
+      check();
+      const opened = await storageIO(handle.stat());
+      check();
+      sameIdentity(before, opened);
+      const bytes = Buffer.alloc(opened.size + 1);
+      let offset = 0;
+      while (offset < bytes.length) {
+        const read = await storageIO(handle.read(bytes, offset, bytes.length - offset, offset));
+        check();
+        if (!read.bytesRead) break;
+        offset += read.bytesRead;
+      }
+      const file: HeldArchive = {
+        path,
+        handle,
+        opened,
+        data: bytes.subarray(0, offset),
+        content: "",
+      };
+      await this.revalidate(file, check);
+      await this.directory(false, check);
+      if (offset !== opened.size) unsafe();
+      try {
+        file.content = new TextDecoder("utf-8", { fatal: true }).decode(file.data);
+      } catch {
+        unsafe();
+      }
+      if (digest(file.data) !== hash) unsafe();
+      return file;
+    } catch (error) {
+      // A failed read never transfers ownership to the surrounding batch.
+      if (cleanupError === "override") await handle.close();
+      else await handle.close().catch(() => {});
+      throw error;
+    }
+  }
+  private async closeAll(files: HeldArchive[]) {
+    let failed = false;
+    for (const file of files) {
+      try {
+        await file.handle.close();
+      } catch {
+        failed = true;
+      }
+    }
+    if (failed) unsafe();
+  }
   async read(hash: string, check = () => {}): Promise<Buffer> {
     try {
-      await this.directory(false, check);
-      const path = this.path(hash);
-      const before = await lstat(path);
-      check();
-      secureFile(before);
-      const handle = await open(
-        path,
-        constants.O_RDONLY | constants.O_NOFOLLOW | constants.O_NONBLOCK,
-      );
+      const file = await this.heldRead(hash, check, "override");
       try {
-        check();
-        const opened = await handle.stat();
-        check();
-        sameIdentity(before, opened);
-        const bytes = Buffer.alloc(opened.size + 1);
-        let offset = 0;
-        while (offset < bytes.length) {
-          const read = await handle.read(bytes, offset, bytes.length - offset, offset);
-          check();
-          if (!read.bytesRead) break;
-          offset += read.bytesRead;
-        }
-        const after = await handle.stat();
-        check();
-        sameIdentity(opened, after);
-        const current = await lstat(path);
-        check();
-        sameIdentity(opened, current);
-        await this.directory(false, check);
-        if (offset !== opened.size) unsafe();
-        const data = bytes.subarray(0, offset);
-        new TextDecoder("utf-8", { fatal: true }).decode(data);
-        if (digest(data) !== hash) unsafe();
-        return data;
+        return file.data;
       } finally {
-        await handle.close();
+        await file.handle.close();
       }
     } catch (error) {
       if (error instanceof RuntimeError) throw error;
       unsafe();
     }
   }
-  async verify(references: RuntimeArchiveReference[], check = () => {}): Promise<Buffer[]> {
+  async withVerifiedContents(
+    references: RuntimeArchiveReference[],
+    validate: (contents: readonly string[]) => string,
+    check = () => {},
+  ): Promise<string> {
+    this.referenceBounds(references);
+    const files: HeldArchive[] = [];
+    let failed = false;
+    try {
+      let total = 0;
+      for (const ref of references) {
+        const file = await this.heldRead(ref.hash, check, "preserve-primary");
+        files.push(file);
+        total += file.data.length;
+        if (total > archiveByteLimit) unsafe();
+      }
+      if (files.length) {
+        for (const file of files) await this.revalidate(file, check);
+        await this.directory(false, check);
+      }
+      check();
+      const result = validate(Object.freeze(files.map((file) => file.content)));
+      if (typeof result !== "string") unsafe();
+      check();
+      if (files.length) {
+        for (const file of files) await this.revalidate(file, check);
+        await this.directory(false, check);
+      }
+      return result;
+    } catch (error) {
+      failed = true;
+      throw error;
+    } finally {
+      // Preserve a callback/guard failure, but fail successful work if any close fails.
+      try {
+        await this.closeAll(files);
+      } catch (error) {
+        if (!failed) throw error;
+      }
+    }
+  }
+  private referenceBounds(references: RuntimeArchiveReference[]) {
     if (
       references.length > archiveReferenceLimit ||
       references.reduce((sum, ref) => sum + ref.requestIds.length, 0) > archiveRequestLimit
@@ -147,8 +243,6 @@ export class RuntimeArchive {
       unsafe();
     const hashes = new Set<string>();
     const requests = new Set<string>();
-    const files: Buffer[] = [];
-    let total = 0;
     for (const ref of references) {
       if (hashes.has(ref.hash)) unsafe();
       hashes.add(ref.hash);
@@ -156,6 +250,13 @@ export class RuntimeArchive {
         if (requests.has(requestId)) unsafe();
         requests.add(requestId);
       }
+    }
+  }
+  async verify(references: RuntimeArchiveReference[], check = () => {}): Promise<Buffer[]> {
+    this.referenceBounds(references);
+    const files: Buffer[] = [];
+    let total = 0;
+    for (const ref of references) {
       const bytes = await this.read(ref.hash, check);
       total += bytes.length;
       if (total > archiveByteLimit) unsafe();

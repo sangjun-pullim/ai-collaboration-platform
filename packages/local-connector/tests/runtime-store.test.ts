@@ -1,6 +1,18 @@
-import test from "node:test";
+import test, { mock } from "node:test";
 import assert from "node:assert/strict";
-import { chmod, link, lstat, readFile, symlink, unlink, writeFile } from "node:fs/promises";
+import {
+  chmod,
+  link,
+  lstat,
+  open,
+  readFile,
+  symlink,
+  unlink,
+  writeFile,
+  type FileHandle,
+} from "node:fs/promises";
+import { chmodSync, linkSync, renameSync, symlinkSync, writeFileSync } from "node:fs";
+import { RuntimeArchive } from "../src/runtime-archive.ts";
 import { join } from "node:path";
 import {
   RuntimeStore,
@@ -19,6 +31,49 @@ import {
 } from "../src/runtime-contracts.ts";
 import { runtimeFixture, uuid, observation, appendFixtureCompletion } from "./runtime-fixture.ts";
 import { runnerFixture, SyntheticAdapter } from "./runner-fixture.ts";
+
+test("should read each referenced archive once during a validated write", async () => {
+  const f = await runtimeFixture();
+  let restore: (() => void) | undefined;
+  try {
+    appendFixtureCompletion(f.record);
+    appendFixtureCompletion(f.record);
+    await f.store.write(f.record);
+    const next = await f.store.compact(f.record);
+    const files = await Promise.all(
+      next.archives!.map((ref) =>
+        lstat(join(f.store.dir, "archives", f.scope.agentId, `${ref.hash}.json`)),
+      ),
+    );
+    const probe = await open(f.store.file, "r");
+    const prototype = Object.getPrototypeOf(probe) as FileHandle;
+    const originalRead = prototype.read;
+    await probe.close();
+    let bytesRead = 0;
+    const replacement = mock.method(
+      prototype,
+      "read",
+      async function (this: FileHandle, ...args: Parameters<FileHandle["read"]>) {
+        const stat = await this.stat();
+        const result = await originalRead.apply(this, args);
+        if (files.some((file) => file.dev === stat.dev && file.ino === stat.ino))
+          bytesRead += result.bytesRead;
+        return result;
+      },
+    );
+    restore = () => replacement.mock.restore();
+    await f.store.write(next);
+    const payloadBytes = files.reduce((sum, file) => sum + file.size, 0);
+    assert.equal(
+      bytesRead,
+      payloadBytes,
+      `actual archive bytes=${bytesRead}, payload bytes=${payloadBytes}`,
+    );
+  } finally {
+    restore?.();
+    await f.close();
+  }
+});
 
 test("should reject duplicate live claims forged unstarted proofs and changes to closed attempt evidence", async () => {
   const f = await runnerFixture();
@@ -1054,5 +1109,204 @@ test("should exclude completed bundles referenced by another attempt or preparat
     } finally {
       await f.close();
     }
+  }
+});
+
+test("should reject archive replacement or mutation during scoped validation", async () => {
+  for (const mutation of [
+    "replacement",
+    "content",
+    "mode",
+    "hardlink",
+    "directory-mode",
+    "directory-link",
+    "callback",
+    "guard",
+    "close",
+  ] as const) {
+    const f = await runtimeFixture();
+    let restore: (() => void) | undefined;
+    try {
+      appendFixtureCompletion(f.record);
+      await f.store.write(f.record);
+      const next = await f.store.compact(f.record);
+      const before = await readFile(f.store.file);
+      const archive = new RuntimeArchive(f.store.dir, f.scope.agentId);
+      const path = join(archive.dir, `${next.archives![0].hash}.json`);
+      const original = await readFile(path);
+      const sentinel = new Error("SYNTHETIC_CALLBACK");
+      let callbackRan = false;
+      if (mutation === "close") {
+        const owned = await lstat(path);
+        const probe = await open(path, "r");
+        const prototype = Object.getPrototypeOf(probe) as FileHandle;
+        const originalStat = prototype.stat;
+        await probe.close();
+        const closeRestores: (() => void)[] = [];
+        const handles = new Set<FileHandle>();
+        const replacement = mock.method(prototype, "stat", async function (this: FileHandle) {
+          const stat = await originalStat.call(this);
+          if (stat.ino === owned.ino && stat.dev === owned.dev && !handles.has(this)) {
+            handles.add(this);
+            const originalClose = this.close;
+            const closeMock = mock.method(this, "close", async function (this: FileHandle) {
+              await originalClose.call(this);
+              throw new Error("SYNTHETIC_CLOSE");
+            });
+            closeRestores.push(() => closeMock.mock.restore());
+          }
+          return stat;
+        });
+        restore = () => {
+          replacement.mock.restore();
+          closeRestores.forEach((run) => run());
+        };
+      } else {
+        const originalScoped = RuntimeArchive.prototype.withVerifiedContents;
+        const replacement = mock.method(
+          RuntimeArchive.prototype,
+          "withVerifiedContents",
+          function (
+            this: RuntimeArchive,
+            ...args: Parameters<RuntimeArchive["withVerifiedContents"]>
+          ) {
+            if (this.dir !== archive.dir) return originalScoped.apply(this, args);
+            return originalScoped.call(
+              this,
+              args[0],
+              (contents) => {
+                callbackRan = true;
+                const serialized = args[1](contents);
+                if (mutation === "replacement") {
+                  renameSync(path, `${path}.saved`);
+                  writeFileSync(path, original, { mode: 0o600 });
+                }
+                if (mutation === "content") {
+                  const changed = Buffer.from(original);
+                  changed[changed.length - 1] ^= 1;
+                  writeFileSync(path, changed);
+                }
+                if (mutation === "mode") chmodSync(path, 0o644);
+                if (mutation === "hardlink") linkSync(path, `${path}.linked`);
+                if (mutation === "directory-mode") chmodSync(archive.dir, 0o755);
+                if (mutation === "directory-link") {
+                  renameSync(archive.dir, `${archive.dir}.saved`);
+                  symlinkSync(`${archive.dir}.saved`, archive.dir);
+                }
+                if (mutation === "callback") throw sentinel;
+                return serialized;
+              },
+              args[2],
+            );
+          },
+        );
+        restore = () => replacement.mock.restore();
+      }
+      const work = f.store.write(next, () => {
+        if (mutation === "guard" && callbackRan) throw sentinel;
+      });
+      if (mutation === "callback" || mutation === "guard")
+        await assert.rejects(work, (error) => error === sentinel);
+      else await assert.rejects(work, { code: "UNSAFE_STORAGE" }, mutation);
+      if (mutation !== "close") assert.equal(callbackRan, true);
+      assert.deepEqual(await readFile(f.store.file), before, mutation);
+    } finally {
+      restore?.();
+      await f.close();
+    }
+  }
+});
+
+test("should revalidate archive evidence between independent writes", async () => {
+  const f = await runtimeFixture();
+  try {
+    appendFixtureCompletion(f.record);
+    await f.store.write(f.record);
+    const next = await f.store.compact(f.record);
+    const path = join(f.store.dir, "archives", f.scope.agentId, `${next.archives![0].hash}.json`);
+    const original = await readFile(path);
+    await f.store.write(next);
+    const before = await readFile(f.store.file);
+    const changed = Buffer.from(original);
+    changed[changed.length - 1] ^= 1;
+    await writeFile(path, changed);
+    await assert.rejects(f.store.write(next), { code: "UNSAFE_STORAGE" });
+    assert.deepEqual(await readFile(f.store.file), before);
+    await assert.rejects(f.store.read(), { code: "UNSAFE_STORAGE" });
+    await writeFile(path, original);
+    await f.store.write(next);
+    assert.deepEqual(await f.store.read(), next);
+  } finally {
+    await f.close();
+  }
+});
+
+test("should preserve previous and next archive relationships before committing a write", async () => {
+  const f = await runtimeFixture();
+  try {
+    appendFixtureCompletion(f.record);
+    appendFixtureCompletion(f.record);
+    await f.store.write(f.record);
+    const next = await f.store.compact(f.record);
+    const before = await readFile(f.store.file);
+    const claim = {
+      requestId: uuid(),
+      scope: structuredClone(f.scope),
+      generation: f.context.generation,
+      state: "CLAIM_PENDING" as const,
+      claimOperationId: uuid(),
+      snapshot: null,
+      native: null,
+      terminal: null,
+      receipt: null,
+      reason: null,
+      toolCalls: [],
+    };
+    // Clearing the pointer with a new claim is a valid change, but cannot repair corrupt prior evidence.
+    const corruptPrior = structuredClone(next);
+    corruptPrior.lastArchive!.attemptId = uuid();
+    await writeFile(f.store.file, JSON.stringify(corruptPrior));
+    const repaired = structuredClone(next);
+    delete repaired.lastArchive;
+    repaired.attempts.push(claim);
+    const corruptBytes = await readFile(f.store.file);
+    await assert.rejects(f.store.write(repaired), { code: "UNSAFE_STORAGE" });
+    assert.deepEqual(await readFile(f.store.file), corruptBytes);
+    await writeFile(f.store.file, before);
+    for (const mutate of [
+      (value: typeof next) => {
+        value.archives![0].hash = digest("forged");
+        value.lastArchive!.hash = value.archives![0].hash;
+      },
+      (value: typeof next) => {
+        value.archives![0].requestIds.reverse();
+      },
+      (value: typeof next) => {
+        value.archives![0].requestIds[0] = uuid();
+      },
+      (value: typeof next) => {
+        value.scope.roomId = uuid();
+      },
+      (value: typeof next) => {
+        value.scope.bindingEpoch = 2;
+      },
+      (value: typeof next) => {
+        value.lastArchive!.attemptId = uuid();
+      },
+    ]) {
+      const forged = structuredClone(next);
+      mutate(forged);
+      await assert.rejects(async () => f.store.write(forged), { code: "UNSAFE_STORAGE" });
+      assert.deepEqual(await readFile(f.store.file), before);
+    }
+    await f.store.write(repaired);
+    assert.deepEqual(await f.store.read(), repaired);
+    assert.equal((await f.store.lastAttempt(repaired))!.state, "CLAIM_PENDING");
+    await writeFile(f.store.file, before);
+    await f.store.remove();
+    await assert.rejects(f.store.write(next), { code: "UNSAFE_STORAGE" });
+    assert.equal(await f.store.read(), undefined);
+  } finally {
+    await f.close();
   }
 });

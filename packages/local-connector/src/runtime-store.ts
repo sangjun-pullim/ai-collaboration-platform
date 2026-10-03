@@ -1042,14 +1042,23 @@ export class RuntimeStore {
         if ((e as NodeJS.ErrnoException).code !== "ENOENT") throw e;
       }
       check();
-      if (previous) {
-        await this.archiveRecords(previous, check);
-        validateChange(previous, snapshot);
-      } else if ((snapshot.archives ?? []).length || snapshot.lastArchive) unsafe();
-      await this.archiveRecords(snapshot, check);
+      if (!previous && ((snapshot.archives ?? []).length || snapshot.lastArchive)) unsafe();
+      const bytes = await this.archive.withVerifiedContents(
+        previous?.archives ?? [],
+        (contents) => {
+          const records = this.parseArchiveRecords(contents);
+          if (previous) {
+            this.validateArchiveRelationships(previous, records);
+            validateChange(previous, snapshot);
+          }
+          this.validateArchiveRelationships(snapshot, records);
+          const serialized = JSON.stringify(snapshot);
+          if (Buffer.byteLength(serialized) > journalByteLimit) unsafe();
+          return serialized;
+        },
+        check,
+      );
       check();
-      const bytes = JSON.stringify(snapshot);
-      if (Buffer.byteLength(bytes) > 2 * 1024 * 1024) unsafe();
       const temp = join(this.dir, `.${this.agentId}-${randomUUID()}.tmp`);
       let handle: FileHandle | undefined;
       try {
@@ -1086,19 +1095,24 @@ export class RuntimeStore {
     this.writes = work.catch(() => {});
     return work;
   }
-  private async archiveRecords(value: RuntimeRecord, check = () => {}): Promise<RuntimeRecord[]> {
-    const refs = value.archives ?? [];
-    const bytes = await this.archive.verify(refs, check);
-    const records: RuntimeRecord[] = [];
-    let previousEpoch = 0;
-    for (let index = 0; index < refs.length; index++) {
+  private parseArchiveRecords(contents: readonly string[]): RuntimeRecord[] {
+    return contents.map((content) => {
       let source: unknown;
       try {
-        source = JSON.parse(new TextDecoder("utf-8", { fatal: true }).decode(bytes[index]));
+        source = JSON.parse(content);
       } catch {
         unsafe();
       }
       validate(source);
+      return source;
+    });
+  }
+  private validateArchiveRelationships(value: RuntimeRecord, records: RuntimeRecord[]) {
+    const refs = value.archives ?? [];
+    if (refs.length !== records.length) unsafe();
+    let previousEpoch = 0;
+    for (let index = 0; index < refs.length; index++) {
+      const source = records[index];
       const { bindingEpoch: epoch, ...scope } = source.scope;
       const { bindingEpoch: currentEpoch, ...currentScope } = value.scope;
       if (
@@ -1117,7 +1131,9 @@ export class RuntimeStore {
       )
         unsafe();
       if (source.lastArchive) {
-        const prior = records.find((_, i) => refs[i].hash === source.lastArchive!.hash);
+        const prior = records
+          .slice(0, index)
+          .find((_, i) => refs[i].hash === source.lastArchive!.hash);
         if (
           !prior ||
           prior.attempts.filter(
@@ -1128,7 +1144,6 @@ export class RuntimeStore {
         )
           unsafe();
       }
-      records.push(source);
     }
     if (value.lastArchive) {
       const index = refs.findIndex((ref) => ref.hash === value.lastArchive!.hash);
@@ -1142,6 +1157,13 @@ export class RuntimeStore {
       )
         unsafe();
     }
+  }
+  private async archiveRecords(value: RuntimeRecord, check = () => {}): Promise<RuntimeRecord[]> {
+    const bytes = await this.archive.verify(value.archives ?? [], check);
+    const records = this.parseArchiveRecords(
+      bytes.map((data) => new TextDecoder("utf-8", { fatal: true }).decode(data)),
+    );
+    this.validateArchiveRelationships(value, records);
     return records;
   }
   async lastAttempt(value: RuntimeRecord): Promise<AttemptJournal | undefined> {
