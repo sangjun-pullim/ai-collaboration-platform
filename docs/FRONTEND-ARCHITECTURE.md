@@ -1,5 +1,5 @@
 ---
-verified-against: 1eac6aee424d6acdc4ba89afac4e3683db04828d
+verified-against: 8a36af7f958104065f4465122f5abfac224fbe32
 sources:
   - src/app/**
   - src/features/**
@@ -9,7 +9,7 @@ sources:
 ---
 # 프런트엔드 구조
 
-2026-10-02의 Git 기준 소스와 작업트리를 확인했다. 웹은 Next.js 16.3.7 App Router·React 19.3.0·TypeScript를 사용한다. 모의 체험과 실제 사람 인증·방 접근·기기 관리·공동 기록 polling 화면이 있다. 진행 상태·검증 수치·남은 통합은 [개발 순서와 검증 계획](delivery-and-validation.md#현재-진행-상태)에 유지한다.
+2026-10-03의 Git 기준 소스와 작업트리를 확인했다. 웹은 Next.js 16.3.7 App Router·React 19.3.0·TypeScript를 사용한다. 모의 체험과 실제 사람 인증·방 접근·기기 관리·공동 기록 polling 화면이 있다. 진행 상태·검증 수치·남은 통합은 [개발 순서와 검증 계획](delivery-and-validation.md#현재-진행-상태)에 유지한다.
 
 ## 화면과 모듈 경계
 
@@ -40,6 +40,16 @@ flowchart TD
 ## 상태 소유권과 입력
 
 실제 방은 [InvestigationView](../src/features/investigation-coordinator/investigation-view.tsx)의 공개 이력을 함께 렌더링한다. [history-state](../src/features/investigation-coordinator/history-state.ts)는 eventId 중복 제거·sequence gap 복구와 typed 과거 run 재생을 담당한다. 방 전환·권한 거절 시 이력을 초기화하고 늦게 도착한 snapshot이 최신 상태를 되돌리지 않도록 처리한다. 이 상태는 prototype reducer와 분리한다.
+
+조사 화면의 내부 책임은 다음 모듈로 나눈다. 조회·요청 전송·저장/삭제·대상 선택과 React 상태의 소유자는 화면 하나로 유지한다.
+
+| 모듈 | 책임 |
+|---|---|
+| [investigation-view.tsx](../src/features/investigation-coordinator/investigation-view.tsx) | 화면 수명, 조회와 mutation 취소, 미확정 요청 저장/삭제, 이력과 대상 선택 |
+| [investigation-client.ts](../src/features/investigation-coordinator/investigation-client.ts) | `callInvestigation` 함수 하나로 요청 검증·fetch·응답 읽기·오류 전달 |
+| [direct-intents.ts](../src/features/investigation-coordinator/direct-intents.ts) | 사용자·방 저장 키, 복원 검증, 새 요청과 동일 재시도 본문 생성 |
+
+브라우저 HTTP 모듈은 요청을 검증한 뒤 POST JSON을 전송한다. 호출자 중단과 10초 제한을 결합하고 응답의 실제 수신 바이트를 최대 262,144바이트로 제한한다. JSON content type, 엄격한 UTF-8과 기존 BOM 처리, 오류 우선순위 및 reader 정리를 유지한다. 서버의 16KiB 요청 읽기 모듈과 실행 환경·상한이 다르다. 직접 요청 정책은 저장값의 읽기·거절을 수행하며 저장·삭제와 재시도 시점은 화면이 결정한다.
 
 공동 발언·명시적 origin/peer 조사 시작·자기 interrupt·방 pause·방/조사 재개를 제공한다. 준비와 실행은 기기 보고로 표시하며 provider 미검증·UNKNOWN·과거 미채택을 구분한다. observer는 읽기 화면을 사용한다. polling은 활동/추가 이력 조회 시 2초, idle 10초, 숨김 30초이며 실패 시 최대 30초 backoff를 적용한다. 동시 조회를 제한하고 화면 종료·mutation·권한 거절 때 진행 중 요청을 abort한다.
 

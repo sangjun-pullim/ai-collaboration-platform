@@ -1,5 +1,5 @@
 ---
-verified-against: 1eac6aee424d6acdc4ba89afac4e3683db04828d
+verified-against: 8a36af7f958104065f4465122f5abfac224fbe32
 sources:
   - src/**
   - packages/local-connector/src/**
@@ -8,7 +8,7 @@ sources:
 ---
 # 아키텍처
 
-이 문서는 전체 제품 설계와 현재 소스의 시스템 경계를 설명한다. 2026-10-02의 Git 기준 및 작업트리를 확인했다. 독립 런타임 실험·모의 웹, 사람 인증·방 접근, 기기 등록, 내구 조사 조정과 로컬 Codex 실행기가 있다. 공개 등록의 `unverified` 표시는 유지한다. 현재 진행 상태·검증 수치·남은 통합은 [개발 순서와 검증 계획](delivery-and-validation.md#현재-진행-상태)을 따른다. freshness stamp는 Git 기준이며 미커밋 소스는 `git diff HEAD -- <sources>`로 함께 확인한다.
+이 문서는 전체 제품 설계와 현재 소스의 시스템 경계를 설명한다. 2026-10-03의 Git 기준 및 작업트리를 확인했다. 독립 런타임 실험·모의 웹, 사람 인증·방 접근, 기기 등록, 내구 조사 조정과 로컬 Codex 실행기가 있다. 공개 등록의 `unverified` 표시는 유지한다. 현재 진행 상태·검증 수치·남은 통합은 [개발 순서와 검증 계획](delivery-and-validation.md#현재-진행-상태)을 따른다. freshness stamp는 Git 기준이며 미커밋 소스는 `git diff HEAD -- <sources>`로 함께 확인한다.
 
 제품 범위는 [PRD](PRD.md), 실행·복구 불변식은 [비즈니스 로직](BUSINESS-LOGIC.md)이 정본이다. 확정된 중요한 결정의 이유는 [ADR](ADR.md), 미선택 기술안과 대안은 [미결 선택](decisions-and-open-items.md#검토-중인-기술-선택)을 따른다.
 
@@ -78,6 +78,8 @@ Vercel은 화면과 짧은 제어 API를 제공하고 AI 실행·지속 연결�
 ## 저장과 실시간 표시
 
 현재 `investigation-coordinator`는 사람 cookie 제어와 device bearer 실행 보고를 별도 고정 API로 제공한다. DB transaction이 질문·수신 run·공유 답변·유일 origin continuation을 연결하고 revision·양쪽 epoch·lease/fence·한도를 재검사한다. 웹은 공개 event를 cursor로 재조회한다. 007의 `WorkflowRunner`는 같은 `WorkflowClient`를 사용해 로컬 intent·ACK·typed terminal·업로드 receipt를 연결한다. 가짜 adapter의 통과와 실제 provider 수용을 구분하며 기존 중앙 DTO/SQL을 바꾸지 않는다.
+
+같은 feature의 브라우저 코드에서는 `InvestigationView`가 조회·요청 전송·미확정 요청의 저장/삭제·대상 선택을 소유한다. 상태가 없는 `investigation-client`는 HTTP 응답 정책을, `direct-intents`는 사용자별 복원과 요청 본문 정책을 제공한다. 두 모듈은 같은 계약을 사용하며 별도 상태나 자동 재시도를 만들지 않는다. 상세 책임은 [프런트엔드 모듈 경계](FRONTEND-ARCHITECTURE.md#상태-소유권과-입력)를 따른다.
 
 - Postgres: 확정 메시지, 질문 상태, 실행 요청·상태, 방 revision, 참가자 권한, 명시적 개입, 근거·결론의 정본.
 - Realtime: 새 이벤트 알림, 온라인 표시, 작성 중 delta의 빠른 표시. 전달 완료나 실행 완료의 증명이 아니다.
