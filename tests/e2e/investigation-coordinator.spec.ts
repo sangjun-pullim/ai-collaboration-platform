@@ -61,6 +61,17 @@ test("should display an owned investigation and restore public history for an ob
     await expect(observed.getByRole("button", { name: "공동 발언 저장", exact: true })).toHaveCount(
       0,
     );
+    for (const label of ["내 조사 binding", "질문받을 binding"]) {
+      const selector = own.getByLabel(label);
+      const option = selector.locator("option").filter({ hasText: "공개 저장소" });
+      await expect(option).toHaveCount(1);
+      await expect(option).toContainText("codex");
+      await expect(option).toContainText("공개 세션");
+      const value = await option.getAttribute("value");
+      check(value);
+      await selector.selectOption(value);
+      await expect(selector).toHaveValue(value);
+    }
     await own.getByLabel("공동 발언", { exact: true }).fill("브라우저 공개 발언");
     await own.getByRole("button", { name: "공동 발언 저장", exact: true }).click();
     await expect(own.getByLabel("확정 공동 이력")).toContainText("브라우저 공개 발언");

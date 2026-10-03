@@ -267,7 +267,8 @@ function RoomInvestigation({ userId, roomId, role }: Props) {
   function bindingOption(binding: PublicBinding) {
     return (
       <option value={binding.agentId} key={binding.agentId}>
-        {binding.ownerAlias} · {binding.sessionAlias}
+        {binding.ownerAlias} · {binding.runtime} · {binding.repositoryAlias} ·{" "}
+        {binding.sessionAlias}
       </option>
     );
   }
