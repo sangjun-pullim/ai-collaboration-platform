@@ -3,8 +3,6 @@
 import { useEffect, useRef, useState, type FormEvent } from "react";
 import {
   WorkflowError,
-  projectEnvelope,
-  validateBody,
   type HumanAction,
   type Body,
   type HistoryPage,
@@ -12,6 +10,13 @@ import {
 } from "./contracts";
 import { emptyHistory, mergeHistory } from "./history-state";
 import { pollingDelay } from "./polling-policy";
+import { callInvestigation as call } from "./investigation-client";
+import {
+  directIntentKey,
+  restoreDirectIntent,
+  mutationBody,
+  type DirectIntent,
+} from "./direct-intents";
 
 const labels: Record<string, string> = {
   QUEUED: "대기",
@@ -32,121 +37,7 @@ const labels: Record<string, string> = {
 };
 const denied = (code: string) => ["FORBIDDEN", "UNAUTHENTICATED", "NOT_FOUND"].includes(code);
 
-async function call(action: HumanAction, body: Body, signal: AbortSignal) {
-  const validated = validateBody(action, body);
-  try {
-    const response = await fetch(`/api/investigations/${action}`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify(validated),
-      signal: AbortSignal.any([signal, AbortSignal.timeout(10_000)]),
-      cache: "no-store",
-      redirect: "error",
-    });
-    if (
-      response.headers.get("content-type")?.split(";")[0].trim().toLowerCase() !==
-      "application/json"
-    ) {
-      throw new WorkflowError("UNAVAILABLE");
-    }
-    const reader = response.body?.getReader();
-    if (!reader) throw new WorkflowError("UNAVAILABLE");
-    let size = 0;
-    const chunks: Uint8Array[] = [];
-    try {
-      for (;;) {
-        const { done, value } = await reader.read();
-        if (done) break;
-        size += value.length;
-        if (size > 262_144) {
-          await reader.cancel();
-          throw new WorkflowError("UNAVAILABLE");
-        }
-        chunks.push(value);
-      }
-    } finally {
-      reader.releaseLock();
-    }
-    const bytes = new Uint8Array(size);
-    let offset = 0;
-    for (const chunk of chunks) {
-      bytes.set(chunk, offset);
-      offset += chunk.length;
-    }
-    return projectEnvelope(
-      action,
-      JSON.parse(new TextDecoder("utf-8", { fatal: true }).decode(bytes)),
-      response.status,
-    );
-  } catch (error) {
-    if (signal.aborted || error instanceof WorkflowError) throw error;
-    throw new WorkflowError("UNAVAILABLE");
-  }
-}
-
-type DirectIntent = { action: "ask" | "cancel"; body: Body };
 type Props = { userId: string; roomId: string; role: "owner" | "participant" | "observer" };
-
-function directIntentKey(userId: string, roomId: string) {
-  return `human-direct-question:${userId}:${roomId}`;
-}
-
-function restoreDirectIntent(
-  storage: Storage,
-  userId: string,
-  roomId: string,
-): DirectIntent | null {
-  const key = directIntentKey(userId, roomId);
-  try {
-    // A legacy intent has no authenticated actor; never adopt it into a new namespace.
-    storage.removeItem(`human-direct-question:${roomId}`);
-    const saved = storage.getItem(key);
-    if (!saved) return null;
-    const value = JSON.parse(saved);
-    if (
-      !value ||
-      typeof value !== "object" ||
-      Array.isArray(value) ||
-      Object.keys(value).length !== 2 ||
-      (value.action !== "ask" && value.action !== "cancel")
-    )
-      throw new WorkflowError("INVALID_BODY");
-    const body = validateBody(value.action, value.body);
-    if (body.roomId !== roomId || body.expectedUserId !== userId)
-      throw new WorkflowError("FORBIDDEN");
-    return { action: value.action, body };
-  } catch {
-    try {
-      storage.removeItem(key);
-    } catch {
-      /* Unavailable storage cannot authorize restoration. */
-    }
-    return null;
-  }
-}
-
-function mutationBody(
-  action: HumanAction,
-  fields: Body,
-  userId: string,
-  roomId: string,
-  retryBody?: Body,
-) {
-  const direct = action === "ask" || action === "cancel";
-  const body = validateBody(
-    action,
-    retryBody ?? {
-      protocol: 1,
-      roomId,
-      operationId: crypto.randomUUID(),
-      ...fields,
-      ...(direct ? { expectedUserId: userId } : {}),
-    },
-  );
-  if (direct && (body.expectedUserId !== userId || body.roomId !== roomId))
-    throw new WorkflowError("FORBIDDEN");
-  return body;
-}
 
 export function InvestigationView(props: Props) {
   return <RoomInvestigation key={`${props.userId}:${props.roomId}`} {...props} />;
