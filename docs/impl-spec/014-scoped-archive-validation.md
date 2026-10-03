@@ -30,14 +30,14 @@ package·계약·runner·CLI·웹·실험009·SQL·보관 문서는 편집하지
 
 ## Implementation Steps
 
-### [ ] Step 1: 중복 읽기의 검사 기준점
+### [x] Step 1: 중복 읽기의 검사 기준점
 **File**: 관련 두 test 파일과 private 기준점
 
 - 소유 fixture의 완료 요청을 보관한 뒤 일반 write를 실행한다. 기존 FileHandle prototype 검사 방식으로 보관 파일 inode의 실제 읽기 바이트를 합산한다. 현재 두 원문 읽기를 확인하고, 한 번 읽기를 기대하는 검사의 RED를 보존한다.
 - IO 계측은 파일 한 번당 `read()` 호출 수를 고정하지 않는다. 부분 읽기와 EOF 확인은 여러 호출일 수 있으므로 실제 읽은 바이트와 소유 handle을 기준으로 삼는다. prototype mock은 finally에서 복원한다.
 - 현재 Store/Archive 코드와 컴파일 산출물을 고정해 후속 성능 비교의 같은 입력 기준점으로 사용한다. 새 package·운영 로그·모델 입력·DB 작업은 없다.
 
-### [ ] Step 2: 범위가 제한된 검증과 책임 분리
+### [x] Step 2: 범위가 제한된 검증과 책임 분리
 **File**: `runtime-archive.ts`, `runtime-store.ts`
 
 - 내부 보류 읽기는 기존 lstat→open(O_NOFOLLOW/O_NONBLOCK)→fstat identity→크기보다 1바이트 큰 제한 읽기→FD/path 재대조→canonical directory→엄격한 UTF-8·내용 hash 확인을 유지한다. 실패한 읽기의 handle은 그 내부에서 닫는다. 성공한 handle만 한 저장 범위의 소유 목록으로 넘긴다.
@@ -50,6 +50,8 @@ package·계약·runner·CLI·웹·실험009·SQL·보관 문서는 편집하지
 
 ### [ ] Step 3: 회귀·성능·독립 리뷰와 완료
 **File**: 관련 검사, 현재 아키텍처와 진행 정본
+
+> BLOCKED: 직접 질문 통합 11개 중 선택 응답자 실행 1개가 RUNTIME_CAPACITY로 실패했다. 고정한 이전 Archive/Store에서도 같은 실패를 재현했다. 38바이트 파일에 최대 파일 예약과 처리 중인 lease 예약을 함께 적용하는 별도 문제를 보정한 뒤 통합 검사를 완료한다. 보관 코드와 독립 리뷰·성능 비교는 확인했으며 전체 단계는 완료로 표시하지 않는다.
 
 - 경로 교체·같은 inode의 내용/권한/nlink 변경·callback 오류·guard 중단·부분 batch 실패에서 거절, 주 기록 불변, 소유 handle 정리를 확인한다. 다음 write/read는 파일을 다시 검증한다.
 - 기존 archive 변조·내구 순서·stale write·완료 보존과 용량/예약·TERMINAL 복구를 포함한 connector 전체 검사를 수행한다. 변경 없는 웹 unit/빌드/브라우저의 013 결과를 그 입력이 같은 범위에서 재사용한다.
@@ -89,3 +91,7 @@ package·계약·runner·CLI·웹·실험009·SQL·보관 문서는 편집하지
 | Finding | Severity | Disposition | Rationale |
 |---------|----------|-------------|-----------|
 | PLAN-1 | None | 통과 | 새 independent reviewer의 계획 검증은 C0/H0/M0/L0다. 기준 HEAD·명세·Archive/Store hash와 영향 경로·기존 검사/정리 경계를 대조했다. 변경 없는 011·012 리뷰와 planner 조사만 재사용했으며 실행 검증은 Step 3에서 수행한다. |
+| Implementation H1: 공개 읽기의 오류 우선순위 | HIGH | ACCEPTED — 보정·재검토 통과 | 공개 read/verify/save의 일반 오류 변환과 guard·close 충돌 우선순위를 복원했다. 새 오류 회귀는 보정 전 8개 실패, 보정 후 17개 통과이며 공개 경로 16개는 동일 검사로 원래 구현에서도 통과했다. source2 독립 코드 리뷰는 C0/H0/M0/L0다. |
+| Implementation INFO1: 보유 메모리 | INFO | 측정 한계 유지 | 검증 범위가 끝날 때까지 원문 Buffer와 문자열을 보유하고 callback에서 JSON 객체를 만든다. 최대 메모리는 측정하지 않았으며 이번 변경을 추가 메모리 최적화로 확대하지 않았다. |
+| Implementation INFO2: 첫 interrupt 회귀 실패 | INFO | 원인 미확인 유지 | 첫 전체 실행 201/202의 열린 주 파일 검사 실패를 보존했다. 같은 원본·수정 코드의 파일 교체 재현은 모두 거절했고, 제한된 각 10회 검사와 후속 전체 검사는 통과했다. 이 결과로 첫 실패의 원인이나 실행 시점 영향을 확정하지 않는다. |
+| Actual direct integration: 작은 파일 예약 과다 | HIGH | 별도 보정·전체 완료 보류 | 고정한 이전/현재 코드 모두 UNKNOWN/RUNTIME_CAPACITY를 재현했다. 38바이트 선택 파일에도 397,312바이트를 예약해 처리 중인 lease 131,072바이트와 종결 예약을 합치면 2MiB를 9,959바이트 초과한다. 별도 최소 보정 뒤 실제 통합을 완료한다. |
