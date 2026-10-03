@@ -44,7 +44,7 @@ risk-surface: permission
 - 테스트용 production export·환경 옵션·filesystem fault seam을 만들지 않는다. 기존 fixture와 실제 파일·잠금을 사용한다.
 - 새 검사의 입력·기대값을 고정하고 다음 단계에서 같은 검사로 비교한다. 기존 9개 제거 검사와 CLI 소유 정보·다중 agent·호출 0회 검사를 보존한다.
 
-### [ ] Step 2: snapshot과 파일 삭제를 내부 모듈로 이동
+### [x] Step 2: snapshot과 파일 삭제를 내부 모듈로 이동
 
 **Files**: `workflow-runner.ts`, `workflow/local-removal.ts`
 

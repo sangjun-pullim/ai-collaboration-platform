@@ -1,8 +1,6 @@
 import { randomUUID } from "node:crypto";
 import { performance } from "node:perf_hooks";
 import { resolve } from "node:path";
-import { constants } from "node:fs";
-import { lstat, open, unlink } from "node:fs/promises";
 import type { OwnedContext } from "./runtime-contracts.ts";
 import { ConnectionError, type PublicBinding, type WorkspaceMetadata } from "./contracts.ts";
 import { StateStore, type ConnectorState } from "./state-store.ts";
@@ -49,6 +47,7 @@ import {
 } from "./runtime-store.ts";
 import { RuntimeFilePolicy, publicText } from "./runtime-file-policy.ts";
 import { selectSettings } from "./codex-adapter.ts";
+import { withLocalRemovalProtection } from "./workflow/local-removal.ts";
 
 export interface RuntimeConnections {
   rotate(assertLive?: () => void): Promise<unknown>;
@@ -2116,115 +2115,21 @@ export class WorkflowRunner {
         await this.store.drainWrites();
       };
       try {
-        const saved = await this.store.read();
-        this.check();
-        const owner = await this.profile.read();
-        this.check();
-        const mappings =
-          owner?.mappings.filter((mapping) => mapping.agentId === this.store.agentId) ?? [];
-        const mapping = mappings[0];
-        if (
-          !owner ||
-          owner.server !== this.client.origin ||
-          !owner.deviceId ||
-          !owner.scope ||
-          mappings.length !== 1 ||
-          !Number.isSafeInteger(mapping.bindingEpoch) ||
-          mapping.bindingEpoch! < 1
-        )
-          throw new RuntimeError("AUTHORITY_LOST");
-        if (owner.pending || owner.registration) throw new RuntimeError("RUNTIME_BUSY");
-        const scope: RuntimeScope = {
-          server: owner.server,
-          deviceId: owner.deviceId,
-          organizationId: owner.scope.organizationId,
-          roomId: owner.scope.roomId,
-          agentId: this.store.agentId,
-          bindingEpoch: mapping.bindingEpoch!,
-        };
-        if (
-          saved &&
-          (!same(saved.scope, scope) ||
-            (saved.context &&
-              (saved.context.root.path !== mapping.root ||
-                saved.context.threadId !== mapping.nativeSessionId)))
-        )
-          throw new RuntimeError("AUTHORITY_LOST");
-        if (saved && unresolvedRuntime(saved)) throw new RuntimeError("RUNTIME_BUSY");
-        let removed = false;
-        const validate = async () => {
-          this.check();
-          const current = await this.store.read();
-          this.check();
-          const profile = await this.profile.read();
-          this.check();
-          if (!same(current, saved) || !same(profile, owner))
-            throw new RuntimeError("AUTHORITY_LOST");
-          if (current && unresolvedRuntime(current)) throw new RuntimeError("RUNTIME_BUSY");
-        };
-        const remove = () => {
-          const job = this.admission.track(async () => {
-            if (removed) throw new RuntimeError("RUNTIME_CLOSED");
-            await validate();
-            this.check();
-            if (saved) {
-              const before = await lstat(this.store.file);
-              this.check();
-              await validate();
-              this.check();
-              const current = await lstat(this.store.file);
-              this.check();
-              if (
-                !current.isFile() ||
-                current.isSymbolicLink() ||
-                current.uid !== process.getuid?.() ||
-                (current.mode & 0o777) !== 0o600 ||
-                current.nlink !== 1 ||
-                current.ino !== before.ino ||
-                current.dev !== before.dev ||
-                current.size !== before.size ||
-                current.mtimeMs !== before.mtimeMs ||
-                current.ctimeMs !== before.ctimeMs
-              )
-                throw new RuntimeError("UNSAFE_STORAGE");
-              // The secure store read verifies schema/ownership. Guard the actual unlink after its
-              // final await and retain the binding/session locks until dispatched filesystem work ends.
-              this.check();
-              await unlink(this.store.file);
-              this.check();
-              const directory = await open(
-                this.store.dir,
-                constants.O_RDONLY | constants.O_NOFOLLOW,
-              );
-              try {
-                this.check();
-                await directory.sync();
-                this.check();
-              } finally {
-                await directory.close();
-              }
-            }
-            removed = true;
-          });
-          removals.push(job);
-          return job;
-        };
-        // No provider/server work is admitted here. The caller holds every owned protection and
-        // revalidates all immutable proofs under the original profile transaction before deletion.
-        const execute = async () => {
-          try {
-            await validate();
-            this.check();
-            const result = await mutation({ check: this.check, validate, remove });
-            this.check();
-            return result;
-          } finally {
-            await drain();
-          }
-        };
-        return saved?.context
-          ? await this.store.sessionLocked(saved.context.threadId, execute)
-          : await execute();
+        return await withLocalRemovalProtection(
+          {
+            store: this.store,
+            profile: this.profile,
+            origin: this.client.origin,
+            check: this.check,
+            trackRemoval: (run) => {
+              const job = this.admission.track(run);
+              removals.push(job);
+              return job;
+            },
+            drain,
+          },
+          mutation,
+        );
       } finally {
         await drain();
         this.retired = true;
