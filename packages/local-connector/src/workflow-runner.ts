@@ -1510,6 +1510,15 @@ export class WorkflowRunner {
     this.calls.set(key, { hash, result });
     return result;
   }
+  private toolReservationBytes(call: ToolCall): number {
+    if (call.tool !== "read_workspace_file") return 8192;
+    const maximum = 6 * 65536 + 4096;
+    if (!exact(call.arguments, ["path"]) || typeof call.arguments.path !== "string") return maximum;
+    const path = call.arguments.path;
+    const file = this.record.settings!.files.find((candidate) => candidate.path === path);
+    if (!file || !Number.isInteger(file.size) || file.size < 0 || file.size > 65536) return maximum;
+    return 6 * file.size + 4096;
+  }
   private async performTool(
     requestId: string,
     call: ToolCall,
@@ -1522,10 +1531,7 @@ export class WorkflowRunner {
       policy = new RuntimeFilePolicy(this.record.context!.root, settings.files);
     if (a.toolCalls.length >= 256) throw new RuntimeError("RUNTIME_CAPACITY");
     const capacityKey = `tool:${requestId}:${call.callId}`;
-    this.capacityReservations.set(
-      capacityKey,
-      call.tool === "read_workspace_file" ? 6 * 65536 + 4096 : 8192,
-    );
+    this.capacityReservations.set(capacityKey, this.toolReservationBytes(call));
     try {
       this.assertOrdinaryCapacity(this.record, 0, call.tool === "ask_peer" ? 1 : 0);
     } catch (error) {
