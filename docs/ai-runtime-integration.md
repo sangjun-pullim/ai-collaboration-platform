@@ -76,6 +76,8 @@ interface AgentRuntime {
 
 예약한 native UUID의 이력 파일 생성과 같은 입력 UUID·본문 hash의 사용자 기록은 저장 사실이다. 초기화가 보고한 ID·cwd, 입력 echo ACK, assistant tool-use, MCP dispatch, typed result는 각각 별도 증거다. 파일이 생성되어도 실제 답변·재개·중단을 확인하지 못하면 실행을 `UNKNOWN`으로 보존한다. 현재 판정과 다음 실제 검사 조건은 [진행 상태](delivery-and-validation.md#현재-진행-상태)를 따른다.
 
+009의 private 검증 드라이버는 같은 활성 입력의 `system/thinking_tokens`를 진행 상태 정보로만 읽고 개수와 마지막 값만 유지한다. 거절한 상태 정보는 제한된 private 원문에 남기며 ACK·도구 권한·완료 증거로 사용하지 않는다. `control_cancel_request`도 host가 이미 중단을 요청한 소유 파일 callback의 취소 정보만 해석한다. 그 정보로 tool response를 만들거나 종결을 확정하지 않으며 interrupt receipt와 native typed 종결을 별도로 요구한다. 합성 실행의 통과는 공식 Claude의 실제 실행·이력 재개나 제품 연동의 완료를 뜻하지 않는다.
+
 ## 참가자별 도구·모델·effort 선택
 
 2026-10-01 사용자가 추가한 제품 요구사항이다. 각 PC의 소유자가 AI binding별로 `Codex` 또는 `Claude Code`, 모델, effort를 선택한다. A의 설정과 B의 설정은 독립적이며 웹 로그인·방 역할·기기 credential은 모델 사용 권한을 대신하지 않는다. 현재 Codex 실험과 기기 등록 작업은 두 공급자의 선택 UI·실제 실행 지원을 입증하지 않는다.
