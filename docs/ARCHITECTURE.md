@@ -123,7 +123,7 @@ Vercel은 화면과 짧은 제어 API를 제공하고 AI 실행·지속 연결�
 
 `packages/local-connector/`는 macOS·Node 24 CLI다. canonical root와 native session mapping은 0700/0600 private state에, 사용자 별칭·Git metadata만 중앙에 둔다. v1 profile과 별도로 binding별 설정·소유 맥락·실행/outbox 저널을 저장하며 짧은 credential 잠금과 실행/session 잠금을 분리한다. 기존 등록 locator만으로 실행을 허용하지 않는다. 공식 Codex stdio child의 소유권·모델·선택 파일을 검증하고 개인·프로젝트 지침과 설정 파일을 유지한다. 공동 조사에서는 읽기 전용 native 권한과 일시적인 기능 제한으로 미검증 MCP/plugin/hook 실행을 막는다. 공개 표시는 `codex/registered/unverified`를 유지한다. 로컬 명령은 [온보딩](onboarding-and-settings.md#로컬-codex-실행-준비), 참가자별 후속 설정은 [실행 설정](ai-runtime-integration.md#참가자별-도구모델effort-선택)을 따른다.
 
-로컬 실행 기록은 `RuntimeStore`가 주 파일과 상태 전이를 관리하고, 내부 `RuntimeArchive`가 완료된 요청의 원문 보관 파일을 검증한다. `WorkflowRunner`는 실행·파일 읽기·서버 응답 저장에 앞서 종결과 완료 전송 공간을 확보한다. 보관 증거는 새 실행 권한이나 새 저장 세션으로 사용하지 않는다. [보관·용량 규칙](ai-runtime-integration.md#로컬-실행-기록-보관과-용량)과 [현재 검증 상태](delivery-and-validation.md#현재-진행-상태)를 따른다.
+로컬 실행 기록은 `RuntimeStore`가 주 파일과 상태 전이를 관리하고, 내부 `RuntimeArchive`가 완료된 요청의 원문 보관 파일을 검증한다. `WorkflowRunner`는 실행·파일 읽기·서버 응답 저장에 앞서 종결과 완료 전송 공간을 확보한다. 한 저장 안에서는 보관 원문·해석 결과를 재사용하고 이전·다음 기록과의 관계를 각각 검증한다. 내부 모듈이 열린 파일과 현재 경로를 검증 범위 전후에 재대조하고 정리하며, 저장이나 호출 사이에는 결과를 보관하지 않는다. 선택 파일 도구의 저장 예약은 검증한 snapshot의 바이트 크기로 계산하며 실제 읽기 권한·변경 감지는 기존 파일 정책이 계속 확인한다. 보관 증거는 새 실행 권한이나 새 저장 세션으로 사용하지 않는다. [보관·용량 규칙](ai-runtime-integration.md#로컬-실행-기록-보관과-용량)과 [현재 검증 상태](delivery-and-validation.md#현재-진행-상태)를 따른다.
 
 opaque device bearer를 Supabase Realtime JWT로 사용할 수 있다고 가정하지 않는다. Realtime 인증과 사람 HttpOnly cookie의 연결은 후속 단계에서 검증하며 중앙 signing/admin key를 로컬 앱에 배포하지 않는다. 현재 등록 프로그램은 고정 HTTP API만 사용한다.
 
