@@ -1,0 +1,16 @@
+supabase/**
+docs/**
+README.md
+experiments/**
+/tests/fixtures/**
+**/node_modules/**
+**/dist/**
+.next/**
+.test-build/**
+.integration-build/**
+.workflow-artifacts/**
+test-results/**
+playwright-report/**
+**/*.tsbuildinfo
+next-env.d.ts
+**/package-lock.json
