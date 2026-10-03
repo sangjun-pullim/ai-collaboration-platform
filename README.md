@@ -79,6 +79,8 @@ npm run dev
 
 `http://localhost:3000`에서 준비·공동 기록·개인 설명·방향 수정·정지 단계·결과를 체험한다. 실제 로그인/저장소/AI와 연결되지 않으며 새로고침하면 초기화된다. 검사는 `npm run typecheck`, `npm run lint`, `npm test`, `npm run build`, `npm run test:e2e`로 실행한다. 브라우저 검사를 처음 실행할 때는 `npx playwright install chromium`이 필요하다. 현재 구조와 확인 범위는 [프런트엔드 문서](docs/FRONTEND-ARCHITECTURE.md)를 따른다.
 
+커밋 전에 프로젝트 루트에서 `npm run format`과 `npm run format:check`를 실행한다. 포맷 대상은 웹·연결기·검사 코드와 실행 설정이며, 완료 문서·SQL·원문 fixture·실험·생성물은 제외한다. 기능 변경과 포맷 변경은 별도 커밋으로 기록한다.
+
 ## 실제 로컬 로그인과 방 접근
 
 `/login`에서 이메일 코드를 확인하고 `/app`에서 그룹·방 생성과 초대 참가를 사용한다. `/app/connections`에서 로컬 CLI의 코드를 승인하고 방에서 공개 등록과 공동 이력을 확인한다. [제품/검사 설정](docs/onboarding-and-settings.md#현재-구현한-로컬-로그인과-조사방), [로컬 등록 순서](docs/onboarding-and-settings.md#현재-로컬-기기와-저장소-등록), [고정 API](docs/API-SPEC.md), [DB/RLS](docs/DB-SCHEMA.md)를 따른다. 제품 서버에는 Supabase URL·publishable key·신뢰 app origin만 전달한다. 로컬 Codex 실행 명령과 남은 검증은 [실행 준비](docs/onboarding-and-settings.md#로컬-codex-실행-준비)에 기록한다. Realtime·개인 설명은 후속 구현이다.
