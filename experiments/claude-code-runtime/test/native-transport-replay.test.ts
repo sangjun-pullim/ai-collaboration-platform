@@ -14,8 +14,9 @@ test("should accept only the exact replay of an answered native control request"
       try {
         const policy = f.policy();
         policy.admit();
-        const args = policy.arguments(f.store.read().sessionId, false);
-        if (mode !== "replay-control-disabled") args.push("--replay-user-messages");
+        let args = policy.arguments(f.store.read().sessionId, false);
+        if (mode === "replay-control-disabled") args = args.filter(arg => arg !== "--replay-user-messages");
+        else assert.equal(args.filter(arg => arg === "--replay-user-messages").length, 1);
         transport = new NativeTransport(f.launch(mode, args), () => {},
           { requestMs: 300, probeMs: 1500, closeMs: [20, 50, 50] });
         transport.setHandler(async (frame) => {

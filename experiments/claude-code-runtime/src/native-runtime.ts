@@ -4,7 +4,9 @@ import { lstatSync } from "node:fs";
 import { ApprovalBudget, OwnedProbeStore, ProbeError, digest, object, readPrivate,
   type Command, type InputIntent, type Refusal } from "./owned-probe-store.js";
 import { NativeTransport, type Cleanup, type Launch, type TransportOptions } from "./native-transport.js";
-import { TaskPolicy, SelectedFiles, NATIVE_TOOL_NAMES, OWNED_SERVER, TOOL_NAMES } from "./task-policy.js";
+import { TaskPolicy, SelectedFiles, OWNED_SERVER, TOOL_NAMES } from "./task-policy.js";
+
+import { NativeInputProof, nativeIdentity } from "./native-input-proof.js";
 
 export interface HistoryProof { materialized: boolean; sessionId: string; root: string; records: Record<string, unknown>[] }
 export interface RuntimeOptions {
@@ -23,12 +25,7 @@ export interface DefaultObservation {
 }
 interface Active {
   intent: InputIntent;
-  ack: boolean;
-  toolOpen: boolean;
-  tools: Map<string, { name: string; argsHash: string }>;
-  dispatched: Map<string, { hash: string; response: Promise<Record<string, unknown>> }>;
-  responsesStarted: Set<string>;
-  terminal: boolean;
+  proof: NativeInputProof;
   resolve: (value: "COMPLETED" | "INTERRUPTED") => void;
   reject: (error: ProbeError) => void;
   promise: Promise<"COMPLETED" | "INTERRUPTED">;
@@ -75,7 +72,6 @@ export class NativeRuntime {
   #initSeen = false;
   #drift: NodeJS.Timeout | undefined;
   #closing: Promise<Cleanup> | undefined;
-  #interruptReceipt: unknown;
   #defaults: DefaultObservation = {
     requestedModel: null, initializedModel: null, observedModel: null,
     effort: { status: "UNVERIFIED" }, models: [],
@@ -86,7 +82,7 @@ export class NativeRuntime {
     private readonly options: RuntimeOptions = {}) {}
 
   get defaults(): DefaultObservation { return structuredClone(this.#defaults); }
-  get interruptReceiptObserved(): boolean { return this.#interruptReceipt !== undefined; }
+  get interruptReceiptObserved(): boolean { return this.#active?.proof.receiptObserved ?? false; }
   get reaped(): boolean { return this.#transport?.reaped ?? true; }
 
   assertLive(): void {
@@ -106,14 +102,9 @@ export class NativeRuntime {
     const state = this.store.read();
     if (state.inputs.some((i) => !i.terminal)) throw new ProbeError("INPUT_UNRESOLVED");
     this.budget.assertResolved(this.store);
+    if (state.cleanup === "CLEANUP_INCOMPLETE" || state.cleanup === "NOT_STARTED" &&
+        (state.initialized || state.fileSnapshotHash !== null || state.inputs.length > 0)) throw new ProbeError("CLEANUP_INCOMPLETE");
     if (resume) await this.verifyHistory(false);
-    this.assertLive();
-    this.store.update((s) => {
-      const hash = digest(JSON.stringify(this.files.snapshots()));
-      s.fileSnapshotHash = hash;
-      s.evidence.push({ kind: "FILE_SNAPSHOTS", hash });
-      s.cleanup = "NOT_STARTED";
-    });
     this.assertLive();
     const args = this.policy.arguments(state.sessionId, resume);
     const launch = this.options.launch?.(args, resume) ?? {
@@ -123,6 +114,13 @@ export class NativeRuntime {
         launch.args[0] !== fileURLToPath(new URL("../../test/fixtures/fake-claude.mjs", import.meta.url))) {
       throw new ProbeError("EXECUTION_PRECEDENCE_UNCONFIRMED");
     }
+    this.assertLive();
+    this.store.update((s) => {
+      const hash = digest(JSON.stringify(this.files.snapshots()));
+      s.fileSnapshotHash = hash;
+      s.evidence.push({ kind: "FILE_SNAPSHOTS", hash });
+      s.cleanup = "NOT_STARTED";
+    });
     this.assertLive();
     this.#transport = new NativeTransport(launch, () => this.assertLive(), this.options.transport);
     this.#transport.setHandler((frame, signal) => this.message(frame, signal), (error) => this.fail(error.code));
@@ -144,8 +142,7 @@ export class NativeRuntime {
           efforts: model.supportedEffortLevels as string[] | undefined ?? null };
       });
       this.store.record("INITIALIZE_RESPONSE", response);
-      // Some native hosts do not emit init until first input. Do not fabricate that ACK.
-      if (!this.#initSeen) throw new ProbeError("NATIVE_IDENTITY");
+      // Identity may arrive after first input; it is still required before assistant/tool/result.
       this.assertLive();
     } catch (error) {
       this.fail(error instanceof ProbeError ? error.code : "PROTOCOL_REJECTED");
@@ -156,6 +153,7 @@ export class NativeRuntime {
 
   async probeZero(): Promise<"PERSISTED_ZERO"> {
     this.assertLive();
+    if (!this.#initSeen) throw new ProbeError("NATIVE_IDENTITY");
     await this.verifyHistory(true);
     this.assertLive();
     return "PERSISTED_ZERO";
@@ -175,6 +173,7 @@ export class NativeRuntime {
       this.store.update((value) => { value.persistence = "NATIVE_NOT_MATERIALIZED"; });
       throw new ProbeError("NATIVE_NOT_MATERIALIZED");
     }
+    if (!proof.records.some(record => record.type === "system" && record.subtype === "init")) throw new ProbeError("HISTORY_UNCONFIRMED");
     let userCount = 0;
     for (const record of proof.records) {
       if (record.session_id !== s.sessionId || (record.cwd !== undefined && record.cwd !== s.root) ||
@@ -183,11 +182,58 @@ export class NativeRuntime {
       if (zero && record.type !== "system") throw new ProbeError("HISTORY_UNCONFIRMED");
       if (record.type === "system" && record.subtype !== "init") throw new ProbeError("HISTORY_UNCONFIRMED");
     }
+    // INPUT_METADATA is appended in the same durable update as each terminal.
+    // Its position plus the immutable input terminal supplies the observed result order.
+    const historyTypes: Record<string, string> = {
+      NATIVE_INIT: "system", INPUT_ACK: "user", ASSISTANT_OBSERVATION: "assistant", NATIVE_TOOL_RESULT: "user",
+    };
+    let recordIndex = 0;
+    let inputIndex = 0;
+    for (const evidence of s.evidence) {
+      let expectedType = historyTypes[evidence.kind];
+      let expectedHash = evidence.hash;
+      if (evidence.kind === "INPUT_METADATA") {
+        const terminal = s.inputs[inputIndex++]?.terminal;
+        if (!terminal) throw new ProbeError("HISTORY_UNCONFIRMED");
+        expectedType = "result";
+        expectedHash = terminal.evidenceHash;
+      }
+      if (expectedType === undefined) continue;
+      const record = proof.records[recordIndex++];
+      if (!record || record.type !== expectedType || digest(JSON.stringify(record)) !== expectedHash) {
+        throw new ProbeError("HISTORY_UNCONFIRMED");
+      }
+    }
+    if (recordIndex !== proof.records.length || inputIndex !== s.inputs.length) throw new ProbeError("HISTORY_UNCONFIRMED");
+    const lastResultIndex = proof.records.findLastIndex(record => record.type === "result");
     if (!zero && s.inputs.length) {
       const last = s.inputs.at(-1)!;
-      const terminal = proof.records.at(-1);
-      if (!last.terminal || !terminal || terminal.type !== "result" || terminal.user_message_uuid !== last.inputId ||
+      const terminal = proof.records[lastResultIndex];
+      if (!last.terminal || !terminal || terminal.type !== "result" ||
+          terminal.user_message_uuid !== undefined && terminal.user_message_uuid !== last.inputId ||
           digest(JSON.stringify(terminal)) !== last.terminal.evidenceHash) throw new ProbeError("HISTORY_UNCONFIRMED");
+    }
+    if (!zero && s.inputs.length) {
+      const last = s.inputs.at(-1)!;
+      const ackIndex = proof.records.findLastIndex(record => record.type === "user" && record.uuid === last.inputId);
+      if (ackIndex < 0) throw new ProbeError("HISTORY_UNCONFIRMED");
+      try {
+        const inputProof = new NativeInputProof(s.sessionId, last.inputId, last.promptHash);
+        inputProof.user(proof.records[ackIndex]!);
+        let anchored = false;
+        for (const record of proof.records.slice(ackIndex + 1, lastResultIndex)) {
+          if (record.type === "assistant") { inputProof.assistant(record, true); anchored = true; }
+          else if (record.type === "system" && record.subtype === "init") continue;
+          else if (record.type !== "user") throw new ProbeError("HISTORY_UNCONFIRMED");
+          else {
+            const message = object(record.message);
+            if (message.role !== "user" || !Array.isArray(message.content) ||
+                !message.content.length || message.content.some((raw: unknown) => object(raw).type !== "tool_result") ||
+                record.user_message_uuid !== undefined && record.user_message_uuid !== last.inputId) throw new ProbeError("HISTORY_UNCONFIRMED");
+          }
+        }
+        if (!anchored) throw new ProbeError("HISTORY_UNCONFIRMED");
+      } catch { throw new ProbeError("HISTORY_UNCONFIRMED"); }
     }
     this.store.record("NATIVE_HISTORY", proof);
     this.store.update((value) => { value.persistence = userCount ? "PERSISTED_HISTORY" : "PERSISTED_ZERO"; });
@@ -195,7 +241,7 @@ export class NativeRuntime {
 
   async input(command: Command, prompt: string): Promise<"COMPLETED" | "INTERRUPTED"> {
     this.assertLive();
-    if (!this.#initSeen || !this.#transport || this.#active || !prompt || Buffer.byteLength(prompt) > 65536) {
+    if (!this.#transport || this.#active || !prompt || Buffer.byteLength(prompt) > 65536) {
       throw new ProbeError("INPUT_UNRESOLVED");
     }
     let resolve!: Active["resolve"];
@@ -205,7 +251,7 @@ export class NativeRuntime {
     try {
       const intent = await this.budget.consume(this.store, command, prompt, () => this.assertLive());
       this.assertLive();
-      this.#active = { intent, ack: false, toolOpen: true, tools: new Map(), dispatched: new Map(), responsesStarted: new Set(), terminal: false, resolve, reject, promise };
+      this.#active = { intent, proof: new NativeInputProof(this.store.read().sessionId, intent.inputId, intent.promptHash), resolve, reject, promise };
       // This intent is durable before writing. A failed write is ambiguous, never refunded.
       this.store.update((s) => { s.inputs.at(-1)!.phase = "TRANSMITTED"; });
       this.assertLive();
@@ -223,40 +269,33 @@ export class NativeRuntime {
 
   async interrupt(): Promise<void> {
     this.assertLive();
-    if (!this.#active || this.#active.terminal || !this.#transport) throw new ProbeError("INPUT_UNRESOLVED");
-    this.#active.toolOpen = false;
+    if (!this.#active || this.#active.proof.terminal || !this.#transport) throw new ProbeError("INPUT_UNRESOLVED");
+    this.#active.proof.requestInterrupt();
     const receipt = object(await this.#transport.request({ subtype: "interrupt", cancel_queued: true }));
     this.assertLive();
-    if (!Array.isArray(receipt.still_queued) || receipt.still_queued.some((v: unknown) => typeof v !== "string") ||
-        (receipt.cancelled !== undefined && (!Array.isArray(receipt.cancelled) ||
-        receipt.cancelled.some((v: unknown) => typeof v !== "string")))) throw new ProbeError("PROTOCOL_REJECTED");
-    this.#interruptReceipt = receipt;
+    this.#active.proof.receipt(receipt);
     this.store.record("INTERRUPT_RECEIPT", receipt);
-  }
-
-  private sameInput(frame: Record<string, unknown>): Active {
-    const active = this.#active;
-    const s = this.store.read();
-    if (!active || active.terminal || frame.session_id !== s.sessionId ||
-        frame.user_message_uuid !== active.intent.inputId ||
-        (frame.user_message_uuids !== undefined && (!Array.isArray(frame.user_message_uuids) ||
-          frame.user_message_uuids.length !== 1 || frame.user_message_uuids[0] !== active.intent.inputId)) ||
-        frame.parent_tool_use_id !== undefined && frame.parent_tool_use_id !== null) {
-      throw new ProbeError("TOOL_CORRELATION_UNCONFIRMED");
-    }
-    return active;
   }
 
   private async message(frame: Record<string, unknown>, signal: AbortSignal): Promise<void> {
     try {
       this.assertLive();
       // Terminal arrival seals tools synchronously, even if its proof is subsequently refused.
-      if (frame.type === "result" && this.#active) this.#active.toolOpen = false;
+      if (frame.type === "result" && this.#active) this.#active.proof.seal();
       if (frame.type === "system" && frame.subtype === "init") this.observeInit(frame);
       else if (frame.type === "user") this.observeUser(frame);
       else if (frame.type === "assistant") this.observeAssistant(frame);
       else if (frame.type === "result") this.observeResult(frame);
-      else if (frame.type === "control_request") {
+      else if (frame.type === "system" && frame.subtype === "thinking_tokens") {
+        if (!this.#active) throw new ProbeError("TOOL_CORRELATION_UNCONFIRMED");
+        this.#active.proof.progress(frame, this.#initSeen);
+      } else if (frame.type === "command_lifecycle") {
+        if (!this.#active) throw new ProbeError("TOOL_CORRELATION_UNCONFIRMED");
+        this.#active.proof.command(frame);
+      } else if (frame.type === "control_cancel_request") {
+        if (!this.#active) throw new ProbeError("TOOL_CORRELATION_UNCONFIRMED");
+        this.#active.proof.cancel(frame);
+      } else if (frame.type === "control_request") {
         await this.control(frame, signal);
         this.assertLive();
       } else throw new ProbeError("PROTOCOL_REJECTED");
@@ -268,21 +307,10 @@ export class NativeRuntime {
 
   private observeInit(frame: Record<string, unknown>): void {
     const s = this.store.read();
-    if (frame.session_id !== s.sessionId || frame.cwd !== s.root || frame.claude_code_version !== "2.1.286" ||
-        !boundedString(frame.model) || !Array.isArray(frame.tools) ||
-        frame.tools.length !== NATIVE_TOOL_NAMES.length || new Set(frame.tools).size !== NATIVE_TOOL_NAMES.length ||
-        frame.tools.some((name: unknown) => !protocolString(name, NATIVE_TOOL_NAMES)) ||
-        !Array.isArray(frame.plugins) || frame.plugins.length || !Array.isArray(frame.mcp_servers) ||
-        frame.mcp_servers.length !== 1 || frame.mcp_servers.some((raw: unknown) => {
-          const mcp = object(raw);
-          return mcp.name !== OWNED_SERVER || mcp.source !== "sdk" || mcp.status !== "connected";
-        })) throw new ProbeError("NATIVE_IDENTITY");
-    if (frame.effort !== undefined && frame.effort !== null && !protocolString(frame.effort, EFFORTS)) {
-      throw new ProbeError("PROTOCOL_REJECTED");
-    }
-    this.#defaults.initializedModel = frame.model;
-    this.#defaults.effort = frame.effort === undefined || frame.effort === null ? { status: "UNVERIFIED" } :
-      { status: "OBSERVED", value: frame.effort };
+    if (this.#initSeen) throw new ProbeError("NATIVE_IDENTITY");
+    const identity = nativeIdentity(frame, s.sessionId, s.root);
+    this.#defaults.initializedModel = identity.model;
+    this.#defaults.effort = identity.effort;
     this.store.record("NATIVE_INIT", frame);
     this.store.update((value) => { value.initialized = true; });
     this.#initSeen = true;
@@ -291,63 +319,31 @@ export class NativeRuntime {
 
   private observeUser(frame: Record<string, unknown>): void {
     const active = this.#active;
-    if (!active || frame.session_id !== this.store.read().sessionId || frame.uuid !== active.intent.inputId || active.terminal) {
-      throw new ProbeError("TOOL_CORRELATION_UNCONFIRMED");
-    }
-    active.ack = true;
-    this.store.update((s) => { s.inputs.at(-1)!.phase = "ACK"; });
-    this.store.record("INPUT_ACK", frame);
-    return;
+    if (!active) throw new ProbeError("TOOL_CORRELATION_UNCONFIRMED");
+    const kind = active.proof.user(frame);
+    if (kind === "INPUT_ACK") this.store.update((s) => { s.inputs.at(-1)!.phase = "ACK"; });
+    this.store.record(kind, frame);
   }
 
   private observeAssistant(frame: Record<string, unknown>): void {
-    const active = this.sameInput(frame);
-    if (!active.ack) throw new ProbeError("TOOL_CORRELATION_UNCONFIRMED");
-    const message = object(frame.message);
-    if (!boundedString(message.model) || !Array.isArray(message.content)) throw new ProbeError("PROTOCOL_REJECTED");
-    this.#defaults.observedModel = message.model;
-    for (const raw of message.content) {
-      const block = object(raw);
-      if (block.type === "tool_use") {
-        if (!active.toolOpen || !boundedString(block.id) || !protocolString(block.name, NATIVE_TOOL_NAMES)) throw new ProbeError("TOOL_REJECTED");
-        const tool = { name: block.name, argsHash: digest(JSON.stringify(object(block.input))) };
-        const old = active.tools.get(block.id);
-        if (old && JSON.stringify(old) !== JSON.stringify(tool)) throw new ProbeError("TOOL_REJECTED");
-        active.tools.set(block.id, tool);
-      } else if (block.type !== "text" && block.type !== "thinking" && block.type !== "redacted_thinking") {
-        throw new ProbeError("PROTOCOL_REJECTED");
-      }
-    }
+    if (!this.#active) throw new ProbeError("TOOL_CORRELATION_UNCONFIRMED");
+    this.#defaults.observedModel = this.#active.proof.assistant(frame, this.#initSeen);
     this.store.record("ASSISTANT_OBSERVATION", frame);
-    return;
   }
 
   private observeResult(frame: Record<string, unknown>): void {
-    const active = this.sameInput(frame);
-    if (!active.ack || !Number.isInteger(frame.num_turns) || Number(frame.num_turns) < 1 ||
-        !boundedString(frame.uuid) || (frame.queued_turn_count !== undefined && frame.queued_turn_count !== 0) ||
-        frame.local_command !== undefined) throw new ProbeError("TERMINAL_UNCONFIRMED");
-    let kind: "COMPLETED" | "INTERRUPTED";
-    let text: string | null = null;
-    if (frame.subtype === "success" && frame.is_error === false && frame.terminal_reason === "completed" &&
-        typeof frame.result === "string" && frame.result.trim() && Buffer.byteLength(frame.result) <= 65536) {
-      kind = "COMPLETED";
-      text = frame.result;
-      if ([...active.tools.keys()].some((id) => !active.responsesStarted.has(id))) throw new ProbeError("TERMINAL_UNCONFIRMED");
-    } else if (frame.subtype === "error_during_execution" && frame.is_error === true &&
-        protocolString(frame.terminal_reason, ["aborted_streaming", "aborted_tools"])) kind = "INTERRUPTED";
-    else throw new ProbeError("TERMINAL_UNCONFIRMED");
-    active.toolOpen = false;
+    const active = this.#active;
+    if (!active) throw new ProbeError("TOOL_CORRELATION_UNCONFIRMED");
+    const terminal = active.proof.result(frame, this.#initSeen);
     this.assertLive();
     this.store.update((s) => {
       const input = s.inputs.find((i) => i.inputId === active.intent.inputId)!;
-      input.phase = kind;
-      input.terminal = { kind, evidenceHash: digest(JSON.stringify(frame)), text };
+      input.phase = terminal.kind;
+      input.terminal = terminal;
+      s.evidence.push({ kind: "INPUT_METADATA", hash: digest(JSON.stringify(active.proof.metadata())) });
     });
-    active.terminal = true;
     this.assertLive();
-    active.resolve(kind);
-    return;
+    active.resolve(terminal.kind);
   }
 
   private async control(frame: Record<string, unknown>, signal: AbortSignal): Promise<void> {
@@ -356,10 +352,16 @@ export class NativeRuntime {
     if (request.subtype !== "mcp_message" || request.server_name !== OWNED_SERVER) throw new ProbeError("TOOL_REJECTED");
     const mcp = object(request.message);
     if (mcp.jsonrpc !== "2.0") throw new ProbeError("PROTOCOL_REJECTED");
-    if (mcp.method === "notifications/initialized") return;
+    if (mcp.method === "notifications/initialized") {
+      if (mcp.id !== undefined) throw new ProbeError("PROTOCOL_REJECTED");
+      await this.#transport.reply(frame.request_id, { mcp_response: { jsonrpc: "2.0", id: 0, result: {} } });
+      this.assertLive();
+      return;
+    }
     if ((typeof mcp.id !== "string" && typeof mcp.id !== "number") ||
         typeof mcp.id === "number" && !Number.isSafeInteger(mcp.id)) throw new ProbeError("PROTOCOL_REJECTED");
     let result: Record<string, unknown>;
+    let responding: Active | undefined;
     if (mcp.method === "initialize") {
       const parameters = object(mcp.params);
       if (parameters.protocolVersion !== "2025-11-25" && parameters.protocolVersion !== "2024-11-05") {
@@ -376,38 +378,29 @@ export class NativeRuntime {
       ] };
     } else if (mcp.method === "tools/call") {
       const active = this.#active;
-      if (!active?.toolOpen || !active.ack || active.terminal || !this.policy.callbackProven) throw new ProbeError("TOOL_REJECTED");
-      const params = object(mcp.params);
-      if (!protocolString(params.name, TOOL_NAMES)) throw new ProbeError("TOOL_REJECTED");
-      const args = object(params.arguments);
-      // The metadata below is synthetic until root verifies a native version-specific correlation seam.
-      const meta = object(params._meta);
-      if (meta.session_id !== this.store.read().sessionId || meta.user_message_uuid !== active.intent.inputId ||
-          !boundedString(meta.tool_use_id)) throw new ProbeError("TOOL_CORRELATION_UNCONFIRMED");
-      const native = active.tools.get(meta.tool_use_id);
-      if (!native || native.name !== `mcp__${OWNED_SERVER}__${params.name}` ||
-          native.argsHash !== digest(JSON.stringify(args))) throw new ProbeError("TOOL_CORRELATION_UNCONFIRMED");
-      const key = meta.tool_use_id;
-      const hash = digest(JSON.stringify({ name: params.name, args }));
-      const prior = active.dispatched.get(key);
-      if (prior && prior.hash !== hash) throw new ProbeError("TOOL_REJECTED");
-      if (active.dispatched.size >= 64) throw new ProbeError("PROTOCOL_LIMIT");
-      const job = prior?.response ?? this.tool(params.name, args, active, signal);
-      if (!prior) active.dispatched.set(key, { hash, response: job });
-      result = await job;
+      if (!active || !this.policy.callbackProven) throw new ProbeError("TOOL_REJECTED");
+      const claim = active.proof.claim(frame.request_id, object(mcp.params), this.#initSeen);
+      try {
+        result = await active.proof.response(frame.request_id, () => this.tool(claim.name, claim.args, active, signal, claim.cancellation));
+      } catch (error) {
+        if (active.proof.cancelled(frame.request_id) || active.proof.interruptRequested &&
+            error instanceof ProbeError && error.code === "TOOL_REJECTED") return;
+        throw error;
+      }
       this.assertLive();
-      if (!active.toolOpen || active.terminal || this.#active !== active) throw new ProbeError("TOOL_REJECTED");
-      active.responsesStarted.add(key);
+      if (!active.proof.canRespond(frame.request_id)) return;
+      responding = active;
     } else throw new ProbeError("TOOL_REJECTED");
     this.assertLive();
-    await this.#transport.reply(frame.request_id, { mcp_message: { jsonrpc: "2.0", id: mcp.id, result } });
+    await this.#transport.reply(frame.request_id, { mcp_response: { jsonrpc: "2.0", id: mcp.id, result } });
     this.assertLive();
+    if (responding) responding.proof.responseWritten(frame.request_id);
   }
 
-  private async tool(name: string, args: Record<string, unknown>, active: Active, signal: AbortSignal): Promise<Record<string, unknown>> {
+  private async tool(name: string, args: Record<string, unknown>, active: Active, signal: AbortSignal, cancellation: Promise<void>): Promise<Record<string, unknown>> {
     const check = () => {
       this.assertLive();
-      if (!active.toolOpen || active.terminal || this.#active !== active) throw new ProbeError("TOOL_REJECTED");
+      if (!active.proof.open || active.proof.terminal || this.#active !== active) throw new ProbeError("TOOL_REJECTED");
     };
     check();
     let text: string;
@@ -419,7 +412,10 @@ export class NativeRuntime {
     } else throw new ProbeError("TOOL_REJECTED");
     check();
     this.store.record("TOOL_CALLBACK", { inputId: active.intent.inputId, name, argsHash: digest(JSON.stringify(args)) });
-    if (this.options.toolResponseGate) await abortable(this.options.toolResponseGate(name, signal), signal);
+    if (this.options.toolResponseGate) await abortable(Promise.race([
+      this.options.toolResponseGate(name, signal),
+      cancellation.then(() => { throw new ProbeError("TOOL_REJECTED"); }),
+    ]), signal);
     check();
     return { content: [{ type: "text", text }] };
   }
@@ -431,7 +427,7 @@ export class NativeRuntime {
     if (this.#drift) clearInterval(this.#drift);
     this.policy.close();
     if (this.#active) {
-      this.#active.toolOpen = false;
+      this.#active.proof.seal();
       this.#active.reject(this.#failure);
     }
     try {
@@ -444,7 +440,7 @@ export class NativeRuntime {
     const check = () => {
       this.store.assertLocked();
       const s = this.store.read();
-      if (!this.#closed || !this.#transport?.reaped || !this.#active?.terminal ||
+      if (!this.#closed || !this.#transport?.reaped || !this.#active?.proof.terminal ||
           s.cleanup !== "REAPED" || s.inputs.some((i) => !i.terminal)) throw new ProbeError("FILE_REJECTED");
     };
     check();
@@ -462,7 +458,8 @@ export class NativeRuntime {
       if (!this.#closed) this.fail("RUNTIME_CLOSED");
       this.#closing = (async () => {
         const cleanup = await this.#transport?.close() ?? { reaped: true, code: "REAPED" as const };
-        this.store.update((s) => { s.cleanup = cleanup.code; });
+        // A runtime that never spawned cannot overwrite a prior cleanup or UNKNOWN record.
+        if (this.#transport) this.store.update((s) => { s.cleanup = cleanup.code; });
         return cleanup;
       })();
     }

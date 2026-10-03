@@ -4,7 +4,7 @@ import { randomUUID } from "node:crypto";
 import { ProbeError, digest, readBounded, sameFile, syncDirectory } from "./owned-probe-store.js";
 import { renameSync, unlinkSync, writeFileSync, fsyncSync } from "node:fs";
 
-export const NATIVE_VERSION = "2.1.286";
+export const NATIVE_VERSION = "2.1.287";
 export const OWNED_SERVER = "owned_probe";
 export const TOOL_NAMES = ["read_selected_file", "ask_peer"] as const;
 export const NATIVE_TOOL_NAMES = TOOL_NAMES.map((name) => `mcp__${OWNED_SERVER}__${name}`);
@@ -17,7 +17,7 @@ export interface NativeEvidence {
   startup: "TASK_OVERLAY_BEFORE_EXECUTION";
   execution: "TASK_OVERLAY_PINS_RUNTIME_RELOAD";
   instructions: "PRESERVED";
-  callback: "NATIVE_TOOL_USE_ID_METADATA";
+  callback: "NATIVE_ASSISTANT_TOOL_USE";
   managed: "NO_CONFLICT" | "CONFLICT";
   initialUserMessage: "ABSENT" | "PRESENT";
   inheritedHooks: "DISABLED" | "UNCONFIRMED";
@@ -76,7 +76,7 @@ export class TaskPolicy {
     // Only isolated constructor-injected synthetic evidence can pass this guard.
     if (!e || e.provenance !== "SYNTHETIC_FIXTURE" || e.version !== NATIVE_VERSION ||
         e.startup !== "TASK_OVERLAY_BEFORE_EXECUTION" || e.execution !== "TASK_OVERLAY_PINS_RUNTIME_RELOAD" ||
-        e.instructions !== "PRESERVED" || e.callback !== "NATIVE_TOOL_USE_ID_METADATA") {
+        e.instructions !== "PRESERVED" || e.callback !== "NATIVE_ASSISTANT_TOOL_USE") {
       throw new ProbeError("EXECUTION_PRECEDENCE_UNCONFIRMED");
     }
     if (e.managed !== "NO_CONFLICT" || e.initialUserMessage !== "ABSENT" || e.inheritedHooks !== "DISABLED" ||
@@ -98,16 +98,16 @@ export class TaskPolicy {
   }
 
   close(): void { this.#closed = true; }
-  get callbackProven(): boolean { return this.options.evidence?.callback === "NATIVE_TOOL_USE_ID_METADATA"; }
+  get callbackProven(): boolean { return this.options.evidence?.callback === "NATIVE_ASSISTANT_TOOL_USE"; }
 
   overlay(): Record<string, unknown> {
     this.assertLive();
-    return { disableAllHooks: true, enabledPlugins: Object.fromEntries(this.options.knownPlugins.map((p) => [p, false])) };
+    return { disableAllHooks: true, enabledPlugins: Object.fromEntries([...this.options.knownPlugins, "cc-plugin-agents-md@builtin", "cc-plugin-telemetry@builtin"].map((p) => [p, false])) };
   }
 
   arguments(sessionId: string, resume: boolean): string[] {
     this.assertLive();
-    return ["-p", "--input-format", "stream-json", "--output-format", "stream-json", "--verbose",
+    return ["-p", "--input-format", "stream-json", "--output-format", "stream-json", "--verbose", "--replay-user-messages",
       resume ? "--resume" : "--session-id", sessionId,
       "--setting-sources", "user,project,local", "--settings", JSON.stringify(this.overlay()),
       "--tools", "", "--allowedTools", NATIVE_TOOL_NAMES.join(","), "--permission-mode", "dontAsk",

@@ -1,4 +1,4 @@
-import { mkdtempSync, mkdirSync, writeFileSync, rmSync, readFileSync, existsSync } from "node:fs";
+import { mkdtempSync, mkdirSync, writeFileSync, rmSync, readFileSync, existsSync, realpathSync } from "node:fs";
 import { join } from "node:path";
 import { randomUUID } from "node:crypto";
 import { fileURLToPath } from "node:url";
@@ -9,9 +9,9 @@ import type { Launch } from "../src/native-transport.js";
 
 export const fake = fileURLToPath(new URL("../../test/fixtures/fake-claude.mjs", import.meta.url));
 export const syntheticEvidence: NativeEvidence = {
-  version: "2.1.286", provenance: "SYNTHETIC_FIXTURE", startup: "TASK_OVERLAY_BEFORE_EXECUTION",
+  version: "2.1.287", provenance: "SYNTHETIC_FIXTURE", startup: "TASK_OVERLAY_BEFORE_EXECUTION",
   execution: "TASK_OVERLAY_PINS_RUNTIME_RELOAD", instructions: "PRESERVED",
-  callback: "NATIVE_TOOL_USE_ID_METADATA", managed: "NO_CONFLICT", initialUserMessage: "ABSENT", inheritedHooks: "DISABLED",
+  callback: "NATIVE_ASSISTANT_TOOL_USE", managed: "NO_CONFLICT", initialUserMessage: "ABSENT", inheritedHooks: "DISABLED",
 };
 export function deferred<T = void>(): { promise: Promise<T>; resolve: (value: T) => void } {
   let resolve!: (value: T) => void;
@@ -36,7 +36,7 @@ export class Fixture {
   constructor() {
     const temporary = process.env.TMPDIR;
     if (!temporary) throw new Error("SYNTHETIC_TMPDIR_REQUIRED");
-    this.directory = mkdtempSync(join(temporary, "009-synthetic-"));
+    this.directory = mkdtempSync(join(realpathSync(temporary), "009-synthetic-"));
     this.root = join(this.directory, "root");
     this.native = join(this.directory, "native");
     mkdirSync(this.root, { mode: 0o700 });
