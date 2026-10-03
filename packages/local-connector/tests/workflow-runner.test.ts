@@ -10,7 +10,7 @@ import {
 } from "../src/runtime-contracts.ts";
 import { observation, uuid, appendFixtureCompletion } from "./runtime-fixture.ts";
 import { RuntimeStore, assertRuntimeCapacity } from "../src/runtime-store.ts";
-import { readFile, writeFile, rename } from "node:fs/promises";
+import { readFile, writeFile, rename, unlink } from "node:fs/promises";
 import { join } from "node:path";
 import { performance } from "node:perf_hooks";
 import { ConnectionError } from "../src/contracts.ts";
@@ -2828,6 +2828,115 @@ test("should refuse replacement or local deletion while runtime evidence is unre
     await f.runner().run({ once: true });
     await assert.rejects(f.runner(new SyntheticAdapter()).removeLocal(), { code: "RUNTIME_BUSY" });
     assert.ok(await f.profile.read());
+  } finally {
+    await f.close();
+  }
+});
+test("should preserve authority error priority for local removal with unresolved evidence", async () => {
+  for (const mismatch of ["scope", "context"]) {
+    const f = await runnerFixture();
+    try {
+      f.queue();
+      f.adapter.executeHook = async () => {
+        throw new Error("SYNTHETIC_PROVIDER_FAILURE");
+      };
+      await f.runner().run({ once: true });
+      assert.equal((await f.store.read())!.attempts[0].state, "UNKNOWN");
+      const originalProfile = await readFile(f.profile.file),
+        record = await readFile(f.store.file);
+      await assert.rejects(f.runner(new SyntheticAdapter()).removeLocal(), {
+        code: "RUNTIME_BUSY",
+      });
+      assert.deepEqual(await readFile(f.profile.file), originalProfile);
+      assert.deepEqual(await readFile(f.store.file), record);
+      const state = (await f.profile.read())!;
+      if (mismatch === "scope") state.deviceId = uuid();
+      else state.mappings[0].nativeSessionId = uuid();
+      await f.profile.transaction(() => f.profile.write(state));
+      const profile = await readFile(f.profile.file),
+        calls = f.requests.length,
+        adapter = new SyntheticAdapter();
+      await assert.rejects(f.runner(adapter).removeLocal(), { code: "AUTHORITY_LOST" });
+      assert.deepEqual(await readFile(f.profile.file), profile);
+      assert.deepEqual(await readFile(f.store.file), record);
+      assert.equal(f.requests.length, calls);
+      assert.equal(adapter.starts, 0);
+      assert.equal(adapter.prepares, 0);
+      assert.equal(adapter.validates, 0);
+      assert.equal(adapter.interrupts, 0);
+      assert.equal(adapter.closed, false);
+    } finally {
+      await f.close();
+    }
+  }
+});
+test("should remove a valid local mapping without a saved runtime", async () => {
+  const f = await runnerFixture();
+  try {
+    const profile = await readFile(f.profile.file),
+      calls = f.requests.length,
+      adapter = new SyntheticAdapter(),
+      result = { state: "removed", agentId: f.scope.agentId };
+    await unlink(f.store.file);
+    await assert.rejects(readFile(f.store.file), { code: "ENOENT" });
+    assert.equal(await f.store.read(), undefined);
+    let mutations = 0;
+    const removed = await f.runner(adapter).guardLocalRemoval(async (proof) => {
+      mutations++;
+      proof.check();
+      await proof.validate();
+      await proof.remove();
+      proof.check();
+      return result;
+    });
+    assert.equal(removed, result);
+    assert.equal(mutations, 1);
+    await assert.rejects(readFile(f.store.file), { code: "ENOENT" });
+    assert.equal(await f.store.read(), undefined);
+    assert.deepEqual(await readFile(f.profile.file), profile);
+    assert.equal(f.requests.length, calls);
+    assert.equal(adapter.starts, 0);
+    assert.equal(adapter.prepares, 0);
+    assert.equal(adapter.validates, 0);
+    assert.equal(adapter.interrupts, 0);
+    assert.equal(adapter.closed, false);
+  } finally {
+    await f.close();
+  }
+});
+test("should refuse a second local removal using the same proof", async () => {
+  const f = await runnerFixture();
+  try {
+    const independent = await runnerFixture();
+    try {
+      const profile = await readFile(f.profile.file),
+        independentProfile = await readFile(independent.profile.file),
+        independentRecord = await readFile(independent.store.file),
+        calls = f.requests.length,
+        independentCalls = independent.requests.length,
+        adapter = new SyntheticAdapter();
+      assert.ok(await f.store.read());
+      await f.runner(adapter).guardLocalRemoval(async (proof) => {
+        await proof.remove();
+        await assert.rejects(readFile(f.store.file), { code: "ENOENT" });
+        await assert.rejects(proof.remove(), { code: "RUNTIME_CLOSED" });
+        proof.check();
+      });
+      await assert.rejects(readFile(f.store.file), { code: "ENOENT" });
+      assert.equal(await f.store.read(), undefined);
+      assert.deepEqual(await readFile(f.profile.file), profile);
+      assert.deepEqual(await readFile(independent.profile.file), independentProfile);
+      assert.deepEqual(await readFile(independent.store.file), independentRecord);
+      assert.equal(f.requests.length, calls);
+      assert.equal(independent.requests.length, independentCalls);
+      assert.equal(adapter.starts, 0);
+      assert.equal(adapter.prepares, 0);
+      assert.equal(adapter.validates, 0);
+      assert.equal(adapter.interrupts, 0);
+      assert.equal(adapter.closed, false);
+    } finally {
+      await independent.close();
+    }
   } finally {
     await f.close();
   }

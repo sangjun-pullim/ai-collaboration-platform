@@ -33,7 +33,7 @@ risk-surface: permission
 
 ## Implementation Steps
 
-### [ ] Step 1: 기존 제거 동작의 경계 검사
+### [x] Step 1: 기존 제거 동작의 경계 검사
 
 **File**: `packages/local-connector/tests/workflow-runner.test.ts`
 
