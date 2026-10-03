@@ -1,5 +1,5 @@
 ---
-verified-against: null
+verified-against: 1eac6aee424d6acdc4ba89afac4e3683db04828d
 sources:
   - src/**
   - packages/local-connector/src/**
@@ -8,7 +8,7 @@ sources:
 ---
 # 아키텍처
 
-이 문서의 전체 제품 구조는 **손으로 작성한 설계 제안**이다. 현재 소스에는 독립 로컬 런타임 실험·모의 웹, 실제 사람 인증·방 접근, 로컬 기기 등록과 내구 질문·답변·실행 조정이 있다. 중앙 조정은 실제 DB·HTTP·가짜 driver 통합 18개와 workflow browser 4건을 통과했다. 독립 구현 리뷰 round1도 미해결 CRITICAL/HIGH 없이 통과했다. 007에서 로컬 Codex 실행기를 구현·검증 중이며 등록된 AI의 `unverified` 표시는 유지한다. 실제 provider 왕복·기존 설정 유지·독립 구현 리뷰와 Realtime는 미완료다. Git 저장소가 없어 commit 기반 freshness stamp를 검증할 수 없으며 확인하지 않은 hash를 쓰지 않는다.
+이 문서는 전체 제품 설계와 현재 소스의 시스템 경계를 설명한다. 2026-10-02의 Git 기준 및 작업트리를 확인했다. 독립 런타임 실험·모의 웹, 사람 인증·방 접근, 기기 등록, 내구 조사 조정과 로컬 Codex 실행기가 있다. 공개 등록의 `unverified` 표시는 유지한다. 현재 진행 상태·검증 수치·남은 통합은 [개발 순서와 검증 계획](delivery-and-validation.md#현재-진행-상태)을 따른다. freshness stamp는 Git 기준이며 미커밋 소스는 `git diff HEAD -- <sources>`로 함께 확인한다.
 
 제품 범위는 [PRD](PRD.md), 실행·복구 불변식은 [비즈니스 로직](BUSINESS-LOGIC.md)이 정본이다. 확정된 중요한 결정의 이유는 [ADR](ADR.md), 미선택 기술안과 대안은 [미결 선택](decisions-and-open-items.md#검토-중인-기술-선택)을 따른다.
 
@@ -52,9 +52,11 @@ flowchart LR
 
 두 PC의 연결은 outbound HTTPS/실시간 연결이다. 외부에서 PC로 접속하기 위한 공개 포트나 원격 셸을 두지 않는다. 저장소 파일과 공급자 인증은 로컬에서 다루고, 승인된 공유 정보가 클라우드를 통과한다.
 
+그림은 양쪽 AI를 연결한 공동 조사 예시다. 사람→상대 AI의 직접 질문에서는 질문자 쪽 로컬 연결 프로그램·AI·저장소가 선택 사항이다. 질문자 웹→중앙 API/DB→대상 로컬 연결→AI→같은 질문의 답변 순서로 동작한다. [010](impl-spec/archive/010-human-direct-questions.md)은 기존 두 AI의 시작 계약을 유지하고 별도 DIRECT cycle에 사람 발신자와 대상 실행 하나를 기록한다. 구현 검증과 후속 연동은 [진행 상태](delivery-and-validation.md#현재-진행-상태)를 따른다. [직접 질문 규칙](BUSINESS-LOGIC.md#사람이-상대-ai에-직접-질문하는-흐름)
+
 ‘AI를 로컬에서 실행’은 도구·저장소를 다루는 agent 프로세스가 PC에 있다는 뜻이다. 일반 Codex/Claude 연동의 모델 호출은 해당 공급자 서비스로 나가며 필요한 입력이 공급자에게 전달된다. 모든 추론과 코드 처리가 PC 안에서만 끝나는 구조로 표현하지 않는다.
 
-현재 구현은 Next.js/TypeScript 웹·제어 API, Node.js 24/TypeScript 로컬 연결 프로그램과 Supabase Auth/Postgres를 사용한다. 로컬 Codex 실행기는 검증 중이며 Realtime·Claude는 후속 통합이다. 개인·비상업용 초기 배포는 Vercel Hobby + Supabase Free를 기준으로 하며 실제 배포·계정 적격성은 별도로 검증한다. 조사 대상 저장소의 프레임워크·DB·업무 모델을 제품의 필수 의존성으로 삼지 않는다. 선택의 이유는 [ADR-002](ADR.md#adr-002--첫-구현의-언어와-중앙로컬-경계)에 기록한다.
+현재 구현은 Next.js/TypeScript 웹·제어 API, Node.js 24/TypeScript 로컬 연결 프로그램과 Supabase Auth/Postgres를 사용한다. 로컬 Codex 실행기는 같은 중앙 계약의 소유 맥락·저널·복구를 제공한다. Realtime·Claude 통합과 배포 상태는 개발 순서 문서를 따른다. 개인·비상업용 초기 배포는 Vercel Hobby + Supabase Free를 기준으로 한다. 조사 대상 저장소의 프레임워크·DB·업무 모델을 제품의 필수 의존성으로 삼지 않는다. 선택의 이유는 [ADR-002](ADR.md#adr-002--첫-구현의-언어와-중앙로컬-경계)에 기록한다.
 
 방·질문·근거·AI binding은 업무 도메인과 독립된 협업 모델이다. API 연동 외에 변경 영향이나 다른 공동 문제도 목표와 근거를 입력해 조사한다. 특정 서비스의 업무 테이블·판매 채널 ID·전용 처리 흐름을 핵심 모듈에 내장하지 않는다.
 
@@ -117,7 +119,9 @@ Vercel은 화면과 짧은 제어 API를 제공하고 AI 실행·지속 연결�
 
 현재 기기 인증은 사람 JWT와 분리한 opaque bearer다. 일회용 code와 로컬 proof는 서로 다른 256-bit 난수이며 승인 유효 기간은 5분, 기기 credential은 1시간이다. 공개 RPC는 원문 bearer를 hash해 저장 hash와 대조하고 현재 사람·조직·방·기기 scope를 다시 검사한다. 교환/회전/등록/교체는 로컬 선기록과 제한된 동일-operation receipt로 응답 유실을 복구한다. 권한 취소 뒤 재초대해도 옛 연결을 되살리지 않는다.
 
-`packages/local-connector/`는 macOS·Node 24 CLI다. canonical root와 native session mapping은 0700/0600 private state에, 사용자가 확인한 별칭·Git metadata만 중앙에 둔다. 007은 v1 profile과 별도로 binding별 설정·소유 맥락·실행/outbox 저널을 저장하며 짧은 credential 잠금과 실행/session 잠금을 분리한다. 기존 등록 locator만으로 실행을 허용하지 않는다. 공식 Codex stdio child의 소유권·지원 모델·선택 파일을 검증한다. 사용자 확정에 따라 기존 개인·프로젝트 지침과 도구 설정을 적용하며 그 존재만으로 준비를 거절하지 않는 방식으로 보정 중이다. 제품 파일 도구의 allowlist를 native/MCP 전체 접근의 격리로 간주하지 않는다. 실제 provider 수용은 진행 중이고 공개 runtime 표시는 `codex/registered/unverified`를 유지한다. 로컬 명령은 [온보딩](onboarding-and-settings.md#로컬-codex-실행-준비), 웹·Claude의 후속 설정은 [실행 설정](ai-runtime-integration.md#참가자별-도구모델effort-선택)을 따른다.
+`packages/local-connector/`는 macOS·Node 24 CLI다. canonical root와 native session mapping은 0700/0600 private state에, 사용자 별칭·Git metadata만 중앙에 둔다. v1 profile과 별도로 binding별 설정·소유 맥락·실행/outbox 저널을 저장하며 짧은 credential 잠금과 실행/session 잠금을 분리한다. 기존 등록 locator만으로 실행을 허용하지 않는다. 공식 Codex stdio child의 소유권·모델·선택 파일을 검증하고 개인·프로젝트 지침과 설정 파일을 유지한다. 공동 조사에서는 읽기 전용 native 권한과 일시적인 기능 제한으로 미검증 MCP/plugin/hook 실행을 막는다. 공개 표시는 `codex/registered/unverified`를 유지한다. 로컬 명령은 [온보딩](onboarding-and-settings.md#로컬-codex-실행-준비), 참가자별 후속 설정은 [실행 설정](ai-runtime-integration.md#참가자별-도구모델effort-선택)을 따른다.
+
+로컬 실행 기록은 `RuntimeStore`가 주 파일과 상태 전이를 관리하고, 내부 `RuntimeArchive`가 완료된 요청의 원문 보관 파일을 검증한다. `WorkflowRunner`는 실행·파일 읽기·서버 응답 저장에 앞서 종결과 완료 전송 공간을 확보한다. 보관 증거는 새 실행 권한이나 새 저장 세션으로 사용하지 않는다. [보관·용량 규칙](ai-runtime-integration.md#로컬-실행-기록-보관과-용량)과 [현재 검증 상태](delivery-and-validation.md#현재-진행-상태)를 따른다.
 
 opaque device bearer를 Supabase Realtime JWT로 사용할 수 있다고 가정하지 않는다. Realtime 인증과 사람 HttpOnly cookie의 연결은 후속 단계에서 검증하며 중앙 signing/admin key를 로컬 앱에 배포하지 않는다. 현재 등록 프로그램은 고정 HTTP API만 사용한다.
 

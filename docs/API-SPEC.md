@@ -1,5 +1,5 @@
 ---
-verified-against: null
+verified-against: 1eac6aee424d6acdc4ba89afac4e3683db04828d
 sources:
   - src/app/api/**
   - src/features/room-access/contracts.ts
@@ -13,7 +13,7 @@ sources:
 ---
 # 사람 인증·조사방·기기·실행 조정 계약
 
-2026-10-01의 구현 소스를 확인했다. Git 기준 commit이 없어 freshness stamp를 검증할 수 없으며 `verified-against`를 비워 둔다. 사람 인증·기기 등록 계약은 실제 통합·브라우저·독립 리뷰를 통과했다. 실행 조정은 실제 DB·HTTP·가짜 driver 통합 18개와 workflow browser 4건을 통과했고 독립 구현 리뷰 round1도 미해결 CRITICAL/HIGH 없이 통과했다. 이 API의 실행 보고와 실제 provider 호출 검증은 별도로 판단한다.
+2026-10-02의 Git 기준 소스와 작업트리를 확인했다. 이 문서는 현재 사람 cookie Auth·기기 bearer·내구 조사 계약을 설명한다. 실행 보고와 실제 provider 종결의 검증은 구분한다. 진행 상태와 검증 수치는 [개발 순서와 검증 계획](delivery-and-validation.md#현재-진행-상태)에 유지한다.
 
 ## 공통 요청과 응답
 
@@ -66,7 +66,11 @@ sources:
 
 ## 내구 조사와 실행 조정
 
-사람의 `/api/investigations/<action>`은 `read`, `speak`, `start`, `interrupt`, `pause`, `resume`만 허용한다. 현재 cookie 사용자·방 역할로 권한을 계산한다. 공동 발언은 실행을 만들지 않으며, 시작은 자기 origin과 다른 참가자의 peer binding·현재 epoch/revision·준비 보고·공유 확인을 요구한다. `resume`의 room mode는 intake만 재개하고 cycle mode는 원래 origin 소유자의 명시적 새 generation을 만든다. observer는 읽기만 가능하다.
+사람의 `/api/investigations/<action>`은 `read`, `speak`, `start`, `interrupt`, `pause`, `resume`, `ask`, `cancel`만 허용한다. 현재 cookie 사용자·방 역할로 권한을 계산한다. 공동 발언은 실행을 만들지 않는다. `start`는 자기 origin과 다른 참가자의 peer binding·현재 epoch/revision·준비 보고·공유 확인을 요구한다. `resume`의 room mode는 intake만 재개하고 cycle mode는 원래 origin 소유자의 명시적 새 generation을 만든다. observer는 읽기만 가능하다.
+
+`ask`는 질문자 AI·기기·경로 없이 다른 소유자의 준비된 대상 하나에 질문한다. 본문은 `protocol:1`, `roomId`, `operationId`, `expectedUserId`, `targetAgentId`, `targetEpoch`, `expectedRoomRevision`, `publicText`, `confirmed:true`다. `cancel`의 본문은 `protocol:1`, `roomId`, `operationId`, `expectedUserId`, `requestId`, `expectedRoomRevision`이며 질문자나 대상 소유자가 해당 직접 질문 하나만 취소·중단할 수 있다. UUID `expectedUserId`는 화면을 연 뒤 로그인 주체가 바뀌지 않았다는 사전 조건이다. 서버는 현재 Auth가 없으면 `UNAUTHENTICATED`, 식별자가 다르면 `FORBIDDEN`을 반환한다. 이 필드로 다른 사용자의 권한을 얻을 수 없다. 원본 본문의 크기·필드를 검사한 뒤 사전 조건을 제거하고 실제 Auth를 기준으로 기존 권한·receipt를 처리한다. 동일 사람·operation·정규화 본문의 재전달은 저장된 결과를 반환한다.
+
+직접 질문의 cycle은 `mode:DIRECT`, `targetAgentId`, `targetEpoch`, `generation:1`, `runsReserved:1`, `peerRoundsReserved:0`, `canInterrupt`를 반환한다. HUMAN 질문 하나에 기존 PEER 실행 하나만 연결하고 자동 continuation은 만들지 않는다. 원래 AI_PAIR cycle과 기기의 PEER wire 형태는 유지한다. 실제 검증 범위와 남은 provider 연동은 [진행 상태](delivery-and-validation.md#현재-진행-상태)를 따른다.
 
 기기의 `/api/workflow/<action>`은 `ready`, `poll`, `claim`, `start-intent`, `lease`, `question`, `complete`, `interrupt-ack`, `observe`만 허용한다. 현재 opaque bearer에서 자기 binding scope를 계산하고 각 attempt의 requestId·attemptId·fence·bindingEpoch를 대조한다. 중앙 API가 native session ID·명령·모델 설정을 받지 않는다.
 
