@@ -1,5 +1,5 @@
 ---
-status: active
+status: done
 date: 2026-10-03
 risk-surface: permission
 ---
@@ -9,7 +9,7 @@ risk-surface: permission
 
 ## Context
 
-[Claude 호환성 검사](009-claude-code-runtime-compatibility.md)의 private 검증기에만 반영된 진행 알림·도구 응답·보류 요청 취소를 공개 실험 코드에 반영한다. 현재 공개 실행기는 입력 전 init과 합성 `_meta`를 요구하고, 실제 응답 전 도구 완료를 기록한다. 실제 실행 승인 대기 동안 합성 실행기로 재현·보정할 수 있는 책임이다. [PRD의 실제 연결 범위](../PRD.md)를 위한 선행 작업이며, 이 계획의 완료가 실제 Claude 또는 두 PC 검증 완료를 뜻하지 않는다.
+[Claude 호환성 검사](../009-claude-code-runtime-compatibility.md)의 private 검증기에만 반영된 진행 알림·도구 응답·보류 요청 취소를 공개 실험 코드에 반영한다. 현재 공개 실행기는 입력 전 init과 합성 `_meta`를 요구하고, 실제 응답 전 도구 완료를 기록한다. 실제 실행 승인 대기 동안 합성 실행기로 재현·보정할 수 있는 책임이다. [PRD의 실제 연결 범위](../../PRD.md)를 위한 선행 작업이며, 이 계획의 완료가 실제 Claude 또는 두 PC 검증 완료를 뜻하지 않는다.
 
 공식 CLI 2.1.287과 고정 SDK 0.3.287 타입·공식 소스의 형식만 참고한다. private 준비 검사 105개를 공개 검사 75개에 더하거나 새 공개 코드의 검토 근거로 대체하지 않는다. 기존 실제 입력 3회의 UNKNOWN과 원래 승인·예산·기록은 유지한다. 추가 실제 입력 승인·예산·저장소 생성은 이 계획에 포함하지 않는다. 009는 실제 호환성 판정까지 active로 유지한다.
 
@@ -25,6 +25,7 @@ risk-surface: permission
 8. `experiments/claude-code-runtime/test/native-transport-replay.test.ts` — 기본 replay 인수의 추가에 맞춰 활성·비활성 입력을 명시적으로 구성한다.
 9. `experiments/claude-code-runtime/README.md` — 실제 실행 거절과 합성 검사 범위·내부 책임을 설명한다.
 10. `docs/delivery-and-validation.md` — 검증 수치·진행·남은 실제 검사를 이 정본에 기록한다.
+11. `docs/ARCHITECTURE.md` — 합성 실행기의 내부 책임과 제품 연결기 분리를 설명한다.
 
 ## Affected Dependents
 
@@ -37,7 +38,7 @@ risk-surface: permission
 
 ## Implementation Steps
 
-### [ ] Step 1: 공개 코드의 실패 재현
+### [x] Step 1: 공개 코드의 실패 재현
 
 **File**: `test/native-runtime.test.ts`, `test/native-input-proof.test.ts`, `test/native-transport-replay.test.ts`, `test/helpers.ts`, `test/fixtures/fake-claude.mjs` — 위 실험 디렉터리 기준.
 
@@ -45,7 +46,7 @@ risk-surface: permission
 - 성공 결과의 선택적 `terminal_reason`, 요청 없는 aborted 결과, 도구 응답 쓰기 실패, 공식 MCP 응답 형식·초기 연결, 진행·명령 알림, 보류 파일 취소, 이전 cleanup 실패 뒤 재시작의 의미 있는 실패를 먼저 재현한다.
 - fake만 실행한다. 개인 native 이력·설정·인증 파일을 fixture에 읽거나 복사하지 않는다. private permit·원래 기록을 검사 구현에 가져오지 않는다.
 
-### [ ] Step 2: 입력 검증과 실행 책임 연결
+### [x] Step 2: 입력 검증과 실행 책임 연결
 
 **File**: `src/native-runtime.ts`, `src/native-input-proof.ts`, `src/task-policy.ts`.
 
@@ -59,11 +60,11 @@ risk-surface: permission
 - `thinking_tokens`는 정확한 7필드·소유 session/input·정수와 최대 65,536개를 검증하고 개수·마지막 값만 보관한다. 알림마다 fsync하지 않는다. `command_lifecycle`은 정확한 5필드·6개 상태·소유 command·UUID, 최대 16개와 canonical 중복을 확인한다. 두 알림은 ACK·도구 권한·종결·재실행을 만들지 않는다. 종결 후 명령 알림은 기존 terminal을 바꾸지 않는다.
 - host interrupt 의도를 control 전송 전에 기록한다. 보류 중인 소유 파일 callback에 대한 정확한 2필드 `control_cancel_request`만 처리한다. 조기·외부·중복 취소는 거절하고, 취소 자체에는 reply·종결을 만들지 않는다. 해당 callback의 대기와 늦은 응답을 닫되 typed result 수신은 계속한다.
 - 결과는 ACK·신원·assistant 연결, 안전 정수 `num_turns` 1…64, UUID·빈 대기열, `resume_reason`·`local_command` 부재를 확인한다. 정상 성공은 `terminal_reason` 없음 또는 `completed`와 모든 실제 도구 응답 완료를 요구한다. `INTERRUPTED`는 host interrupt 의도와 명시적 aborted 종결을 모두 요구한다. 중단과 정상 완료가 경합한 경우 기존처럼 실제 `COMPLETED`를 보존한다. 중단 receipt나 취소만으로 종결을 확정하지 않는다.
-- 정확한 소유 이력의 마지막 result hash와 입력 ACK·prompt 연결을 검증한다. 결과 UUID가 선택적이어도 이력 provenance와 마지막 입력 연결을 약화하지 않는다. 개인 이력 탐색·native 이력 주입은 하지 않는다.
+- 관찰한 소유 이력과 저장 이력을 순서·개수까지 양방향 대조하고, 모든 입력의 ACK·assistant·도구 결과·result 누락, 중복과 순서 변경을 거절한다. 마지막 result hash와 입력 ACK·prompt 연결도 검증한다. 결과 UUID가 선택적이어도 이력 provenance와 입력 연결을 약화하지 않는다. 개인 이력 탐색·native 이력 주입은 하지 않는다.
 - 초기 state 외에는 다음 initialize 전에 이전 cleanup `REAPED`를 요구한다. `CLEANUP_INCOMPLETE`와 이전 시작 뒤 남은 `NOT_STARTED`, UNKNOWN·저장 실패는 다음 spawn/슬롯 소비를 막는다. 저장 실패에도 실제 child 정리를 시도하고 저장 실패를 성공으로 숨기지 않는다. 기존 close 반환·오류 계약을 유지한다.
 - TaskPolicy의 `SYNTHETIC_FIXTURE` admission과 정확한 fake executable guard를 유지한다. `--replay-user-messages`와 공식 근거가 있는 두 내장 plugin의 작업별 비활성화를 반영하되 개인 설정 파일을 변경하지 않는다.
 
-### [ ] Step 3: 검증·독립 리뷰·문서 완료
+### [x] Step 3: 검증·독립 리뷰·문서 완료
 
 **File**: 위 소스·검사, 실험 README, `docs/delivery-and-validation.md`, 이 명세.
 
@@ -86,7 +87,7 @@ risk-surface: permission
 - `should cancel only the interrupted held file callback` — 정확한 요청만 취소, 조기·외부·중복·늦은 gate 응답 거절, 취소 reply 0회와 typed 종결 누락 UNKNOWN.
 - `should preserve natural completion racing interrupt` — 기존 완료 경합 계약 유지.
 - `should refuse restart after incomplete cleanup or cleanup persistence failure` — 실제 child 정리·다음 spawn 0회·추가 슬롯 0회·기존 terminal/UNKNOWN 불변.
-- `should resume the owned synthetic history after process cleanup` — 마지막 result hash와 ACK/prompt 연결, 새 파일 snapshot, 외부·변조·누락 이력 거절.
+- `should resume the owned synthetic history after process cleanup` — 관찰한 기록의 순서·개수와 마지막 result hash·ACK/prompt 연결, 새 파일 snapshot, 외부·변조·중간 assistant·도구 결과·이전 입력 누락·중복·순서 변경 거절, 거절 뒤 spawn·추가 슬롯 0개.
 - 기존 공유 3슬롯·불명확 write·개인 설정 drift·scope·무입력·admission·정확한 transport replay 검사를 유지한다.
 
 ## Risks
@@ -110,3 +111,4 @@ risk-surface: permission
 |---------|----------|-------------|-----------|
 | Plan round1: 기본 replay 인수와 비활성 검사 충돌 | HIGH | ACCEPTED — ROUND2 PASS | replay 검사 파일을 변경 대상에 추가하고 활성·비활성 인수 구성을 명시했다. 기존 거절 기대는 유지한다. |
 | Plan round1: 합성 전용 MCP 응답과 알림 무응답 | HIGH | ACCEPTED — ROUND2 PASS | `mcp_response`와 초기 연결·알림의 `id: 0` 응답을 Step 1·2와 검사에 추가했다. 보류 취소의 무응답과 구분한다. |
+| Implementation round1: 관찰한 이력의 부분 누락 허용 | HIGH | ACCEPTED — ROUND2 PASS | 전체 기록의 순서·개수·hash를 양방향 대조했다. 같은 H1 대상 RED 10개 중 8개 실패→GREEN 10/10·전체 152/152, 거절 뒤 spawn·추가 슬롯 0개와 정상 재개를 확인했다. 새 독립 리뷰 C0/H0/M0/L0/INFO0을 통과했다. |

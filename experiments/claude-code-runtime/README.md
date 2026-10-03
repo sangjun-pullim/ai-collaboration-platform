@@ -8,8 +8,9 @@ permission to execute the installed CLI. It imports no root, connector, SDK or s
 
 The supervisor's current native target is the unmodified official Claude Code CLI
 **2.1.287** using the user's existing direct native login. Static SDK **0.3.287** types
-inform that diagnostic. This package's original **2.1.286** fixture is synthetic and
-does not attest native compatibility. No SDK is installed as a dependency or executed.
+inform the public protocol checks and private diagnostic. This package's **2.1.287**
+fixture is synthetic and does not attest native compatibility. No SDK is installed
+as a dependency or executed.
 
 **Every production command currently refuses with
 `EXECUTION_PRECEDENCE_UNCONFIRMED` before launching a provider.** There is no CLI flag,
@@ -34,13 +35,14 @@ proposed followup does not authorize an automatic retry or enable this package.
 
 Other native facts are independently unverified:
 
-- A zero-input native session's identity ACK, durable materialization and fresh-process
+- A zero-input native session's identity init, durable materialization and fresh-process
   resume. Initialization success or `getSessionMessages=[]` does not prove persistence.
 - The exact on-disk native history schema/location and full owned-history proof.
   The exact-file reader is synthetic, accepts only the reserved UUID filename, never
   lists sessions, and is not wired to a guessed personal history path in the CLI.
-- Native tool-use-to-MCP dispatch correlation. Fixture `_meta` fields are explicitly
-  synthetic, not claimed official Claude fields. Missing native evidence must refuse.
+- Actual native tool-use-to-MCP dispatch correlation. The synthetic runtime checks a
+  unique observed assistant tool without requiring `_meta`; legacy fixture `_meta` is
+  explicitly synthetic. These checks do not supply actual native admission evidence.
 - Version/host support for optional applied effort, same-input result correlation,
   completed/aborted terminal reasons and durable typed-result recovery.
 - Effective task permission and instruction preservation under the user's managed
@@ -68,8 +70,36 @@ npm run lint -- --debug
 
 Lint's dedicated inventory is `src/**/*.ts`, `test/**/*.ts` and
 `test/fixtures/**/*.mjs`, including the fake subprocess. Root experiment ignores are
-not used. The twelve spec test names remain exact; subtests cover failure variants.
+not used. The original twelve spec test names remain exact; additional regression
+checks cover protocol and owned-history failure variants.
 Fake processes use only isolated synthetic files/environment and no network fallback.
+
+## Internal protocol responsibilities
+
+- `NativeRuntime` owns durable input/budget operations, selected files, transport,
+  settings drift and child cleanup. It compares the entire observed owned history
+  with stored records in order and count before any fresh-process resume.
+- `NativeInputProof` owns one input's identity/ACK/prompt/assistant linkage, unique
+  tool dispatch, response-written evidence, informational notifications and typed
+  terminal. It performs no file/process/timer/budget operations.
+- `NativeTransport` owns bounded stdio writes, exact control replay, draining and
+  owned child reap. `OwnedProbeStore` owns the existing locked/fsynced journal and
+  shared three-slot budget; neither storage schema nor budget contract is expanded.
+
+Control initialization may precede native init; init must be validated before any
+assistant, tool or terminal is accepted. MCP replies use `mcp_response`, including
+an outer `id: 0` response for `notifications/initialized`. Tool completion is recorded
+only after the response write succeeds. A cancelled held file request gets no reply
+and is not itself a terminal. Informational progress is bounded without per-frame
+fsync and cannot grant tool or retry permission. A confirmed natural completion is
+preserved when it races a host interrupt.
+
+History deletion, duplication or reordering refuses before provider spawn or an
+additional input slot. Incomplete cleanup or cleanup-persistence failure also blocks
+restart. Original failure logs and actual unresolved input records remain immutable.
+Public synthetic checks and their independent review are recorded in
+[delivery and validation](../../docs/delivery-and-validation.md#현재-진행-상태).
+They do not approve actual CLI execution or register a Claude product adapter.
 
 ## Supervisor-owned approval budget
 
@@ -140,7 +170,8 @@ No `shouldQuery:false`, priming turn, rename materialization, unrelated session 
 authentication copy, persistent settings rewrite or private profile substitution is allowed.
 
 Task arguments preserve user/project/local settings sources and omit model/effort
-requests. They apply hooks disabled, known plugins explicitly false, no built-ins,
+requests. They enable exact user-message replay and apply hooks disabled, configured
+plugins plus the two source-verified built-in plugins explicitly false, no built-in tools,
 strict empty inherited MCP config and only two SDK-hosted tools registered over
 initialize. Empty objects alone do not establish removal of inherited execution.
 Native authentication/proxy/certificate/custom environment variables remain native-owned;
@@ -183,6 +214,6 @@ completion/interrupt: typed evidence / ACK separately / UNKNOWN
 cleanup: REAPED | CLEANUP_INCOMPLETE
 ```
 
-No actual evidence, completed spec marker, review approval or Claude product registration
-is claimed here. The supervisor owns the independent review, native opt-in, maximum-three
-input acceptance, root docs and follow-up provider contract.
+Synthetic checks and their independent review do not establish actual native acceptance,
+completion of spec 009 or Claude product registration. The supervisor owns the native
+opt-in, maximum-three input acceptance, root docs and follow-up provider contract.

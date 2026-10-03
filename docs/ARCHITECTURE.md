@@ -129,6 +129,8 @@ Vercel은 화면과 짧은 제어 API를 제공하고 AI 실행·지속 연결�
 
 로컬 실행 기록은 `RuntimeStore`가 주 파일과 상태 전이를 관리하고, 내부 `RuntimeArchive`가 완료된 요청의 원문 보관 파일을 검증한다. `WorkflowRunner`는 실행·파일 읽기·서버 응답 저장에 앞서 종결과 완료 전송 공간을 확보한다. 한 저장 안에서는 보관 원문·해석 결과를 재사용하고 이전·다음 기록과의 관계를 각각 검증한다. 내부 모듈이 열린 파일과 현재 경로를 검증 범위 전후에 재대조하고 정리하며, 저장이나 호출 사이에는 결과를 보관하지 않는다. 선택 파일 도구의 저장 예약은 검증한 snapshot의 바이트 크기로 계산하며 실제 읽기 권한·변경 감지는 기존 파일 정책이 계속 확인한다. 보관 증거는 새 실행 권한이나 새 저장 세션으로 사용하지 않는다. [보관·용량 규칙](ai-runtime-integration.md#로컬-실행-기록-보관과-용량)과 [현재 검증 상태](delivery-and-validation.md#현재-진행-상태)를 따른다.
 
+`experiments/claude-code-runtime/`의 합성 실행기는 제품 연결기와 분리한다. `NativeRuntime`이 입력·예산·선택 파일·입출력·정리를 소유하고, 내부 `NativeInputProof`는 입력 하나의 신원·ACK·도구 연결·실제 응답 완료·종결 검증만 소유한다. 입력 증명은 파일·프로세스·타이머·예산을 만들지 않는다. 재개 전에는 관찰한 소유 이력과 저장된 전체 기록의 순서·개수·hash를 대조한다. 기존 transport와 잠금·저장 형식은 유지하며 합성 검사로 실제 Claude 실행 허가나 제품 등록을 만들지 않는다. 실제 실행의 제한과 검증 범위는 [실험 설명](../experiments/claude-code-runtime/README.md)과 [진행 정본](delivery-and-validation.md#현재-진행-상태)을 따른다.
+
 opaque device bearer를 Supabase Realtime JWT로 사용할 수 있다고 가정하지 않는다. Realtime 인증과 사람 HttpOnly cookie의 연결은 후속 단계에서 검증하며 중앙 signing/admin key를 로컬 앱에 배포하지 않는다. 현재 등록 프로그램은 고정 HTTP API만 사용한다.
 
 현재 브라우저에도 session JWT를 읽는 경로가 없다. 후속 전달 후보는 사람 cookie/기기 bearer로 인증한 durable 조회와 서버 내부 JWT를 사용하는 제한된 Realtime 알림 중계다. 위 그림의 Realtime→웹 연결은 아직 구현하지 않았다. 변경 알림은 공개 hint만 전달하고 정본을 재조회하며, 열린 연결의 권한 취소·만료·cookie 갱신과 종료를 실제 검증한다. 공식/설치 소스 조사 범위는 [S19](sources.md#s19)를 따른다.
