@@ -1,0 +1,174 @@
+import { appendFileSync, existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { join } from "node:path";
+import { createInterface } from "node:readline";
+import { randomUUID } from "node:crypto";
+
+// This fixture models stream-json, not native Claude implementation or policy precedence.
+const mode = process.env.FAKE_MODE ?? "normal";
+const argv = process.argv.slice(2);
+const sessionId = argv[argv.indexOf(argv.includes("--resume") ? "--resume" : "--session-id") + 1];
+const directory = process.env.FAKE_NATIVE_DIR;
+const history = join(directory, `${sessionId}.jsonl`);
+const logPath = process.env.FAKE_LOG;
+const pending = new Map();
+let input;
+let replies = 0;
+let fileText = "";
+let priorText = "";
+let replayInitialize;
+let replayRequestId;
+
+mkdirSync(directory, { recursive: true, mode: 0o700 });
+if (existsSync(history)) {
+  const records = readFileSync(history, "utf8").trim().split("\n").filter(Boolean).map(JSON.parse);
+  priorText = records.filter((record) => record.type === "result").at(-1)?.result ?? "";
+}
+function log(event, data = {}) { appendFileSync(logPath, JSON.stringify({ event, ...data }) + "\n", { mode: 0o600 }); }
+function send(frame, persist = false) {
+  if (persist && mode !== "no-materialize") appendFileSync(history, JSON.stringify(frame) + "\n", { mode: 0o600 });
+  process.stdout.write(JSON.stringify(frame) + "\n");
+}
+function response(id, payload) {
+  send({ type: "control_response", response: { subtype: "success", request_id: id, response: payload } });
+}
+function malformed(value) {
+  return mode.endsWith("-array") ? [value] : { value };
+}
+function initialize(frame) {
+  log("launch", { argv, cwd: process.cwd(), env: {
+    SYNTHETIC_USER_KEY: process.env.SYNTHETIC_USER_KEY,
+    LOCAL_ACCESS_ADMIN: process.env.LOCAL_ACCESS_ADMIN,
+    DATABASE_URL: process.env.DATABASE_URL,
+  } });
+  if (mode === "oversize") { process.stdout.write("x".repeat(1024 * 1024 + 1)); return; }
+  if (mode === "invalid-utf8") { process.stdout.write(Buffer.from([255, 10])); return; }
+  if (mode === "stderr-oversize") { process.stderr.write("x".repeat(1024 * 1024 + 1)); return; }
+  if (mode === "hold-control") return;
+  if (mode.startsWith("replay-control")) {
+    replayInitialize = frame.request_id;
+    replayRequestId = randomUUID();
+    send({ type: "control_request", request_id: replayRequestId, request: {
+      subtype: "mcp_message", server_name: "owned_probe", message: {
+        jsonrpc: "2.0", id: 1, method: "initialize", params: { protocolVersion: "2025-11-25" },
+      },
+    } });
+    return;
+  }
+  if (mode !== "no-init") {
+    const init = {
+      type: "system", subtype: "init", uuid: randomUUID(), session_id: mode === "wrong-session" ? randomUUID() : sessionId,
+      cwd: mode === "wrong-cwd" ? "/SYNTHETIC_OTHER_ROOT" : process.cwd(), claude_code_version: "2.1.286",
+      model: "synthetic-alias", tools: ["mcp__owned_probe__read_selected_file", "mcp__owned_probe__ask_peer"],
+      plugins: [], mcp_servers: [{ name: "owned_probe", source: "sdk", status: "connected" }],
+    };
+    if (mode === "null-effort") init.effort = null;
+    if (mode === "effort-high") init.effort = "high";
+    if (mode === "bad-effort") init.effort = "unrecognized";
+    if (mode.startsWith("init-effort-")) init.effort = malformed("high");
+    if (mode.startsWith("init-tool-")) init.tools[0] = malformed(init.tools[0]);
+    send(init, true);
+  }
+  if (mode === "startup-turn") send({ type: "assistant", session_id: sessionId, user_message_uuid: randomUUID(), message: { content: [] } });
+  if (mode === "unknown-response-subtype") {
+    send({ type: "control_response", response: { subtype: "SYNTHETIC_UNKNOWN", request_id: frame.request_id } });
+    return;
+  }
+  const efforts = mode.startsWith("catalog-effort-") ? [malformed("high")] : ["high"];
+  response(frame.request_id, { commands: [], agents: [], output_style: "default", available_output_styles: [],
+    account: {}, models: [{ value: "synthetic-alias", resolvedModel: "synthetic-wire-model",
+      displayName: "Synthetic", description: "No external model", supportsEffort: true, supportedEffortLevels: efforts }] });
+  if (mode === "exit-after-init") setTimeout(() => process.exit(0), 10);
+}
+function result(interrupted = false) {
+  if (mode.startsWith("terminal-reason-")) interrupted = true;
+  const frame = {
+    type: "result", subtype: interrupted ? "error_during_execution" : "success", is_error: interrupted,
+    uuid: randomUUID(), session_id: sessionId, user_message_uuid: input.uuid,
+    num_turns: mode === "model-less" ? 0 : 1, terminal_reason: interrupted ? "aborted_tools" : "completed",
+    queued_turn_count: 0, result: `SYNTHETIC_FINAL:${fileText}:${priorText}`, modelUsage: {},
+  };
+  if (mode === "foreign-result") frame.user_message_uuid = randomUUID();
+  if (mode === "missing-terminal-reason") delete frame.terminal_reason;
+  if (mode.startsWith("terminal-reason-")) frame.terminal_reason = malformed("aborted_tools");
+  log("result", { interrupted });
+  send(frame, true);
+}
+function call(name, args, toolId) {
+  const id = randomUUID();
+  const requestId = randomUUID();
+  pending.set(requestId, { name, id });
+  send({ type: "control_request", request_id: requestId, request: {
+    subtype: "mcp_message", server_name: "owned_probe", message: {
+      jsonrpc: "2.0", id, method: "tools/call", params: { name: mode.startsWith("mcp-tool-") ? malformed(name) : name, arguments: args, _meta: {
+        // Native correlation metadata is explicitly synthetic and NOT a claimed official field.
+        session_id: mode === "foreign-tool-session" ? randomUUID() : sessionId,
+        user_message_uuid: mode === "bad-correlation" ? randomUUID() : input.uuid,
+        tool_use_id: mode === "foreign-tool-id" ? "synthetic-unowned-tool" : toolId,
+      } },
+    },
+  } });
+}
+function user(frame) {
+  input = frame;
+  log("input", { uuid: frame.uuid });
+  if (mode === "lose-ack") return;
+  send(frame, true);
+  if (mode === "no-terminal") return;
+  const blocks = [
+    { type: "tool_use", id: "synthetic-read", name: "mcp__owned_probe__read_selected_file", input: { path: "owned-fixture.txt" } },
+    { type: "tool_use", id: "synthetic-question", name: "mcp__owned_probe__ask_peer", input: { question: "synthetic question" } },
+  ];
+  if (mode.startsWith("assistant-tool-")) blocks[0].name = malformed(blocks[0].name);
+  send({ type: "assistant", uuid: randomUUID(), session_id: sessionId, user_message_uuid: frame.uuid,
+    parent_tool_use_id: null, message: { model: "synthetic-wire-model", content: blocks } }, true);
+  if (mode === "late-tool") {
+    result();
+    call("read_selected_file", { path: "owned-fixture.txt" }, "synthetic-read");
+    return;
+  }
+  call("read_selected_file", { path: "owned-fixture.txt" }, "synthetic-read");
+  if (mode === "duplicate-call") call("read_selected_file", { path: "owned-fixture.txt" }, "synthetic-read");
+}
+function receive(frame) {
+  if (frame.type === "control_request") {
+    if (frame.request.subtype === "initialize") initialize(frame);
+    else if (frame.request.subtype === "interrupt") {
+      log("interrupt");
+      if (mode === "natural-race") result();
+      response(frame.request_id, { still_queued: [], cancelled: [] });
+      if (mode !== "interrupt-ack-only" && mode !== "natural-race") result(true);
+    }
+  } else if (frame.type === "user") user(frame);
+  else if (frame.type === "control_response") {
+    if (mode.startsWith("replay-control")) {
+      if (frame.response.request_id !== replayRequestId) throw new Error("SYNTHETIC_FOREIGN_RESPONSE");
+      const echo = structuredClone(frame);
+      if (mode === "replay-control-mutated") echo.response.response.mcp_response.result.changed = true;
+      if (mode === "replay-control-unknown-id") echo.response.request_id = randomUUID();
+      if (mode === "replay-control-reordered") {
+        echo.response = Object.fromEntries(Object.entries(echo.response).reverse());
+      }
+      send(echo);
+      if (mode === "replay-control-duplicate") send(echo);
+      response(replayInitialize, { commands: [], models: [] });
+      return;
+    }
+    const request = pending.get(frame.response.request_id);
+    if (!request) return;
+    pending.delete(frame.response.request_id);
+    log("tool-response", { name: request.name });
+    if (request.name === "read_selected_file") fileText = frame.response.response.mcp_message.result.content[0].text;
+    replies++;
+    const expected = mode === "duplicate-call" ? 2 : 1;
+    if (replies === expected) call("ask_peer", { question: "synthetic question" }, "synthetic-question");
+    else if (replies === expected + 1 && mode !== "natural-race") result();
+  }
+}
+const lines = createInterface({ input: process.stdin });
+lines.on("line", (line) => { try { receive(JSON.parse(line)); } catch { process.exitCode = 2; lines.close(); } });
+if (mode === "ignore-close") {
+  process.on("SIGTERM", () => {});
+  setInterval(() => {}, 1000);
+} else lines.on("close", () => process.exit(0));
+// Ensure fixture log exists without leaking real environment values.
+writeFileSync(logPath, "", { mode: 0o600 });
