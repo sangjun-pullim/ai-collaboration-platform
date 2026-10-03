@@ -1,30 +1,66 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { exampleSetup, outboundText } from "../../src/features/investigation-prototype/mock-scenario.ts";
-import { initialState, pauseStatus, prototypeReducer as reduce } from "../../src/features/investigation-prototype/prototype-state.ts";
-import type { Action, Outcome, PrototypeState } from "../../src/features/investigation-prototype/prototype-state.ts";
+import {
+  exampleSetup,
+  outboundText,
+} from "../../src/features/investigation-prototype/mock-scenario.ts";
+import {
+  initialState,
+  pauseStatus,
+  prototypeReducer as reduce,
+} from "../../src/features/investigation-prototype/prototype-state.ts";
+import type {
+  Action,
+  Outcome,
+  PrototypeState,
+} from "../../src/features/investigation-prototype/prototype-state.ts";
 
 function room(): PrototypeState {
-  return reduce(initialState(), { type: "create", setup: { ...exampleSetup, scope: [...exampleSetup.scope] } });
+  return reduce(initialState(), {
+    type: "create",
+    setup: { ...exampleSetup, scope: [...exampleSetup.scope] },
+  });
 }
 
 test("should require a generic investigation goal and environment", () => {
   assert.equal(room().stage, "room");
-  for (const key of ["goal", "symptom", "expected", "environment", "bindingA", "bindingB"] as const) {
-    const state = reduce(initialState(), { type: "create", setup: { ...exampleSetup, [key]: " " } });
+  for (const key of [
+    "goal",
+    "symptom",
+    "expected",
+    "environment",
+    "bindingA",
+    "bindingB",
+  ] as const) {
+    const state = reduce(initialState(), {
+      type: "create",
+      setup: { ...exampleSetup, [key]: " " },
+    });
     assert.equal(state.stage, "setup");
     assert.ok(state.errors[key]);
   }
-  assert.ok(reduce(initialState(), { type: "create", setup: { ...exampleSetup, scope: [] } }).errors.scope);
-  assert.ok(reduce(initialState(), { type: "create", setup: { ...exampleSetup, scope: ["token"] } }).errors.scope);
-  const limited = reduce(initialState(), { type: "create", setup: { ...exampleSetup, scope: ["events"] } });
+  assert.ok(
+    reduce(initialState(), { type: "create", setup: { ...exampleSetup, scope: [] } }).errors.scope,
+  );
+  assert.ok(
+    reduce(initialState(), { type: "create", setup: { ...exampleSetup, scope: ["token"] } }).errors
+      .scope,
+  );
+  const limited = reduce(initialState(), {
+    type: "create",
+    setup: { ...exampleSetup, scope: ["events"] },
+  });
   assert.equal(limited.shared.length, 1);
   assert.equal(limited.shared[0].location, undefined);
 });
 
 test("should keep private explanations out of shared events and drafts", () => {
   const before = room();
-  const state = reduce(before, { type: "explain", text: "개인 원문 712", targetId: before.shared[0].id });
+  const state = reduce(before, {
+    type: "explain",
+    text: "개인 원문 712",
+    targetId: before.shared[0].id,
+  });
   assert.deepEqual(state.shared, before.shared);
   assert.deepEqual(state.draft, before.draft);
   assert.equal(state.privateHistory.length, 1);
@@ -32,7 +68,11 @@ test("should keep private explanations out of shared events and drafts", () => {
   assert.notEqual(state.privateHistory[0].target, before.shared[0]);
   const invalid = reduce(state, { type: "explain", text: "missing", targetId: 999 });
   assert.equal(invalid, state);
-  const published = reduce(state, { type: "publish-private", explanationId: state.privateHistory[0].id, part: "answer" });
+  const published = reduce(state, {
+    type: "publish-private",
+    explanationId: state.privateHistory[0].id,
+    part: "answer",
+  });
   assert.equal(published.shared.at(-1)?.text, state.privateHistory[0].answer);
   assert.ok(!published.shared.some((event) => event.text === "개인 원문 712"));
   assert.deepEqual(published.runs, before.runs);
@@ -125,13 +165,22 @@ test("should reject writing actions in observer mode", () => {
   assert.ok(observer.shared.length > 0);
   assert.equal(observer.draft, null);
   const actions: Action[] = [
-    { type: "create", setup: exampleSetup }, { type: "observe" },
-    { type: "speak", text: "write" }, { type: "explain", text: "write", targetId: 1 },
-    { type: "publish-private", explanationId: 1, part: "answer" }, { type: "steer", text: "write" },
-    { type: "check-draft" }, { type: "finalize-draft" }, { type: "stop-own" }, { type: "pause-room" },
-    { type: "ack", run: "a" }, { type: "unknown", run: "a" },
-    { type: "terminal", run: "a", outcome: "completed" }, { type: "replay-event" },
-    { type: "propose-result" }, { type: "decide", decision: "해결" },
+    { type: "create", setup: exampleSetup },
+    { type: "observe" },
+    { type: "speak", text: "write" },
+    { type: "explain", text: "write", targetId: 1 },
+    { type: "publish-private", explanationId: 1, part: "answer" },
+    { type: "steer", text: "write" },
+    { type: "check-draft" },
+    { type: "finalize-draft" },
+    { type: "stop-own" },
+    { type: "pause-room" },
+    { type: "ack", run: "a" },
+    { type: "unknown", run: "a" },
+    { type: "terminal", run: "a", outcome: "completed" },
+    { type: "replay-event" },
+    { type: "propose-result" },
+    { type: "decide", decision: "해결" },
   ];
   for (const action of actions) assert.equal(reduce(observer, action), observer, action.type);
 });
@@ -141,7 +190,9 @@ test("should record a human decision without inventing validation evidence", () 
   const result = reduce(before, { type: "propose-result" });
   assert.equal(result.decision, null);
   assert.deepEqual(result.runs, before.runs);
-  assert.ok(result.result?.tasks.every((task) => task.owner && task.evidence && task.nextValidation));
+  assert.ok(
+    result.result?.tasks.every((task) => task.owner && task.evidence && task.nextValidation),
+  );
   for (const decision of ["해결", "추가 조사", "보류"] as const) {
     const state = reduce(result, { type: "decide", decision });
     assert.equal(state.decision, decision);
@@ -153,5 +204,8 @@ test("should record a human decision without inventing validation evidence", () 
   const replay = reduce(before, { type: "replay-event" });
   assert.equal(replay.shared.at(-1)?.kind, "답변");
   assert.equal(replay.decision, null);
-  assert.equal(reduce(reduce(before, { type: "pause-room" }), { type: "replay-event" }).shared.length, before.shared.length);
+  assert.equal(
+    reduce(reduce(before, { type: "pause-room" }), { type: "replay-event" }).shared.length,
+    before.shared.length,
+  );
 });

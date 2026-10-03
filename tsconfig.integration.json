@@ -1,17 +1,12 @@
 {
   "compilerOptions": {
     "target": "ES2022",
-    "lib": [
-      "ES2022",
-      "DOM"
-    ],
+    "lib": ["ES2022", "DOM"],
     "module": "NodeNext",
     "moduleResolution": "NodeNext",
     "strict": true,
     "skipLibCheck": true,
-    "types": [
-      "node"
-    ],
+    "types": ["node"],
     "rootDir": ".",
     "outDir": ".integration-build",
     "rewriteRelativeImportExtensions": true
@@ -24,8 +19,5 @@
     "tests/helpers/owned-runtime-fixture.ts",
     "tests/helpers/human-direct-upgrade-fixture.ts"
   ],
-  "exclude": [
-    "experiments",
-    "node_modules"
-  ]
+  "exclude": ["experiments", "node_modules"]
 }

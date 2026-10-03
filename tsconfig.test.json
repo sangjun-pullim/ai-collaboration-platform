@@ -1,16 +1,12 @@
 {
   "compilerOptions": {
     "target": "ES2022",
-    "lib": [
-      "ES2022"
-    ],
+    "lib": ["ES2022"],
     "module": "NodeNext",
     "moduleResolution": "NodeNext",
     "strict": true,
     "skipLibCheck": true,
-    "types": [
-      "node"
-    ],
+    "types": ["node"],
     "rootDir": ".",
     "outDir": ".test-build",
     "rewriteRelativeImportExtensions": true
@@ -23,8 +19,5 @@
     "src/features/investigation-coordinator/history-state.ts",
     "packages/local-connector/src/workflow-contracts.ts"
   ],
-  "exclude": [
-    "experiments",
-    "node_modules"
-  ]
+  "exclude": ["experiments", "node_modules"]
 }

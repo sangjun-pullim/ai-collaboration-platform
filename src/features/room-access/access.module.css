@@ -1,15 +1,85 @@
-.shell { max-width: 960px; margin: auto; padding: 24px; }
-.header { display: flex; align-items: center; justify-content: space-between; gap: 16px; flex-wrap: wrap; margin-bottom: 24px; }
-.content { display: grid; gap: 24px; padding: 16px 0; }
-.panel { background: white; border: 1px solid var(--line); border-radius: 14px; padding: 24px; display: grid; gap: 16px; min-width: 0; }
-.form { display: grid; gap: 16px; }
-.field { display: grid; gap: 6px; }
-.error { padding: 12px; color: #872b20; background: #fff1ed; border: 1px solid #d98d81; border-radius: 8px; }
-.notice { color: var(--muted); }
-.list { padding: 0; list-style: none; display: grid; gap: 12px; }
-.member { display: flex; justify-content: space-between; align-items: center; gap: 12px; flex-wrap: wrap; }
-.code { overflow-wrap: anywhere; user-select: all; }
-.details { display: grid; gap: 12px; margin: 0; }
-.details dd { margin: 0; white-space: pre-wrap; overflow-wrap: anywhere; }
-.actions { display: flex; flex-wrap: wrap; gap: 12px; }
-@media (max-width: 600px) { .shell { padding: 16px; } .panel { padding: 16px; } }
+.shell {
+  max-width: 960px;
+  margin: auto;
+  padding: 24px;
+}
+.header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  flex-wrap: wrap;
+  margin-bottom: 24px;
+}
+.content {
+  display: grid;
+  gap: 24px;
+  padding: 16px 0;
+}
+.panel {
+  background: white;
+  border: 1px solid var(--line);
+  border-radius: 14px;
+  padding: 24px;
+  display: grid;
+  gap: 16px;
+  min-width: 0;
+}
+.form {
+  display: grid;
+  gap: 16px;
+}
+.field {
+  display: grid;
+  gap: 6px;
+}
+.error {
+  padding: 12px;
+  color: #872b20;
+  background: #fff1ed;
+  border: 1px solid #d98d81;
+  border-radius: 8px;
+}
+.notice {
+  color: var(--muted);
+}
+.list {
+  padding: 0;
+  list-style: none;
+  display: grid;
+  gap: 12px;
+}
+.member {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 12px;
+  flex-wrap: wrap;
+}
+.code {
+  overflow-wrap: anywhere;
+  user-select: all;
+}
+.details {
+  display: grid;
+  gap: 12px;
+  margin: 0;
+}
+.details dd {
+  margin: 0;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+.actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 12px;
+}
+@media (max-width: 600px) {
+  .shell {
+    padding: 16px;
+  }
+  .panel {
+    padding: 16px;
+  }
+}

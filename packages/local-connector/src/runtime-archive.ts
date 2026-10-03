@@ -12,13 +12,26 @@ function unsafe(): never {
   throw new RuntimeError("UNSAFE_STORAGE");
 }
 function secureFile(stat: Stats) {
-  if (!stat.isFile() || stat.isSymbolicLink() || stat.uid !== process.getuid?.() ||
-      (stat.mode & 0o777) !== 0o600 || stat.nlink !== 1 || stat.size > journalByteLimit) unsafe();
+  if (
+    !stat.isFile() ||
+    stat.isSymbolicLink() ||
+    stat.uid !== process.getuid?.() ||
+    (stat.mode & 0o777) !== 0o600 ||
+    stat.nlink !== 1 ||
+    stat.size > journalByteLimit
+  )
+    unsafe();
 }
 function sameIdentity(before: Stats, after: Stats) {
   secureFile(after);
-  if (before.dev !== after.dev || before.ino !== after.ino || before.size !== after.size ||
-      before.mtimeMs !== after.mtimeMs || before.ctimeMs !== after.ctimeMs) unsafe();
+  if (
+    before.dev !== after.dev ||
+    before.ino !== after.ino ||
+    before.size !== after.size ||
+    before.mtimeMs !== after.mtimeMs ||
+    before.ctimeMs !== after.ctimeMs
+  )
+    unsafe();
 }
 
 /** Owned file evidence only. Permission to remove journals remains in RuntimeStore. */
@@ -61,16 +74,26 @@ export class RuntimeArchive {
     if (canonical !== this.dir) unsafe();
   }
   private async sync(path: string, check: () => void) {
-    const handle = await open(path, constants.O_RDONLY | constants.O_NOFOLLOW | constants.O_NONBLOCK);
+    const handle = await open(
+      path,
+      constants.O_RDONLY | constants.O_NOFOLLOW | constants.O_NONBLOCK,
+    );
     try {
       check();
       const stat = await handle.stat();
       check();
       if (stat.isFile()) secureFile(stat);
-      else if (!stat.isDirectory() || stat.uid !== process.getuid?.() || (stat.mode & 0o777) !== 0o700) unsafe();
+      else if (
+        !stat.isDirectory() ||
+        stat.uid !== process.getuid?.() ||
+        (stat.mode & 0o777) !== 0o700
+      )
+        unsafe();
       await handle.sync();
       check();
-    } finally { await handle.close(); }
+    } finally {
+      await handle.close();
+    }
   }
   async read(hash: string, check = () => {}): Promise<Buffer> {
     try {
@@ -79,7 +102,10 @@ export class RuntimeArchive {
       const before = await lstat(path);
       check();
       secureFile(before);
-      const handle = await open(path, constants.O_RDONLY | constants.O_NOFOLLOW | constants.O_NONBLOCK);
+      const handle = await open(
+        path,
+        constants.O_RDONLY | constants.O_NOFOLLOW | constants.O_NONBLOCK,
+      );
       try {
         check();
         const opened = await handle.stat();
@@ -105,15 +131,20 @@ export class RuntimeArchive {
         new TextDecoder("utf-8", { fatal: true }).decode(data);
         if (digest(data) !== hash) unsafe();
         return data;
-      } finally { await handle.close(); }
+      } finally {
+        await handle.close();
+      }
     } catch (error) {
       if (error instanceof RuntimeError) throw error;
       unsafe();
     }
   }
   async verify(references: RuntimeArchiveReference[], check = () => {}): Promise<Buffer[]> {
-    if (references.length > archiveReferenceLimit ||
-        references.reduce((sum, ref) => sum + ref.requestIds.length, 0) > archiveRequestLimit) unsafe();
+    if (
+      references.length > archiveReferenceLimit ||
+      references.reduce((sum, ref) => sum + ref.requestIds.length, 0) > archiveRequestLimit
+    )
+      unsafe();
     const hashes = new Set<string>();
     const requests = new Set<string>();
     const files: Buffer[] = [];
@@ -144,7 +175,11 @@ export class RuntimeArchive {
     let handle;
     try {
       check();
-      handle = await open(path, constants.O_WRONLY | constants.O_CREAT | constants.O_EXCL | constants.O_NOFOLLOW, 0o600);
+      handle = await open(
+        path,
+        constants.O_WRONLY | constants.O_CREAT | constants.O_EXCL | constants.O_NOFOLLOW,
+        0o600,
+      );
     } catch (error) {
       if ((error as NodeJS.ErrnoException).code !== "EEXIST") throw error;
       const prior = await this.read(hash, check);
