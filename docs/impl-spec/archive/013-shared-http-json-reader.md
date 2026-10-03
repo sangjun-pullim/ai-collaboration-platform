@@ -1,5 +1,5 @@
 ---
-status: active
+status: done
 date: 2026-10-03
 risk-surface: public-api
 ---
@@ -9,9 +9,9 @@ risk-surface: public-api
 
 ## Context
 
-사용자가 중복 요청 처리와 유지보수 문제를 지적했다. 코드 형식 정리는 [완료 명세](archive/012-readable-source-formatting.md)에 보관했다. 방 접근·기기·조사의 요청 정책은 Origin·JSON type·16KiB·스트림 읽기를 각각 구현한다. 공통 읽기만 한 곳으로 모으고 도메인 검증과 기존 오류 응답은 유지한다. UTF-8 처리 통일·bearer 공통화·오류 계층 변경·폴더 일괄 이동은 이 변경에 포함하지 않는다.
+사용자가 중복 요청 처리와 유지보수 문제를 지적했다. 코드 형식 정리는 [완료 명세](012-readable-source-formatting.md)에 보관했다. 방 접근·기기·조사의 요청 정책은 Origin·JSON type·16KiB·스트림 읽기를 각각 구현한다. 공통 읽기만 한 곳으로 모으고 도메인 검증과 기존 오류 응답은 유지한다. UTF-8 처리 통일·bearer 공통화·오류 계층 변경·폴더 일괄 이동은 이 변경에 포함하지 않는다.
 
-사용자는 현재 문서 기준으로 계획과 구현을 자율 진행하도록 승인했다. 이 논리 변경은 기존 운영 파일 3개와 신규 내부 모듈 1개이며, 공개 HTTP 입력의 위험 표면에 대한 검사와 독립 리뷰를 수행한다. 진행 상태는 [개발·검증 순서](../delivery-and-validation.md#현재-진행-상태)에 유지한다.
+사용자는 현재 문서 기준으로 계획과 구현을 자율 진행하도록 승인했다. 이 논리 변경은 기존 운영 파일 3개와 신규 내부 모듈 1개이며, 공개 HTTP 입력의 위험 표면에 대한 검사와 독립 리뷰를 수행한다. 진행 상태는 [개발·검증 순서](../../delivery-and-validation.md#현재-진행-상태)에 유지한다.
 
 ## Affected Files
 
@@ -31,14 +31,14 @@ risk-surface: public-api
 
 ## Implementation Steps
 
-### [ ] Step 1: 기존 요청 정책의 검사 기준점
+### [x] Step 1: 기존 요청 정책의 검사 기준점
 **File**: `tests/unit/http-request-policy.test.ts`
 
 - 실제 기존 wrapper를 기존 TypeScript 격리 harness 방식으로 실행한다. `server-only`·설정만 격리하고 도메인 contracts는 실제 코드를 사용한다. 테스트가 제품 코드의 조건을 복사해 구현하지 않는다.
 - 사람이 보내는 Origin, 기기 Origin 생략과 설정의 지연 평가, content type·본문 없음, domain 검증과 정확한 오류 클래스, 비정상 UTF-8/BOM 차이를 현재 코드에서 확인한다.
 - 현재 소스의 PASS를 고정한다. 버그 수정이 아닌 공통화이며 현재 차이를 실패로 처리하거나 통일하지 않는다.
 
-### [ ] Step 2: 공통 읽기와 wrapper 전환
+### [x] Step 2: 공통 읽기와 wrapper 전환
 **File**: 신규 공통 모듈과 세 `request-policy.ts`
 
 - `readJsonBody(request, options)` 한 함수 뒤에 Origin·content type·reader 획득·chunk 누적·취소·lock 해제·decode·JSON parse를 모은다. options는 `expectedOrigin?: string`, 기존 오류 생성 함수, `strict`/`replacement` decode 방식이다.
@@ -48,7 +48,7 @@ risk-surface: public-api
 - decode/JSON parse만 INVALID_BODY로 바꾼다. reader read/cancel/releaseLock 오류는 포괄 catch로 변경하지 않는다.
 - wrapper의 signature·export·반환값·domain validation·bearer·route 호출 순서는 유지한다. 공통 모듈은 Supabase·cookie·domain schema를 import하지 않는다.
 
-### [ ] Step 3: 검증·리뷰·완료
+### [x] Step 3: 검증·리뷰·완료
 **File**: 해당 코드·검사와 진행 정본
 
 - 신규 모듈을 통한 16,384/16,385 바이트·분할 chunk·UTF-8·BOM·malformed JSON·누락 본문·스트림 오류·취소/lock 해제를 검증한다. wrapper 기준점 검사도 모두 다시 통과시킨다.
@@ -85,3 +85,5 @@ risk-surface: public-api
 | Finding | Severity | Disposition | Rationale |
 |---------|----------|-------------|-----------|
 | Independent plan round1 | INFO | PASS | 세 요청 처리기·여섯 route와 Origin/UTF-8/BOM/오류/설정 지연 조건, 고정 통합 검사 선택과 기존 검사 재사용 범위를 검토했다. 구현 완료를 판정한 기록은 아니다. |
+| Independent implementation round1 | INFO | PASS | C0/H0/M0/L0. 공통 reader·실제 wrapper 3개·route 6개·domain 검증과 검사 기준점, 스트림 예외 identity·정리 우선순위·인증 조건·UTF-8/BOM 보존을 확인했다. 코드와 입력이 같은 012의 connector·prototype 및 계획 리뷰 범위를 구분해 재사용했다. |
+| Completion verification | INFO | PASS | root unit·typecheck·lint·통합 컴파일·format/diff와 새 웹 빌드, 고정 실제 HTTP 입력 검사 및 Auth/device/workflow desktop/mobile 흐름을 소유 환경에서 통과했다. 단계별 수치는 진행 정본에 둔다. 실제 AI 입력·remote 접근·DB reset·migration 적용은 없었다. |

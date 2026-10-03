@@ -115,6 +115,8 @@ Vercel은 화면과 짧은 제어 API를 제공하고 AI 실행·지속 연결�
 
 ## 인증·기기 연결
 
+웹 요청의 공통 본문 읽기는 내부 `src/lib/http/read-json-body.ts`가 담당한다. Origin 비교·JSON content type·실제 수신 바이트 16KiB 상한·스트림 정리·decode/parse를 한 곳에서 처리한다. 방 접근·기기·조사 정책은 각 도메인의 필드 검증과 오류 클래스를 유지하며, 기기 bearer 요청에서는 브라우저 Origin 설정을 읽지 않는다. 방 접근·조사는 엄격한 UTF-8 해석을, 기기는 기존 대체 문자 해석을 유지한다. 공개 입력과 오류 계약은 [API-SPEC](API-SPEC.md), 검증 상태는 [진행 정본](delivery-and-validation.md#현재-진행-상태)을 따른다.
+
 기기는 짧은 만료시간의 일회용 pairing code로 로그인한 소유자에게 연결한다. 발급 토큰은 소유자·조직·방·연결 범위로 제한하고 갱신·취소·기기 제거를 지원한다. 공급자 로그인 토큰/API 키와 중앙 관리자 키를 pairing token으로 사용하지 않는다. 사용자 단계는 [첫 사용 설정](onboarding-and-settings.md), 신뢰·키 경계는 [인증·Realtime·서버 키](constraints-and-security.md#인증realtime서버-키)를 따른다.
 
 현재 기기 인증은 사람 JWT와 분리한 opaque bearer다. 일회용 code와 로컬 proof는 서로 다른 256-bit 난수이며 승인 유효 기간은 5분, 기기 credential은 1시간이다. 공개 RPC는 원문 bearer를 hash해 저장 hash와 대조하고 현재 사람·조직·방·기기 scope를 다시 검사한다. 교환/회전/등록/교체는 로컬 선기록과 제한된 동일-operation receipt로 응답 유실을 복구한다. 권한 취소 뒤 재초대해도 옛 연결을 되살리지 않는다.
