@@ -9,7 +9,7 @@ import { StateStore, type ConnectorState } from "./state-store.ts";
 import { WorkflowClient } from "./workflow-client.ts";
 import { WorkflowError, projectPoll, projectResponse, validateBody, type AttemptSnapshot, type Body, type Control, type DeviceAction, type PollSnapshot, type RequestPayload, type TerminalReceipt } from "./workflow-contracts.ts";
 import { RuntimeAdmission, RuntimeError, digest, stableJson, scopedNamespace, type AttemptAuthority, type AttemptJournal, type RequestedSettings, type RuntimeAdapter, type RuntimeCode, type RuntimeOperation, type RuntimeRecord, type RuntimeScope, type RuntimeSettings, type TerminalEvidence, type ToolCall, type ToolResult } from "./runtime-contracts.ts";
-import { RuntimeStore, runtimeRecord, unresolvedRuntime, pruneConfirmedReady } from "./runtime-store.ts";
+import { RuntimeStore, runtimeRecord, unresolvedRuntime, pruneConfirmedReady, assertRuntimeCapacity, terminalReserveBytes } from "./runtime-store.ts";
 import { RuntimeFilePolicy, publicText } from "./runtime-file-policy.ts";
 import { selectSettings } from "./codex-adapter.ts";
 
@@ -23,6 +23,10 @@ export interface RunnerOptions {
   pollIntervalMs?: number; leaseIntervalMs?: number; drainTimeoutMs?: number;
   /** Deterministic fault seams are constructor-only and have no CLI/environment equivalent. */
   beforeMutation?: (kind: string) => Promise<void>;
+}
+interface CapacityReservationCommit {
+  operationId: string;
+  remaining(record: RuntimeRecord): number | undefined;
 }
 const code = (error: unknown): RuntimeCode => error instanceof RuntimeError ? error.code : error instanceof WorkflowError && ["UNAUTHENTICATED", "FORBIDDEN", "NOT_FOUND", "CONFLICT"].includes(error.code) ? "AUTHORITY_LOST" : "UNKNOWN";
 const exact = (value: unknown, keys: string[]): value is Record<string, unknown> => !!value && typeof value === "object" && !Array.isArray(value) && Object.keys(value).length === keys.length && keys.every(key => Object.hasOwn(value, key));
@@ -42,6 +46,9 @@ function delay(ms: number, signal?: AbortSignal) {
 export class WorkflowRunner {
   private readonly admission = new RuntimeAdmission();
   private record!: RuntimeRecord;
+  private archivedLast: AttemptJournal | undefined;
+  private readonly capacityReservations = new Map<string, number>();
+  private readonly ordinaryReadiness = new Set<string>();
   private mutations: Promise<unknown> = Promise.resolve();
   private retired = false;
   private active: AttemptAuthority | undefined;
@@ -58,11 +65,113 @@ export class WorkflowRunner {
   constructor(readonly profile: StateStore, readonly store: RuntimeStore, readonly client: WorkflowClient, readonly adapter: RuntimeAdapter, readonly connections: RuntimeConnections, private readonly options: RunnerOptions = {}) {}
   private check = () => { this.admission.assert(); if (this.retired || !this.lockHeld) throw new RuntimeError("RUNTIME_CLOSED"); };
   private storageCheck = () => { if (this.retired || !this.lockHeld) throw new RuntimeError("RUNTIME_CLOSED"); };
-  private async mutate(kind: string, update: (record: RuntimeRecord) => void, guard = this.check) {
+  private async mutate(kind: string, update: (record: RuntimeRecord) => void, guard = this.check, reservation?: CapacityReservationCommit) {
     const job = this.mutations.then(async () => {
       guard(); if (this.options.beforeMutation) { await this.options.beforeMutation(kind); guard(); }
-      const next = structuredClone(this.record); update(next); guard(); await this.store.write(next, guard); guard(); this.record = next;
+      const next = structuredClone(this.record); update(next); guard();
+      if (this.ordinaryMutation(kind)) this.assertOrdinaryCapacity(next, 0, 0, reservation);
+      try {
+        await this.store.write(next, guard);
+        guard();
+        this.record = next;
+        this.commitCapacityReservation(next, reservation);
+      } catch (error) {
+        // A monitor can close after rename/fsync. Re-adopt the owned committed journal before
+        // queued terminal/outbox mutations; never submit the pre-commit in-memory snapshot again.
+        this.storageCheck();
+        const committed = await this.store.read();
+        this.storageCheck();
+        if (committed) {
+          this.record = committed;
+          this.commitCapacityReservation(committed, reservation);
+        }
+        throw error;
+      }
     }); this.mutations = job.catch(() => {}); return job;
+  }
+  private ordinaryMutation(kind: string) {
+    return ["claim-intent", "claimed", "server-intent", "server-intent-confirmed", "provider-intent",
+      "lease", "ready", "tool-receipt", "question-call-intent", "question-call-receipt"].includes(kind);
+  }
+  private assertOrdinaryCapacity(record = this.record, extraBytes = 0, extraOperations = 0, reservation?: CapacityReservationCommit) {
+    const remaining = reservation?.remaining(record);
+    const reserved = [...this.capacityReservations].reduce((sum, [operationId, bytes]) =>
+      sum + (operationId === reservation?.operationId && remaining !== undefined ? remaining : bytes), 0);
+    // Receipt/snapshot projections replace only their own in-flight budget. The shared budget
+    // stays unchanged until the owned disk proves that projection committed.
+    const last = record.attempts.at(-1);
+    const terminal = last && ["TERMINAL", "UPLOADED"].includes(last.state) ? last.terminal : null;
+    // Durable terminal bytes consume the existing terminal reservation even across restart.
+    // Fresh claim/provider admission still uses the full admission reserve, without this credit.
+    const allocated = terminal ? Math.min(Buffer.byteLength(JSON.stringify(terminal)), terminalReserveBytes - 128 * 1024) : 0;
+    assertRuntimeCapacity(record, false, reserved + extraBytes - allocated, extraOperations);
+  }
+  private commitCapacityReservation(record: RuntimeRecord, reservation?: CapacityReservationCommit) {
+    if (!reservation) return;
+    const remaining = reservation.remaining(record);
+    if (remaining === undefined) return;
+    if (remaining === 0) this.capacityReservations.delete(reservation.operationId);
+    else this.capacityReservations.set(reservation.operationId, remaining);
+  }
+  private receiptReservation(operation: RuntimeOperation, result: unknown): CapacityReservationCommit {
+    return {
+      operationId: operation.operationId,
+      remaining: record => {
+        const saved = record.operations.find(candidate => candidate.operationId === operation.operationId);
+        if (saved?.state === "CLOSED") return 0;
+        if (saved?.state !== "CONFIRMED" || !same(saved.result, result)) return undefined;
+        return ["claim", "start-intent", "lease"].includes(operation.action) ? 65536 : 0;
+      },
+    };
+  }
+  private snapshotReservation(operation: RuntimeOperation, snapshot: AttemptSnapshot, journalId: string): CapacityReservationCommit {
+    return {
+      operationId: operation.operationId,
+      remaining: record => {
+        const saved = record.operations.find(candidate => candidate.operationId === operation.operationId);
+        if (saved?.state === "CLOSED") return 0;
+        if (saved?.state !== "CONFIRMED" || !same(saved.result, snapshot)) return undefined;
+        return same(this.journal(journalId, record).snapshot, snapshot) ? 0 : undefined;
+      },
+    };
+  }
+  private reservedAction(action: DeviceAction, body: Body) {
+    return ["complete", "observe", "interrupt-ack"].includes(action) || action === "ready" && !body.reportedReady && !this.ordinaryReadiness.has(String(body.operationId));
+  }
+  private responseGrowth(action: DeviceAction) {
+    // claim/start/lease receipts are stored twice: durable response and refreshed snapshot.
+    if (["claim", "start-intent", "lease"].includes(action)) return 2 * 65536;
+    if (action === "question" || action === "ready") return 1024;
+    return 2048;
+  }
+  private async compactJournal(force = false) {
+    this.check();
+    if (this.active || this.toolOpen) throw new RuntimeError("RUNTIME_BUSY");
+    await this.readyWork;
+    if (!await this.admission.drain(this.options.drainTimeoutMs ?? 2000)) throw new RuntimeError("RUNTIME_BUSY");
+    this.check();
+    const job = this.mutations.then(async () => {
+      this.check();
+      await this.store.drainWrites();
+      const needsCompaction = force || this.record.operations.length > 768 || this.record.attempts.length > 128 ||
+        Buffer.byteLength(JSON.stringify(this.record)) > 256 * 1024;
+      if (!needsCompaction) return;
+      this.record = await this.store.compact(this.record, this.check);
+      this.check();
+      this.archivedLast = await this.store.lastAttempt(this.record);
+      this.check();
+    });
+    this.mutations = job.catch(() => {});
+    await job;
+  }
+  private async admitExecution() {
+    await this.compactJournal();
+    try { assertRuntimeCapacity(this.record, true); }
+    catch (error) {
+      if (!(error instanceof RuntimeError) || error.code !== "RUNTIME_CAPACITY") throw error;
+      await this.compactJournal(true);
+      assertRuntimeCapacity(this.record, true);
+    }
   }
   private async profileState(guard = this.check): Promise<ConnectorState> {
     const deadline = performance.now() + 2000;
@@ -137,7 +246,16 @@ export class WorkflowRunner {
     const prior = this.record.operations.find(o => o.operationId === operationId);
     if (prior) { if (prior.action !== action || prior.payloadHash !== payloadHash || !same(prior.body, body)) throw new RuntimeError("INVALID_RUNTIME"); return prior; }
     const operation: RuntimeOperation = { operationId, action, body, payloadHash, state: "PENDING", result: null };
-    await this.mutate("operation-intent", record => { pruneConfirmedReady(record); record.operations.push(operation); }, guard); guard(); return operation;
+    const reserved = this.reservedAction(action, body);
+    if (!reserved) this.capacityReservations.set(operationId, this.responseGrowth(action));
+    try {
+      await this.mutate("operation-intent", record => {
+        pruneConfirmedReady(record); record.operations.push(operation);
+        if (record.operations.length > 1024 || Buffer.byteLength(JSON.stringify(record)) > 2 * 1024 * 1024) throw new RuntimeError("RUNTIME_CAPACITY");
+        if (!reserved) this.assertOrdinaryCapacity(record);
+      }, guard);
+      guard(); return operation;
+    } catch (error) { this.capacityReservations.delete(operationId); throw error; }
   }
   private async transmit(operation: RuntimeOperation, guard = this.check, received?: (result: unknown) => void): Promise<unknown> {
     guard(); const current = this.record.operations.find(o => o.operationId === operation.operationId);
@@ -145,6 +263,10 @@ export class WorkflowRunner {
     if (current.state === "CONFIRMED") { received?.(current.result); guard(); return current.result; }
     if (current.state === "CLOSED") throw new RuntimeError("RUNTIME_CLOSED");
     if (current.state !== "TRANSMITTED") await this.mutate("operation-transmitted", record => { record.operations.find(o => o.operationId === operation.operationId)!.state = "TRANSMITTED"; }, guard);
+    if (!this.reservedAction(operation.action, operation.body) && !this.capacityReservations.has(operation.operationId)) {
+      this.capacityReservations.set(operation.operationId, this.responseGrowth(operation.action));
+      this.assertOrdinaryCapacity();
+    }
     guard(); const result = await this.workflow(operation.action, operation.body, this.record.scope, guard); guard(); projectResponse(operation.action, result);
     const response = result as Record<string, unknown>, body = operation.body;
     if (operation.action === "ready" && (response.agentId !== body.agentId || response.bindingEpoch !== body.bindingEpoch || response.reportedReady !== body.reportedReady)) throw new RuntimeError("AUTHORITY_LOST");
@@ -155,7 +277,14 @@ export class WorkflowRunner {
     if (["complete", "observe"].includes(operation.action) && (response.requestId !== body.requestId || response.attemptId !== body.attemptId || response.terminal !== body.terminal)) throw new RuntimeError("AUTHORITY_LOST");
     if (operation.action === "interrupt-ack" && (response.controlId !== body.controlId || response.requestId !== body.requestId || response.attemptId !== body.attemptId || response.fence !== body.fence)) throw new RuntimeError("AUTHORITY_LOST");
     received?.(result); guard();
-    await this.mutate("operation-receipt", record => { const o = record.operations.find(o => o.operationId === operation.operationId)!; if (o.state !== "CLOSED") { o.state = "CONFIRMED"; o.result = result; } pruneConfirmedReady(record); }, guard); guard(); return result;
+    const reservation = this.receiptReservation(operation, result);
+    await this.mutate("operation-receipt", record => {
+      const o = record.operations.find(o => o.operationId === operation.operationId)!;
+      if (o.state !== "CLOSED") { o.state = "CONFIRMED"; o.result = result; }
+      pruneConfirmedReady(record);
+      if (!this.reservedAction(operation.action, operation.body)) this.assertOrdinaryCapacity(record, 0, 0, reservation);
+    }, guard, reservation);
+    guard(); return result;
   }
   private async poll() {
     const result = projectPoll(await this.workflow("poll", this.base())); this.check();
@@ -165,15 +294,29 @@ export class WorkflowRunner {
     // An older concurrent response cannot re-enable a scope already observed paused.
     if (!this.roomPoll || poll.roomRevision > this.roomPoll.revision || poll.roomRevision === this.roomPoll.revision && (poll.roomMode !== "ACTIVE" || this.roomPoll.mode === "ACTIVE")) this.roomPoll = { revision: poll.roomRevision, mode: poll.roomMode };
   }
-  private async ready(reportedReady: boolean, guard = this.check) { guard(); const op = await this.operation("ready", { reportedReady }, randomUUID(), guard); guard(); return this.transmit(op, guard); }
+  private async ready(reportedReady: boolean, guard = this.check, finalReadiness = false) {
+    guard();
+    const operationId = randomUUID();
+    if (!finalReadiness) this.ordinaryReadiness.add(operationId);
+    try {
+      const op = await this.operation("ready", { reportedReady }, operationId, guard);
+      guard();
+      return await this.transmit(op, guard);
+    } finally { this.ordinaryReadiness.delete(operationId); }
+  }
   private async refreshReady(guard = this.check) {
     guard();
     while (this.readyWork) { await this.readyWork; guard(); }
-    const reportedReady = this.roomPoll?.mode === "ACTIVE";
+    let hasCapacity = true;
+    try { assertRuntimeCapacity(this.record, true); this.assertOrdinaryCapacity(); } catch (error) {
+      if (!(error instanceof RuntimeError) || error.code !== "RUNTIME_CAPACITY") throw error;
+      hasCapacity = false;
+    }
+    const reportedReady = this.roomPoll?.mode === "ACTIVE" && hasCapacity;
     if (this.lastReadyValue === reportedReady && Date.now() - this.lastReadyAt < 15000) return;
     const live = () => { guard(); if (reportedReady && this.roomPoll?.mode !== "ACTIVE") throw new RuntimeError("AUTHORITY_LOST"); };
     const job = this.admission.track(async () => {
-      live(); const started = Date.now(); await this.ready(reportedReady, live); live();
+      live(); const started = Date.now(); await this.ready(reportedReady, live, !hasCapacity); live();
       await this.mutate(reportedReady ? "ready" : "not-ready", record => { record.ready = reportedReady; }, live); live();
       this.lastReadyAt = started; this.lastReadyValue = reportedReady;
     }); this.readyWork = job;
@@ -186,7 +329,8 @@ export class WorkflowRunner {
     return this.store.locked(async recovered => {
       this.lockHeld = true;
       try {
-        const saved = await this.store.read(); this.check(); if (saved) this.record = saved;
+        const saved = await this.store.read(); this.check();
+        if (saved) { this.record = saved; this.archivedLast = await this.store.lastAttempt(saved); this.check(); }
         const state = await this.profileState(); this.check(); const scope = scopeOf(state, this.store.agentId, this.client.origin);
         this.record = saved ?? runtimeRecord(scope);
         // A replacement receipt can have advanced the profile while its local preparation is unfinished.
@@ -260,11 +404,11 @@ export class WorkflowRunner {
     return this.publicStatus();
   }
   private publicStatus() {
-    const last = this.record.attempts.at(-1);
+    const last = this.record.lastArchive ? this.archivedLast : this.record.attempts.at(-1);
     return { state: this.record.preparation ? "PREPARING" : last?.state ?? (this.record.context ? "PREPARED" : "UNPREPARED"), provider: "codex", bindingEpoch: this.record.scope.bindingEpoch, ready: this.record.ready, readinessVerification: "reported", contextLevel: this.record.context?.level ?? null, requested: this.record.settings?.requested ?? null, observation: last?.terminal?.observation ?? null, terminal: last?.terminal?.terminal ?? null, textProof: last?.terminal?.textProof ?? null, adoption: last?.receipt?.adoption ?? null, error: last?.reason ?? null };
   }
   async status() {
-    const record = await this.store.read(); if (!record) return { state: "UNPREPARED", ready: false }; this.record = record; return this.publicStatus();
+    const record = await this.store.read(); if (!record) return { state: "UNPREPARED", ready: false }; this.record = record; this.archivedLast = await this.store.lastAttempt(record); return this.publicStatus();
   }
   private assertContext() {
     if (!this.record.context || !this.record.settings || this.record.preparation || this.record.context.ownership !== "CONNECTOR_CREATED" || this.record.context.epoch !== this.record.scope.bindingEpoch) throw new RuntimeError("CONTEXT_UNCONFIRMED");
@@ -276,6 +420,7 @@ export class WorkflowRunner {
         const onAbort = () => this.stop(); options.signal?.addEventListener("abort", onAbort, { once: true }); if (options.signal?.aborted) this.stop();
         try {
           if (recovered) await this.markUnresolvedUnknown("UNKNOWN");
+          await this.compactJournal();
           await this.recover(); this.check();
           if (unresolvedRuntime(this.record)) return this.publicStatus();
           await this.admission.wait(() => this.adapter.validate(this.record.context!, this.record.settings!, this.check)); this.check();
@@ -305,12 +450,21 @@ export class WorkflowRunner {
   }
   private async execute(payload: RequestPayload) {
     this.check(); if (payload.agentId !== this.record.scope.agentId || payload.bindingEpoch !== this.record.scope.bindingEpoch || Date.parse(payload.deadline) <= Date.now()) throw new RuntimeError("AUTHORITY_LOST");
+    try { await this.admitExecution(); this.check(); }
+    catch (error) {
+      if (!(error instanceof RuntimeError) || error.code !== "RUNTIME_CAPACITY") throw error;
+      await this.mutate("not-ready", record => { record.ready = false; });
+      if (this.record.operations.length < 1024) {
+        try { await this.ready(false, this.check, true); } catch { /* Capacity refusal keeps all original evidence. */ }
+      }
+      throw error;
+    }
     const requestId = payload.requestId, claimOperationId = randomUUID(), journalId = claimOperationId;
-    await this.mutate("claim-intent", record => { record.attempts.push({ requestId, claimOperationId, scope: structuredClone(record.scope), generation: record.context!.generation, state: "CLAIM_PENDING", snapshot: null, native: null, terminal: null, receipt: null, reason: null, toolCalls: [] }); });
+    await this.mutate("claim-intent", record => { delete record.lastArchive; record.attempts.push({ requestId, claimOperationId, scope: structuredClone(record.scope), generation: record.context!.generation, state: "CLAIM_PENDING", snapshot: null, native: null, terminal: null, receipt: null, reason: null, toolCalls: [] }); });
     try {
       const claim = await this.operation("claim", { requestId }, claimOperationId); const snapshot = await this.transmit(claim) as AttemptSnapshot;
       if (!same(snapshot.payload, payload) || snapshot.state !== "LEASED" || Date.parse(snapshot.leaseExpiresAt) <= Date.now()) throw new RuntimeError("AUTHORITY_LOST");
-      await this.mutate("claimed", record => { const a = this.journal(journalId, record); a.snapshot = snapshot; a.state = "CLAIMED"; });
+      await this.mutate("claimed", record => { const a = this.journal(journalId, record); a.snapshot = snapshot; a.state = "CLAIMED"; }, this.check, this.snapshotReservation(claim, snapshot, journalId));
       const authority: AttemptAuthority = {
         scope: structuredClone(this.record.scope), context: structuredClone(this.record.context!), attempt: snapshot, signal: this.admission.signal,
         assertLive: () => this.live(journalId),
@@ -328,13 +482,14 @@ export class WorkflowRunner {
         await this.mutate("server-intent", record => { this.journal(journalId, record).state = "SERVER_INTENT_PENDING"; });
         const start = await this.operation("start-intent", this.identity(this.journal(journalId))); const intent = await this.transmit(start) as AttemptSnapshot; matchAttempt(intent, snapshot);
         if (intent.state !== "EXECUTING" || !intent.startIntentAt) throw new RuntimeError("AUTHORITY_LOST");
-        await this.mutate("server-intent-confirmed", record => { const a = this.journal(journalId, record); a.snapshot = intent; a.state = "SERVER_INTENT_CONFIRMED"; }); authority.attempt = intent;
+        await this.mutate("server-intent-confirmed", record => { const a = this.journal(journalId, record); a.snapshot = intent; a.state = "SERVER_INTENT_CONFIRMED"; }, this.check, this.snapshotReservation(start, intent, journalId));
+        authority.attempt = intent;
         const evidence = await this.admission.wait(() => this.adapter.execute(authority, this.record.settings!, payload, async () => {
-          this.live(journalId); await this.mutate("provider-intent", record => { const a = this.journal(journalId, record); if (a.state !== "SERVER_INTENT_CONFIRMED") throw new RuntimeError("UNKNOWN"); a.state = "PROVIDER_INTENT"; }, () => this.live(journalId)); this.live(journalId);
+          this.live(journalId); this.assertOrdinaryCapacity(); await this.mutate("provider-intent", record => { const a = this.journal(journalId, record); if (a.state !== "SERVER_INTENT_CONFIRMED") throw new RuntimeError("UNKNOWN"); a.state = "PROVIDER_INTENT"; }, () => this.live(journalId)); this.live(journalId);
         }));
         this.check(); this.toolOpen = false; await this.persistTerminal(journalId, evidence); this.check();
         publication = this.publish(journalId, "complete", () => monitorController.abort()); await publication;
-      } finally { monitorController.abort(); await monitor; this.toolOpen = false; this.active = undefined; this.calls.clear(); }
+      } finally { monitorController.abort(); await monitor; this.toolOpen = false; this.active = undefined; this.calls.clear(); this.capacityReservations.clear(); }
     } catch (error) {
       this.toolOpen = false;
       if (!this.retired) await this.markUnresolvedUnknown(this.lossReason ?? code(error));
@@ -343,7 +498,13 @@ export class WorkflowRunner {
   private async monitor(authority: AttemptAuthority, signal: AbortSignal, publication: () => Promise<void> | undefined) {
     let failure: unknown;
     // Readiness IPC cannot delay lease/control cadence. Both jobs are tracked until drained or closed.
-    const jobs = [() => this.monitorAttempt(authority, signal, publication), () => this.monitorReady(authority, signal)].map(run => this.admission.wait(run).catch(error => {
+    const jobs = [() => this.monitorAttempt(authority, signal, publication), () => this.monitorReady(authority, signal)].map(run => this.admission.wait(run).catch(async error => {
+      // Ordinary journal growth cannot cancel an already durable terminal's exact outbox.
+      if (error instanceof RuntimeError && error.code === "RUNTIME_CAPACITY" && this.attemptJournal(authority.attempt).terminal) {
+        const pending = publication();
+        if (pending) await pending;
+        return;
+      }
       if (!signal.aborted && this.attemptJournal(authority.attempt).state !== "UPLOADED" && failure === undefined) { failure = error; this.lossReason = code(error); this.stop(); }
     }));
     await Promise.all(jobs); if (failure !== undefined) throw failure;
@@ -392,7 +553,8 @@ export class WorkflowRunner {
         guard(); matchAttempt(renewed, a.snapshot!);
         if (this.journal(this.journalKey(a)).terminal?.terminal === renewed.state) return;
         if (!["LEASED", "EXECUTING"].includes(renewed.state) || Date.parse(renewed.leaseExpiresAt) <= Date.now()) throw new RuntimeError("AUTHORITY_LOST");
-        await this.mutate("lease", record => { const current = this.journal(this.journalKey(a), record); if (current.snapshot!.state === "EXECUTING" && renewed.state === "LEASED") throw new RuntimeError("AUTHORITY_LOST"); current.snapshot = renewed; }, guard); guard(); authority.attempt = renewed; lastLease = Date.now();
+        await this.mutate("lease", record => { const current = this.journal(this.journalKey(a), record); if (current.snapshot!.state === "EXECUTING" && renewed.state === "LEASED") throw new RuntimeError("AUTHORITY_LOST"); current.snapshot = renewed; }, guard, this.snapshotReservation(lease, renewed, this.journalKey(a)));
+        guard(); authority.attempt = renewed; lastLease = Date.now();
       }
       const poll = await this.poll(); guard();
       this.observeRoom(poll);
@@ -421,25 +583,33 @@ export class WorkflowRunner {
   }
   private async performTool(requestId: string, call: ToolCall, hash: string, guard: () => void): Promise<ToolResult> {
     guard(); const a = this.journal(requestId), settings = this.record.settings!, policy = new RuntimeFilePolicy(this.record.context!.root, settings.files);
-    await this.credential(this.record.scope, guard); guard(); await policy.assertUnchanged(guard); guard();
-    let result: ToolResult;
-    if (call.tool === "read_workspace_file" && exact(call.arguments, ["path"]) && typeof call.arguments.path === "string") {
-      const text = await policy.read(call.arguments.path, guard); guard(); result = { success: true, contentItems: [{ type: "inputText", text }] };
-      await this.mutate("tool-receipt", record => { this.journal(requestId, record).toolCalls.push({ callId: call.callId, payloadHash: hash, operationId: null, result }); }, guard); guard(); return result;
-    }
-    if (call.tool !== "ask_peer" || a.snapshot!.payload.requestKind === "PEER" || !settings.autoQuestionsConfirmed || !exact(call.arguments, ["question", "evidence"]) || typeof call.arguments.question !== "string" || call.arguments.question.length > 2000 || !Array.isArray(call.arguments.evidence) || call.arguments.evidence.length < 1 || call.arguments.evidence.length > 4) throw new RuntimeError("TOOL_REJECTED");
-    const question = publicText(call.arguments.question, this.denied(a));
-    for (const evidence of call.arguments.evidence) {
-      if (!exact(evidence, ["path", "startLine", "endLine"]) || typeof evidence.path !== "string" || !Number.isSafeInteger(evidence.startLine) || !Number.isSafeInteger(evidence.endLine) || Number(evidence.startLine) < 1 || Number(evidence.endLine) < Number(evidence.startLine)) throw new RuntimeError("TOOL_REJECTED");
-      const content = await policy.read(evidence.path, guard); guard(); if (Number(evidence.endLine) > content.split("\n").length) throw new RuntimeError("TOOL_REJECTED");
-    }
-    const operationId = randomUUID();
-    await this.mutate("question-call-intent", record => { this.journal(requestId, record).toolCalls.push({ callId: call.callId, payloadHash: hash, operationId, result: null }); }, guard); guard();
-    const op = await this.operation("question", { ...this.identity(a), publicText: question, confirmed: true }, operationId, guard); guard();
-    const receipt = await this.transmit(op, guard) as { cycleId: string; questionId: string | null; peerRequestId: string | null; accepted: boolean }; guard();
-    if (receipt.cycleId !== a.snapshot!.payload.cycleId) throw new RuntimeError("AUTHORITY_LOST");
-    result = { success: receipt.accepted, contentItems: [{ type: "inputText", text: receipt.accepted ? "accepted/pending" : "HUMAN_INPUT_REQUIRED" }] };
-    await this.mutate("question-call-receipt", record => { this.journal(requestId, record).toolCalls.find(c => c.callId === call.callId)!.result = result; }, guard); guard(); return result;
+    if (a.toolCalls.length >= 256) throw new RuntimeError("RUNTIME_CAPACITY");
+    const capacityKey = `tool:${requestId}:${call.callId}`;
+    this.capacityReservations.set(capacityKey, call.tool === "read_workspace_file" ? 6 * 65536 + 4096 : 8192);
+    try { this.assertOrdinaryCapacity(this.record, 0, call.tool === "ask_peer" ? 1 : 0); }
+    catch (error) { this.capacityReservations.delete(capacityKey); throw error; }
+    try {
+      await this.credential(this.record.scope, guard); guard(); await policy.assertUnchanged(guard); guard();
+      let result: ToolResult;
+      if (call.tool === "read_workspace_file" && exact(call.arguments, ["path"]) && typeof call.arguments.path === "string") {
+        const text = await policy.read(call.arguments.path, guard); guard(); result = { success: true, contentItems: [{ type: "inputText", text }] };
+        await this.mutate("tool-receipt", record => { this.capacityReservations.delete(capacityKey); this.journal(requestId, record).toolCalls.push({ callId: call.callId, payloadHash: hash, operationId: null, result }); }, guard); guard(); return result;
+      }
+      if (call.tool !== "ask_peer" || a.snapshot!.payload.requestKind === "PEER" || !settings.autoQuestionsConfirmed || !exact(call.arguments, ["question", "evidence"]) || typeof call.arguments.question !== "string" || call.arguments.question.length > 2000 || !Array.isArray(call.arguments.evidence) || call.arguments.evidence.length < 1 || call.arguments.evidence.length > 4) throw new RuntimeError("TOOL_REJECTED");
+      const question = publicText(call.arguments.question, this.denied(a));
+      for (const evidence of call.arguments.evidence) {
+        if (!exact(evidence, ["path", "startLine", "endLine"]) || typeof evidence.path !== "string" || !Number.isSafeInteger(evidence.startLine) || !Number.isSafeInteger(evidence.endLine) || Number(evidence.startLine) < 1 || Number(evidence.endLine) < Number(evidence.startLine)) throw new RuntimeError("TOOL_REJECTED");
+        const content = await policy.read(evidence.path, guard); guard(); if (Number(evidence.endLine) > content.split("\n").length) throw new RuntimeError("TOOL_REJECTED");
+      }
+      const operationId = randomUUID();
+      await this.mutate("question-call-intent", record => { this.journal(requestId, record).toolCalls.push({ callId: call.callId, payloadHash: hash, operationId, result: null }); }, guard); guard();
+      const op = await this.operation("question", { ...this.identity(a), publicText: question, confirmed: true }, operationId, guard); guard();
+      const receipt = await this.transmit(op, guard) as { cycleId: string; questionId: string | null; peerRequestId: string | null; accepted: boolean }; guard();
+      if (receipt.cycleId !== a.snapshot!.payload.cycleId) throw new RuntimeError("AUTHORITY_LOST");
+      result = { success: receipt.accepted, contentItems: [{ type: "inputText", text: receipt.accepted ? "accepted/pending" : "HUMAN_INPUT_REQUIRED" }] };
+      await this.mutate("question-call-receipt", record => { this.capacityReservations.delete(capacityKey); this.journal(requestId, record).toolCalls.find(c => c.callId === call.callId)!.result = result; }, guard); guard(); return result;
+    } finally { this.capacityReservations.delete(capacityKey); }
+
   }
   private async persistTerminal(requestId: string, evidence: TerminalEvidence, guard = this.check) {
     guard(); const a = this.journal(requestId); if (!a.native || evidence.threadId !== a.native.threadId || evidence.turnId !== a.native.turnId) throw new RuntimeError("UNKNOWN");
@@ -517,6 +687,13 @@ export class WorkflowRunner {
   }
   private async recover() {
     await this.recoverUnstarted(); this.check();
+    // Recover exact durable terminals before ordinary readiness/question work. An older
+    // readiness intent cannot block or advertise fresh provider admission during this recovery.
+    for (const a of this.record.attempts.filter(a => a.state === "TERMINAL")) {
+      const pending = this.record.operations.find(o => ["complete", "observe"].includes(o.action) && o.body.requestId === a.requestId && o.body.attemptId === a.snapshot?.attemptId && o.body.fence === a.snapshot?.fence);
+      if (pending) await this.publish(this.journalKey(a), pending.action as "complete" | "observe");
+      else { const poll = await this.poll(); if (poll.attempt?.state !== "UNKNOWN") await this.publish(this.journalKey(a), "complete"); }
+    }
     for (const op of this.record.operations.filter(o => !["CONFIRMED", "CLOSED"].includes(o.state))) {
       this.check(); if (op.body.bindingEpoch !== this.record.scope.bindingEpoch) throw new RuntimeError("AUTHORITY_LOST");
       if (["lease", "interrupt-ack", "claim", "start-intent"].includes(op.action)) continue;
@@ -526,11 +703,6 @@ export class WorkflowRunner {
       await this.transmit(op); this.check();
     }
     await this.markUnresolvedUnknown("UNKNOWN");
-    for (const a of this.record.attempts.filter(a => a.state === "TERMINAL")) {
-      const pending = this.record.operations.find(o => ["complete", "observe"].includes(o.action) && o.body.requestId === a.requestId && o.body.attemptId === a.snapshot?.attemptId && o.body.fence === a.snapshot?.fence);
-      if (pending) await this.publish(this.journalKey(a), pending.action as "complete" | "observe");
-      else { const poll = await this.poll(); if (poll.attempt?.state !== "UNKNOWN") await this.publish(this.journalKey(a), "complete"); }
-    }
   }
   private async markUnresolvedUnknown(reason: RuntimeCode) {
     if (this.admission.closed) await this.boundedMutations(); else await this.mutations;
@@ -545,6 +717,7 @@ export class WorkflowRunner {
     return this.underBinding(async () => {
       this.assertContext(); return this.store.sessionLocked(this.record.context!.threadId, async () => {
         try {
+          await this.compactJournal();
           await this.markUnresolvedUnknown("UNKNOWN");
           const a = this.record.attempts.find(a => a.state === "UNKNOWN" || a.state === "TERMINAL"); if (!a?.native) return this.publicStatus();
           if (!a.terminal) { const evidence = await this.admission.wait(() => this.adapter.observe(this.record.context!, this.record.settings!, a.native!, this.check)); this.check(); if (!evidence) return this.publicStatus(); await this.persistTerminal(this.journalKey(a), evidence); }

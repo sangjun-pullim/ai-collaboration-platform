@@ -2,13 +2,14 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import { runnerFixture, deferred, SyntheticAdapter, settleRunnerJobs } from "./runner-fixture.ts";
 import { scopedNamespace, RuntimeAdmission, digest, stableJson, type AttemptAuthority } from "../src/runtime-contracts.ts";
-import { observation, uuid } from "./runtime-fixture.ts";
-import { RuntimeStore } from "../src/runtime-store.ts";
+import { observation, uuid, appendFixtureCompletion } from "./runtime-fixture.ts";
+import { RuntimeStore, assertRuntimeCapacity } from "../src/runtime-store.ts";
 import { readFile, writeFile, rename } from "node:fs/promises";
 import { join } from "node:path";
 import { performance } from "node:perf_hooks";
 import { ConnectionError } from "../src/contracts.ts";
 import { RuntimeError } from "../src/runtime-contracts.ts";
+import { RuntimeFilePolicy } from "../src/runtime-file-policy.ts";
 import { CodexAdapter } from "../src/codex-adapter.ts";
 import { FakeProvider } from "./fake-provider.ts";
 import { WorkflowError, type AttemptSnapshot } from "../src/workflow-contracts.ts";
@@ -612,7 +613,7 @@ test("should continue idle readiness at journal capacity while retaining the lat
       const saved = (await f.store.read())!, latest = f.requests.filter(r => r.action === "ready").at(-1)!;
       assert.equal(saved.operations.length, 1);
       const receipt = saved.operations.find(o => o.operationId === latest.body.operationId)!; assert.equal(receipt.state, "CONFIRMED"); assert.deepEqual(receipt.body, latest.body);
-      assert.equal((receipt.result as { reportedReady: boolean }).reportedReady, true);
+      assert.equal((receipt.result as { reportedReady: boolean }).reportedReady, i > 0);
     }
   } finally { await f.close(); }
 });
@@ -1008,4 +1009,531 @@ test("should invalidate owned authority after a guarded arbitrary native mapping
     const adapter=new SyntheticAdapter();await assert.rejects(f.runner(adapter).run({once:true}),{code:"CONTEXT_UNCONFIRMED"});assert.equal(adapter.starts,0);
     const prepared=await f.runner(new SyntheticAdapter()).prepare({choice:"default",files:["public.txt"],handoff:"Public confirmation",confirmed:true,autoQuestionsConfirmed:true});assert.equal(prepared.bindingEpoch,3);assert.notEqual((await f.store.read())!.context?.threadId,"unverified-external-session");
   }finally{await f.close();}
+});
+
+
+test("should publish a completed turn near the operation bound without repeating provider execution", async () => {
+  for (const count of [1019, 1022]) {
+    const f = await runnerFixture();
+    try {
+      f.queue(); await f.runner().run({ once: true });
+      const record = (await f.store.read())!;
+      const prior = structuredClone(record.attempts[0]);
+      while (record.operations.length < count) {
+        const operationId = uuid();
+        const body = { protocol: 1, agentId: f.scope.agentId, bindingEpoch: 1, operationId,
+          requestId: prior.requestId, attemptId: prior.snapshot!.attemptId, fence: prior.snapshot!.fence };
+        record.operations.push({ operationId, action: "lease", body,
+          payloadHash: digest(stableJson({ action: "lease", body })), state: "CONFIRMED", result: structuredClone(prior.snapshot) });
+      }
+      await f.store.write(record);
+      const payload = f.queue(); const adapter = new SyntheticAdapter();
+      await f.runner(adapter).run({ once: true });
+      const after = (await f.store.read())!;
+      assert.equal(adapter.starts, 1);
+      assert.equal(after.attempts.find(a => a.requestId === payload.requestId)?.state, "UPLOADED");
+      assert.equal(f.requests.filter(r => r.action === "complete" && r.body.requestId === payload.requestId).length, 1);
+    } finally { await f.close(); }
+  }
+});
+
+test("should recover a full legacy terminal by archiving only completed request evidence", async () => {
+  const f = await runnerFixture();
+  try {
+    f.queue(); await f.runner().run({ once: true });
+    f.queue();
+    await f.runner(new SyntheticAdapter(), { beforeMutation: async kind => {
+      if (kind === "operation-intent" && (await f.store.read())!.attempts.at(-1)?.state === "TERMINAL") throw new Error("SYNTHETIC_FULL_OUTBOX");
+    } }).run({ once: true });
+    const record = (await f.store.read())!;
+    const terminal = structuredClone(record.attempts.at(-1)!);
+    assert.equal(terminal.state, "TERMINAL");
+    const old = record.attempts[0];
+    while (record.operations.length < 1024) {
+      const operationId = uuid();
+      const body = { protocol: 1, agentId: f.scope.agentId, bindingEpoch: 1, operationId,
+        requestId: old.requestId, attemptId: old.snapshot!.attemptId, fence: old.snapshot!.fence };
+      record.operations.push({ operationId, action: "lease", body, payloadHash: digest(stableJson({ action: "lease", body })), state: "CONFIRMED", result: structuredClone(old.snapshot) });
+    }
+    await f.store.write(record);
+    const original = await readFile(f.store.file);
+    const adapter = new SyntheticAdapter(); await f.runner(adapter).run({ once: true });
+    const recovered = (await f.store.read())!;
+    assert.equal(adapter.starts, 0);
+    const uploaded = recovered.attempts.find(a => a.requestId === terminal.requestId)!;
+    assert.equal(uploaded.state, "UPLOADED");
+    assert.deepEqual(uploaded.terminal, terminal.terminal);
+    assert.deepEqual(uploaded.native, terminal.native);
+    assert.deepEqual(await readFile(join(f.store.dir, "archives", f.scope.agentId, `${digest(original)}.json`)), original);
+  } finally { await f.close(); }
+});
+
+test("should preserve the last public completion after idle journal compaction", async () => {
+  const f = await runnerFixture();
+  try {
+    const seed = structuredClone(f.record);
+    const older = appendFixtureCompletion(seed);
+    const blocked = seed.operations.find(o => o.body.requestId === older.requestId)!;
+    blocked.state = "PENDING"; blocked.result = null;
+    const last = appendFixtureCompletion(seed);
+    await writeFile(f.store.file, JSON.stringify(seed));
+    const first = await f.store.compact(seed);
+    assert.equal(first.attempts.length, 1);
+    assert.equal((await f.store.lastAttempt(first))!.requestId, last.requestId);
+    const closed = structuredClone(first); closed.operations.find(o => o.operationId === blocked.operationId)!.state = "CLOSED";
+    await f.store.write(closed);
+    const second = await f.store.compact(closed);
+    assert.deepEqual(second.lastArchive, first.lastArchive);
+    assert.equal(second.attempts.length, 0);
+    const adapter = new SyntheticAdapter(); const runner = f.runner(adapter);
+    const status = await runner.status(); const idle = await runner.run({ once: true });
+    for (const value of [status, idle]) {
+      assert.equal(value.state, "UPLOADED");
+      assert.ok("terminal" in value && "adoption" in value);
+      assert.equal(value.terminal, last.terminal!.terminal); assert.equal(value.adoption, last.receipt!.adoption);
+    }
+    assert.equal(adapter.starts, 0);
+    f.queue(); const nextAdapter = new SyntheticAdapter();
+    const current = await f.runner(nextAdapter).run({ once: true });
+    assert.equal(nextAdapter.starts, 1); assert.equal(current.state, "UPLOADED");
+    assert.equal((await f.store.read())!.lastArchive, undefined);
+    assert.deepEqual((await f.store.read())!.context!.ownedTurns.slice(0, 2), seed.context!.ownedTurns);
+  } finally { await f.close(); }
+});
+
+test("should refuse provider input before attempt turn or serialized capacity exhaustion", async () => {
+  for (const limit of ["attempt255", "attempt256", "turn255", "turn256", "bytes", "operations"] as const) {
+    const f = await runnerFixture();
+    try {
+      const record = structuredClone(f.record);
+      if (limit.startsWith("attempt")) {
+        const length = limit === "attempt255" ? 255 : 256;
+        record.attempts = Array.from({ length }, () => {
+          const claimOperationId = uuid();
+          return { requestId: uuid(), scope: f.scope, generation: f.context.generation, claimOperationId,
+            state: "NOT_STARTED", unstartedClosure: { kind: "LOCAL_NOT_TRANSMITTED", claimOperationId },
+            snapshot: null, native: null, terminal: null, receipt: null, reason: null, toolCalls: [] };
+        });
+      }
+      if (limit.startsWith("turn")) record.context!.ownedTurns = Array.from({ length: limit === "turn255" ? 255 : 256 }, () => ({ turnId: uuid(), terminal: "COMPLETED" }));
+      if (limit === "bytes") record.settings!.handoff = "\u0001".repeat(65536);
+      if (limit === "operations") {
+        const done = appendFixtureCompletion(record, 1023); done.state = "TERMINAL"; done.receipt = null;
+      }
+      await writeFile(f.store.file, JSON.stringify(record));
+      f.queue(); const adapter = new SyntheticAdapter();
+      if (limit.endsWith("255")) {
+        await f.runner(adapter).run({ once: true }); assert.equal(adapter.starts, 1, limit);
+      } else {
+        await assert.rejects(f.runner(adapter).run({ once: true }), { code: "RUNTIME_CAPACITY" }, limit);
+        assert.equal(adapter.starts, 0, limit);
+      }
+      assert.equal((await f.store.read())!.ready, false);
+      if (limit === "turn256") assert.deepEqual((await f.store.read())!.context!.ownedTurns, record.context!.ownedTurns);
+    } finally { await f.close(); }
+  }
+});
+
+test("should preserve exact peer outbox recovery and native history ownership", async () => {
+  const f = await runnerFixture();
+  try {
+    f.queue("PEER");
+    f.faults.after = async (action, _body, _result, response) => { if (action === "complete") response.destroy(); };
+    const first = new SyntheticAdapter(); await f.runner(first).run({ once: true });
+    const before = (await f.store.read())!;
+    assert.equal(first.starts, 1); assert.equal(before.attempts.at(-1)!.state, "TERMINAL");
+    const original = before.operations.find(o => o.action === "complete")!;
+    f.faults.after = undefined;
+    const second = new SyntheticAdapter(); await f.runner(second).run({ once: true });
+    const after = (await f.store.read())!;
+    assert.equal(second.starts, 0);
+    const retry = f.requests.filter(r => r.action === "complete" && r.body.operationId === original.operationId);
+    assert.ok(retry.length >= 2); retry.forEach(request => assert.deepEqual(request.body, original.body));
+    assert.deepEqual(after.context!.ownedTurns, before.context!.ownedTurns);
+    assert.deepEqual(after.attempts.at(-1)!.native, before.attempts.at(-1)!.native);
+    const compacted = await f.store.compact(after);
+    assert.deepEqual(compacted.context!.ownedTurns, before.context!.ownedTurns);
+    assert.deepEqual((await f.store.lastAttempt(compacted))!.terminal, before.attempts.at(-1)!.terminal);
+  } finally { await f.close(); }
+});
+
+test("should stop repeated file callbacks before their results consume terminal reserves", async () => {
+  const f = await runnerFixture();
+  try {
+    await writeFile(join(f.root, "public.txt"), "x".repeat(65536));
+    const policy = await RuntimeFilePolicy.select(f.root, ["public.txt"]);
+    const record = (await f.store.read())!; record.settings!.files = [...policy.files]; await f.store.write(record);
+    let accepted = 0, rejected = 0;
+    const adapter = new SyntheticAdapter();
+    adapter.executeHook = async authority => {
+      const native = (await f.store.read())!.attempts.at(-1)!.native!;
+      for (let index = 0; index < 12; index++) {
+        try {
+          const result = await authority.tool(callback(authority, native.turnId, "read_workspace_file", { path: "public.txt" }, `file-${index}`));
+          assert.equal(result.contentItems[0].text.length, 65536); accepted++;
+        } catch (error) { assert.equal((error as RuntimeError).code, "RUNTIME_CAPACITY"); rejected++; break; }
+      }
+    };
+    f.queue(); await f.runner(adapter).run({ once: true });
+    const after = (await f.store.read())!;
+    assert.ok(accepted > 0 && rejected === 1);
+    assert.equal(after.attempts.at(-1)!.toolCalls.length, accepted);
+    assert.equal(after.attempts.at(-1)!.state, "UPLOADED");
+    assert.equal(adapter.starts, 1);
+    assert.ok(Buffer.byteLength(JSON.stringify(after)) < 2 * 1024 * 1024);
+  } finally { await f.close(); }
+});
+
+test("should refuse provider admission at the archive reference bound without discarding evidence", async () => {
+  const f = await runnerFixture();
+  try {
+    let record = (await f.store.read())!;
+    for (let index = 0; index < 64; index++) {
+      delete record.lastArchive;
+      appendFixtureCompletion(record);
+      await writeFile(f.store.file, JSON.stringify(record));
+      record = await f.store.compact(record);
+    }
+    const references = structuredClone(record.archives);
+    f.queue(); const adapter = new SyntheticAdapter();
+    await assert.rejects(f.runner(adapter).run({ once: true }), { code: "RUNTIME_CAPACITY" });
+    assert.equal(adapter.starts, 0);
+    const after = (await f.store.read())!;
+    assert.equal(after.ready, false); assert.deepEqual(after.archives, references);
+    assert.equal(after.context!.ownedTurns.length, 64);
+  } finally { await f.close(); }
+});
+
+test("should retain maximum escaped terminal evidence while a reserved lease response is in flight", async () => {
+  const f = await runnerFixture();
+  const leaseEntered = deferred(), releaseLease = deferred();
+  try {
+    const payload = f.queue("CONTINUATION");
+    payload.publicText = "\u0001".repeat(4000); payload.replyText = "\u0001".repeat(4000);
+    let leaseId: string | undefined;
+    f.faults.before = async (action, body) => {
+      if (action === "lease" && !leaseId) {
+        leaseId = String(body.operationId); leaseEntered.resolve(); await releaseLease.promise;
+      }
+      if (action === "complete") {
+        assert.equal((await f.store.read())!.attempts.at(-1)!.state, "TERMINAL");
+        releaseLease.resolve();
+        await waitForSynthetic(async () => (await f.store.read())!.operations.find(o => o.operationId === leaseId)?.state === "CONFIRMED", "reserved lease receipt must remain writable after the maximum terminal");
+      }
+    };
+    const adapter = new SyntheticAdapter();
+    adapter.executeHook = async () => { await leaseEntered.promise; };
+    const execute = adapter.execute.bind(adapter);
+    adapter.execute = async (...args) => {
+      const evidence = await execute(...args);
+      const escaped = "\u0001".repeat(512);
+      evidence.privateText = "\u0001".repeat(65536);
+      evidence.finalItems = Array.from({ length: 256 }, () => ({ id: escaped, hash: "a".repeat(64) }));
+      evidence.observation = { requested: { model: escaped, effort: escaped }, thread: { model: escaped, provider: escaped, effort: escaped },
+        turn: { requestedModel: escaped, requestedEffort: escaped, model: escaped, rerouted: false, effortVerification: "UNVERIFIED" } };
+      return evidence;
+    };
+    await f.runner(adapter, { pollIntervalMs: 5, leaseIntervalMs: 5 }).run({ once: true });
+    const after = (await f.store.read())!;
+    assert.equal(adapter.starts, 1);
+    assert.equal(after.attempts.at(-1)!.state, "UPLOADED");
+    assert.equal(after.attempts.at(-1)!.terminal!.privateText.length, 65536);
+    assert.equal(after.attempts.at(-1)!.terminal!.finalItems.length, 256);
+    assert.ok(Buffer.byteLength(JSON.stringify(after)) < 2 * 1024 * 1024);
+  } finally { releaseLease.resolve(); await f.close(); }
+});
+
+interface CapacityRunnerProbe {
+  record: import("../src/runtime-contracts.ts").RuntimeRecord;
+  lockHeld: boolean;
+  capacityReservations: Map<string, number>;
+  workflow(action: import("../src/workflow-contracts.ts").DeviceAction, body: import("../src/workflow-contracts.ts").Body): Promise<unknown>;
+  operation(action: import("../src/workflow-contracts.ts").DeviceAction, fields: import("../src/workflow-contracts.ts").Body): Promise<import("../src/runtime-contracts.ts").RuntimeOperation>;
+  transmit(operation: import("../src/runtime-contracts.ts").RuntimeOperation, guard?: () => void): Promise<unknown>;
+  mutate(kind: string, update: (record: import("../src/runtime-contracts.ts").RuntimeRecord) => void, guard?: () => void, reservation?: unknown): Promise<void>;
+  snapshotReservation(operation: import("../src/runtime-contracts.ts").RuntimeOperation, snapshot: AttemptSnapshot, journalId: string): unknown;
+  assertOrdinaryCapacity(record?: import("../src/runtime-contracts.ts").RuntimeRecord, extraBytes?: number): void;
+}
+
+async function capacityLeaseFixture() {
+  const f = await runnerFixture();
+  const record = structuredClone(f.record);
+  const attempt = appendFixtureCompletion(record, 6);
+  attempt.state = "CLAIMED";
+  attempt.native = null;
+  attempt.terminal = null;
+  attempt.receipt = null;
+  record.operations.pop();
+  const payload = attempt.snapshot!.payload;
+  payload.requestKind = "CONTINUATION";
+  payload.questionId = uuid();
+  payload.publicText = "\u0001".repeat(4000);
+  payload.replyText = "\u0001".repeat(4000);
+  for (const operation of record.operations) operation.result = structuredClone(attempt.snapshot);
+  await writeFile(f.store.file, JSON.stringify(record));
+  await f.store.read();
+  const runtime = f.runner();
+  const probe = runtime as unknown as CapacityRunnerProbe;
+  probe.record = structuredClone(record);
+  probe.lockHeld = true;
+  let responses = 0;
+  probe.workflow = async action => {
+    assert.equal(action, "lease");
+    responses++;
+    return structuredClone(attempt.snapshot);
+  };
+  const fields = { requestId: attempt.requestId, attemptId: attempt.snapshot!.attemptId, fence: attempt.snapshot!.fence };
+  return { ...f, runtime, probe, attempt, fields, responses: () => responses };
+}
+
+test("should commit a maximum lease receipt using only its remaining snapshot reservation", async t => {
+  const f = await capacityLeaseFixture();
+  try {
+    await f.store.locked(async () => {
+      const operation = await f.probe.operation("lease", f.fields);
+      const admittedBytes = Buffer.byteLength(JSON.stringify(f.probe.record));
+      const resultBytes = Buffer.byteLength(JSON.stringify(f.attempt.snapshot));
+      const receiptProjection = structuredClone(f.probe.record);
+      receiptProjection.operations.at(-1)!.state = "CONFIRMED";
+      receiptProjection.operations.at(-1)!.result = structuredClone(f.attempt.snapshot);
+      const receiptBytes = Buffer.byteLength(JSON.stringify(receiptProjection));
+      assert.ok(receiptBytes + 65536 + 1536 * 1024 <= 2 * 1024 * 1024);
+      t.diagnostic(JSON.stringify({ case: "H1", admittedBytes, resultBytes, receiptBytes, futureSnapshotBytes: 65536 }));
+      await f.probe.transmit(operation);
+      assert.equal(f.responses(), 1);
+      assert.equal((await f.store.read())!.operations.at(-1)!.state, "CONFIRMED");
+      assert.equal(f.probe.capacityReservations.get(operation.operationId), 65536);
+    });
+  } finally { await f.close(); }
+});
+
+for (const failure of ["write-failure", "guard-before-commit", "guard-after-commit"] as const) {
+  test(`should retain lease reservations until durable receipt proof during ${failure}`, async t => {
+    const f = await capacityLeaseFixture();
+    const entered = deferred(), release = deferred();
+    try {
+      await f.store.locked(async () => {
+        const operation = await f.probe.operation("lease", f.fields);
+        const original = f.store.write.bind(f.store);
+        let cancelled = false;
+        const guard = () => { if (cancelled) throw new RuntimeError("RUNTIME_CLOSED"); };
+        t.mock.method(f.store, "write", async (next: import("../src/runtime-contracts.ts").RuntimeRecord, check?: () => void) => {
+          if (next.operations.find(candidate => candidate.operationId === operation.operationId)?.state !== "CONFIRMED") return original(next, check);
+          entered.resolve();
+          await release.promise;
+          if (failure === "write-failure") throw new RuntimeError("UNKNOWN");
+          if (failure === "guard-before-commit") cancelled = true;
+          await original(next, check);
+          if (failure === "guard-after-commit") cancelled = true;
+        });
+        const receipt = f.probe.transmit(operation, guard);
+        const rejected = assert.rejects(receipt, { code: failure === "write-failure" ? "UNKNOWN" : "RUNTIME_CLOSED" });
+        await entered.promise;
+        assert.equal(f.probe.capacityReservations.get(operation.operationId), 131072);
+        assert.equal((await f.store.read())!.operations.at(-1)!.state, "TRANSMITTED");
+        assert.throws(() => f.probe.assertOrdinaryCapacity(undefined, 55000), { code: "RUNTIME_CAPACITY" });
+        // A second writer waits behind the receipt commit. Its admission must see the disk proof,
+        // including when the first writer's guard closes immediately after the atomic commit.
+        const contender = f.probe.mutate("lease", () => {}, () => f.probe.assertOrdinaryCapacity(undefined, 55000));
+        const contenderResult = failure === "guard-after-commit" ? contender : assert.rejects(contender, { code: "RUNTIME_CAPACITY" });
+        release.resolve();
+        await rejected;
+        await contenderResult;
+        const committed = failure === "guard-after-commit";
+        assert.equal(f.probe.capacityReservations.get(operation.operationId), committed ? 65536 : 131072);
+        const disk = (await f.store.read())!;
+        assert.equal(disk.operations.at(-1)!.state, committed ? "CONFIRMED" : "TRANSMITTED");
+        assert.deepEqual(f.probe.record, disk);
+        assert.equal(f.responses(), 1);
+      });
+    } finally { release.resolve(); await f.close(); }
+  });
+}
+
+for (const committed of [false, true]) {
+  test(`should release the remaining lease snapshot reservation only with durable snapshot proof ${committed}`, async t => {
+    const f = await capacityLeaseFixture();
+    try {
+      await f.store.locked(async () => {
+        const operation = await f.probe.operation("lease", f.fields);
+        const refreshed = structuredClone(f.attempt.snapshot!);
+        refreshed.leaseExpiresAt = new Date(Date.parse(refreshed.leaseExpiresAt) + 1000).toISOString();
+        f.probe.workflow = async () => refreshed;
+        await f.probe.transmit(operation);
+        assert.equal(f.probe.capacityReservations.get(operation.operationId), 65536);
+        const original = f.store.write.bind(f.store);
+        let cancelled = false;
+        const guard = () => { if (cancelled) throw new RuntimeError("RUNTIME_CLOSED"); };
+        t.mock.method(f.store, "write", async (next: import("../src/runtime-contracts.ts").RuntimeRecord, check?: () => void) => {
+          assert.equal(f.probe.capacityReservations.get(operation.operationId), 65536);
+          if (!committed) throw new RuntimeError("UNKNOWN");
+          await original(next, check);
+          cancelled = true;
+        });
+        await assert.rejects(f.probe.mutate("lease", next => {
+          next.attempts.at(-1)!.snapshot = refreshed;
+        }, guard, f.probe.snapshotReservation(operation, refreshed, f.attempt.requestId)), { code: committed ? "RUNTIME_CLOSED" : "UNKNOWN" });
+        assert.equal(f.probe.capacityReservations.get(operation.operationId), committed ? undefined : 65536);
+        const disk = (await f.store.read())!;
+        assert.deepEqual(disk.attempts.at(-1)!.snapshot, committed ? refreshed : f.attempt.snapshot);
+        assert.deepEqual(f.probe.record, disk);
+      });
+    } finally { await f.close(); }
+  });
+}
+
+async function largeTerminalReadinessFixture() {
+  const f = await runnerFixture();
+  try {
+  let originalReceipt: unknown;
+  const adapter = new SyntheticAdapter();
+  const execute = adapter.execute.bind(adapter);
+  adapter.execute = async (...args) => {
+    const evidence = await execute(...args);
+    evidence.privateText = "\u0001".repeat(65536);
+    evidence.finalItems = Array.from({ length: 256 }, () => ({ id: "\u0001".repeat(512), hash: "a".repeat(64) }));
+    return evidence;
+  };
+  f.faults.after = async (action, _body, _result, response) => {
+    if (action === "complete") { originalReceipt = structuredClone(_result); response.destroy(); }
+  };
+  f.queue();
+  await f.runner(adapter).run({ once: true });
+  const before = (await f.store.read())!;
+  const terminal = structuredClone(before.attempts.at(-1)!.terminal);
+  const outbox = structuredClone(before.operations.find(operation => operation.action === "complete")!);
+  assert.equal(before.attempts.at(-1)!.state, "TERMINAL");
+  const operationId = uuid();
+  const body = { protocol: 1, agentId: f.scope.agentId, bindingEpoch: 1, operationId, reportedReady: true };
+  const readiness: import("../src/runtime-contracts.ts").RuntimeOperation = {
+    operationId, action: "ready", body, payloadHash: digest(stableJson({ action: "ready", body })), state: "TRANSMITTED", result: null,
+  };
+  before.operations.splice(before.operations.findIndex(operation => operation.operationId === outbox.operationId), 0, readiness);
+  await writeFile(f.store.file, JSON.stringify(before));
+  await f.store.read();
+    f.faults.after = undefined;
+    return { ...f, before, terminal, outbox, readiness, originalReceipt };
+  } catch (error) { await f.close(); throw error; }
+}
+
+test("should recover the original large terminal outbox before a pending readiness intent", async t => {
+  const f = await largeTerminalReadinessFixture();
+  const { before, terminal, outbox, readiness } = f;
+  try {
+    const callStart = f.requests.length;
+    const recoveryAdapter = new SyntheticAdapter();
+    const calls: string[] = [];
+    f.faults.before = async (action, actual) => {
+      if (action === "complete") assert.deepEqual(actual, outbox.body);
+      if (action === "ready" && actual.operationId === readiness.operationId) {
+        assert.deepEqual(actual, readiness.body);
+        assert.equal((await f.store.read())!.attempts.at(-1)!.state, "UPLOADED");
+      }
+      calls.push(action);
+    };
+    t.diagnostic(JSON.stringify({ case: "H2", journalBytes: Buffer.byteLength(JSON.stringify(before)), terminalBytes: Buffer.byteLength(JSON.stringify(terminal)), pendingReadyOperationId: readiness.operationId, outboxOperationId: outbox.operationId }));
+    const status = await f.runner(recoveryAdapter).run({ once: true });
+    const after = (await f.store.read())!;
+    assert.equal(status.state, "UPLOADED");
+    assert.equal(recoveryAdapter.starts, 0);
+    assert.deepEqual(after.attempts.at(-1)!.terminal, terminal);
+    assert.deepEqual(after.attempts.at(-1)!.receipt, f.originalReceipt);
+    assert.deepEqual(after.operations.find(operation => operation.operationId === outbox.operationId)!.result, f.originalReceipt);
+    assert.equal(after.operations.find(operation => operation.operationId === outbox.operationId)!.state, "CONFIRMED");
+    const replay = f.requests.slice(callStart).filter(request => request.body.operationId === readiness.operationId);
+    assert.equal(replay.length, 1);
+    assert.deepEqual(replay[0].body, readiness.body);
+    assert.ok(calls.indexOf("complete") < calls.indexOf("ready"));
+    assert.equal(after.ready, false);
+    assert.throws(() => assertRuntimeCapacity(before, true), { code: "RUNTIME_CAPACITY" });
+    assert.throws(() => assertRuntimeCapacity(after, true), { code: "RUNTIME_CAPACITY" });
+  } finally { await f.close(); }
+});
+
+test("should replay an unresolved readiness receipt after exact terminal recovery without another provider run", async () => {
+  const f = await largeTerminalReadinessFixture();
+  try {
+    const callStart = f.requests.length;
+    let readinessReceipt: unknown;
+    f.faults.after = async (action, body, result, response) => {
+      if (action === "ready" && body.operationId === f.readiness.operationId) {
+        readinessReceipt = structuredClone(result);
+        response.destroy();
+      }
+    };
+    const firstAdapter = new SyntheticAdapter();
+    await assert.rejects(f.runner(firstAdapter).run({ once: true }), { code: "UNAVAILABLE" });
+    const interrupted = (await f.store.read())!;
+    assert.equal(firstAdapter.starts, 0);
+    assert.equal(interrupted.attempts.at(-1)!.state, "UPLOADED");
+    assert.deepEqual(interrupted.attempts.at(-1)!.terminal, f.terminal);
+    assert.deepEqual(interrupted.attempts.at(-1)!.receipt, f.originalReceipt);
+    assert.deepEqual(interrupted.operations.find(operation => operation.operationId === f.outbox.operationId)!.result, f.originalReceipt);
+    const pending = interrupted.operations.find(operation => operation.operationId === f.readiness.operationId)!;
+    assert.equal(pending.state, "TRANSMITTED");
+    assert.equal(pending.result, null);
+    assert.deepEqual(pending.body, f.readiness.body);
+    assert.equal(interrupted.ready, false);
+    f.faults.after = undefined;
+    let witnessedReceipt = false;
+    const secondAdapter = new SyntheticAdapter();
+    const status = await f.runner(secondAdapter, { beforeMutation: async kind => {
+      if (kind !== "operation-intent") return;
+      const disk = (await f.store.read())!;
+      const confirmed = disk.operations.find(operation => operation.operationId === f.readiness.operationId);
+      if (confirmed?.state === "CONFIRMED") {
+        assert.deepEqual(confirmed.body, f.readiness.body);
+        assert.deepEqual(confirmed.result, readinessReceipt);
+        witnessedReceipt = true;
+      }
+    } }).run({ once: true });
+    assert.equal(secondAdapter.starts, 0);
+    assert.equal(status.state, "UPLOADED");
+    assert.equal(witnessedReceipt, true);
+    const after = (await f.store.read())!;
+    const last = (await f.store.lastAttempt(after))!;
+    assert.deepEqual(last.terminal, f.terminal);
+    assert.deepEqual(last.receipt, f.originalReceipt);
+    const replays = f.requests.slice(callStart).filter(request => request.body.operationId === f.readiness.operationId);
+    assert.equal(replays.length, 3);
+    for (const request of replays) assert.deepEqual(request.body, f.readiness.body);
+    assert.equal(after.ready, false);
+  } finally { await f.close(); }
+});
+
+test("should keep monitoring through a maximum continuation lease receipt and publish the completed turn", async () => {
+  const f = await runnerFixture();
+  try {
+    const payload = f.queue("CONTINUATION");
+    payload.publicText = "\u0001".repeat(4000);
+    payload.replyText = "\u0001".repeat(4000);
+    let leaseCount = 0;
+    let boundaryLease: string | undefined;
+    f.faults.before = async (action, body) => {
+      if (action !== "lease") return;
+      leaseCount++;
+      if (leaseCount === 5) {
+        const disk = (await f.store.read())!;
+        assert.equal(disk.operations.filter(operation => ["claim", "start-intent", "lease"].includes(operation.action) && operation.state === "CONFIRMED").length, 6);
+        boundaryLease = String(body.operationId);
+      }
+    };
+    const adapter = new SyntheticAdapter();
+    adapter.executeHook = async () => {
+      await waitForSynthetic(async () => {
+        if (!boundaryLease) return false;
+        const disk = (await f.store.read())!;
+        const confirmed = disk.operations.find(operation => operation.operationId === boundaryLease);
+        return confirmed?.state === "CONFIRMED" && stableJson(disk.attempts.at(-1)!.snapshot) === stableJson(confirmed.result);
+      }, "maximum continuation lease receipt and snapshot must commit before terminal");
+    };
+    const status = await f.runner(adapter, { pollIntervalMs: 5, leaseIntervalMs: 100 }).run({ once: true });
+    const after = (await f.store.read())!;
+    assert.equal(adapter.starts, 1);
+    assert.equal(status.state, "UPLOADED");
+    assert.equal(after.attempts.at(-1)!.terminal!.terminal, "COMPLETED");
+    assert.equal(after.operations.find(operation => operation.operationId === boundaryLease)!.state, "CONFIRMED");
+    assert.equal(after.operations.filter(operation => operation.action === "complete").length, 1);
+    assert.equal(after.operations.find(operation => operation.action === "complete")!.state, "CONFIRMED");
+  } finally { await f.close(); }
 });

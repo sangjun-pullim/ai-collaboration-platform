@@ -4,7 +4,7 @@ import type { AttemptSnapshot, Body, DeviceAction, RequestPayload, Terminal, Ter
 export const runtimeVersion = 1 as const;
 export const codexVersion = "0.159.1";
 export const scopedNamespace = "ai_collaboration_scoped";
-export type RuntimeCode = "INVALID_RUNTIME" | "UNSAFE_STORAGE" | "RUNTIME_BUSY" | "POLICY_UNCONFIRMED" | "UNSUPPORTED_SETTINGS" | "CONTEXT_UNCONFIRMED" | "SNAPSHOT_CHANGED" | "TOOL_REJECTED" | "PUBLIC_TEXT_REJECTED" | "AUTHORITY_LOST" | "PROVIDER_UNAVAILABLE" | "UNKNOWN" | "CLEANUP_INCOMPLETE" | "RUNTIME_CLOSED";
+export type RuntimeCode = "RUNTIME_CAPACITY" | "INVALID_RUNTIME" | "UNSAFE_STORAGE" | "RUNTIME_BUSY" | "POLICY_UNCONFIRMED" | "UNSUPPORTED_SETTINGS" | "CONTEXT_UNCONFIRMED" | "SNAPSHOT_CHANGED" | "TOOL_REJECTED" | "PUBLIC_TEXT_REJECTED" | "AUTHORITY_LOST" | "PROVIDER_UNAVAILABLE" | "UNKNOWN" | "CLEANUP_INCOMPLETE" | "RUNTIME_CLOSED";
 export class RuntimeError extends Error { constructor(readonly code: RuntimeCode) { super(code); } }
 export const digest = (value: string | Buffer) => createHash("sha256").update(value).digest("hex");
 export function stableJson(value: unknown): string {
@@ -49,8 +49,17 @@ export interface PreparationJournal {
   operationId: string; previousEpoch: number; generation: string; settings: RuntimeSettings;
   candidate: OwnedContext | null; state: "PROVIDER_PENDING" | "PROVIDER_CREATED" | "CANDIDATE" | "REPLACE_PENDING";
 }
+export interface RuntimeArchiveReference {
+  hash: string;
+  requestIds: string[];
+}
+export interface RuntimeLastArchive {
+  hash: string;
+  attemptId: string;
+}
 export interface RuntimeRecord {
   version: 1; scope: RuntimeScope; settings: RuntimeSettings | null; context: OwnedContext | null;
+  archives?: RuntimeArchiveReference[]; lastArchive?: RuntimeLastArchive;
   ready: boolean; preparation: PreparationJournal | null; attempts: AttemptJournal[]; operations: RuntimeOperation[];
 }
 export interface ToolResult { success: boolean; contentItems: { type: "inputText"; text: string }[] }

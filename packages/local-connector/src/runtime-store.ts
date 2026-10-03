@@ -7,6 +7,7 @@ import { isId, isHash } from "./contracts.ts";
 import { serviceOrigin } from "./central-client.ts";
 import { validateBody, projectResponse, type DeviceAction } from "./workflow-contracts.ts";
 import { codexVersion, digest, RuntimeError, stableJson, type AttemptJournal, type RuntimeRecord, type RuntimeOperation, type RuntimeScope } from "./runtime-contracts.ts";
+import { RuntimeArchive, journalByteLimit, archiveReferenceLimit, archiveRequestLimit } from "./runtime-archive.ts";
 import { isSelectedPath } from "./runtime-file-policy.ts";
 
 type Check = (value: unknown) => boolean;
@@ -36,7 +37,7 @@ const observation = exact({ requested, thread: exact({ model: nullable(string), 
 const evidence = exact({ threadId: string, turnId: string, terminal, privateText: text, publicText: v => typeof v === "string" && Buffer.byteLength(v) <= 8192 && Array.from(v).length <= 4000, finalItems: list(exact({ id: string, hash: isHash }), 256), textProof: one("FINAL_ANSWER", "UNCONFIRMED"), observation });
 const toolResult = exact({ success: bool, contentItems: list(exact({ type: one("inputText"), text }), 4) });
 const projected = (action: DeviceAction): Check => v => { try { projectResponse(action, v); return true; } catch { return false; } };
-const codes = one("INVALID_RUNTIME", "UNSAFE_STORAGE", "RUNTIME_BUSY", "POLICY_UNCONFIRMED", "UNSUPPORTED_SETTINGS", "CONTEXT_UNCONFIRMED", "SNAPSHOT_CHANGED", "TOOL_REJECTED", "PUBLIC_TEXT_REJECTED", "AUTHORITY_LOST", "PROVIDER_UNAVAILABLE", "UNKNOWN", "CLEANUP_INCOMPLETE", "RUNTIME_CLOSED");
+const codes = one("RUNTIME_CAPACITY", "INVALID_RUNTIME", "UNSAFE_STORAGE", "RUNTIME_BUSY", "POLICY_UNCONFIRMED", "UNSUPPORTED_SETTINGS", "CONTEXT_UNCONFIRMED", "SNAPSHOT_CHANGED", "TOOL_REJECTED", "PUBLIC_TEXT_REJECTED", "AUTHORITY_LOST", "PROVIDER_UNAVAILABLE", "UNKNOWN", "CLEANUP_INCOMPLETE", "RUNTIME_CLOSED");
 const closure: Check = v => exact({ kind: one("LOCAL_NOT_TRANSMITTED"), claimOperationId: isId })(v) || exact({ kind: one("SERVER_ABANDONED"), claimOperationId: isId, snapshot: projected("claim") })(v);
 const journal = optionalExact({ requestId: isId, scope, generation: isId, state: one("CLAIM_PENDING", "CLAIMED", "SERVER_INTENT_PENDING", "SERVER_INTENT_CONFIRMED", "PROVIDER_INTENT", "ACKNOWLEDGED", "RUNNING", "TERMINAL", "UPLOADED", "UNKNOWN", "NOT_STARTED"), snapshot: nullable(projected("claim")), native: nullable(exact({ threadId: string, turnId: string })), terminal: nullable(evidence), receipt: nullable(projected("complete")), reason: nullable(codes), toolCalls: list(exact({ callId: string, payloadHash: isHash, operationId: nullable(isId), result: nullable(toolResult) }), 256) }, { claimOperationId: isId, unstartedClosure: closure });
 const preparation = exact({ operationId: isId, previousEpoch: positive, generation: isId, settings, candidate: nullable(context), state: one("PROVIDER_PENDING", "PROVIDER_CREATED", "CANDIDATE", "REPLACE_PENDING") });
@@ -45,7 +46,7 @@ const operation: Check = v => {
   const op = v as unknown as RuntimeOperation;
   try { const body = validateBody(op.action, op.body); return body.operationId === op.operationId && stableJson(body) === stableJson(op.body) && op.payloadHash === digest(stableJson({ action: op.action, body: op.body })) && (op.state === "CONFIRMED" ? op.result !== null && projected(op.action)(op.result) : op.result === null); } catch { return false; }
 };
-const schema = exact({ version: one(1), scope, settings: nullable(settings), context: nullable(context), ready: bool, preparation: nullable(preparation), attempts: list(journal, 256), operations: list(operation, 1024) });
+const schema = optionalExact({ version: one(1), scope, settings: nullable(settings), context: nullable(context), ready: bool, preparation: nullable(preparation), attempts: list(journal, 256), operations: list(operation, 1024) }, { archives: list(exact({ hash: isHash, requestIds: v => list(isId, 4096)(v) && (v as unknown[]).length > 0 }), 64), lastArchive: exact({ hash: isHash, attemptId: isId }) });
 function unsafe(): never { throw new RuntimeError("UNSAFE_STORAGE"); }
 function claimMatches(a: AttemptJournal, o: RuntimeOperation) { return o.action === "claim" && o.body.requestId === a.requestId && o.body.bindingEpoch === a.scope.bindingEpoch && o.operationId === a.claimOperationId; }
 function attemptMatches(a: AttemptJournal, o: RuntimeOperation) {
@@ -68,6 +69,11 @@ function closureValid(a: AttemptJournal, v: RuntimeRecord) {
 }
 function validate(value: unknown): asserts value is RuntimeRecord {
   if (!schema(value)) unsafe(); const v = value as RuntimeRecord;
+  const archivedIds = (v.archives ?? []).flatMap(ref => ref.requestIds);
+  if (archivedIds.length > archiveRequestLimit || new Set(archivedIds).size !== archivedIds.length ||
+      new Set((v.archives ?? []).map(ref => ref.hash)).size !== (v.archives ?? []).length ||
+      v.attempts.some(a => archivedIds.includes(a.requestId)) ||
+      v.lastArchive && !(v.archives ?? []).some(ref => ref.hash === v.lastArchive!.hash)) unsafe();
   if (new Set(v.attempts.filter(a => a.claimOperationId).map(a => a.claimOperationId)).size !== v.attempts.filter(a => a.claimOperationId).length || new Set(v.operations.map(o => o.operationId)).size !== v.operations.length || v.ready && (!v.context || !v.settings || v.preparation)) unsafe();
   for (let i = 0; i < v.attempts.length; i++) {
     const a = v.attempts[i], older = v.attempts.slice(0, i).filter(old => old.requestId === a.requestId);
@@ -129,6 +135,10 @@ export function pruneConfirmedReady(value: RuntimeRecord): void {
   const removable = removableReady(value, value); value.operations = value.operations.filter(o => !removable.has(o.operationId));
 }
 function validateChange(previous: RuntimeRecord, next: RuntimeRecord) {
+  if (stableJson(previous.archives ?? []) !== stableJson(next.archives ?? [])) unsafe();
+  const added = next.attempts.slice(previous.attempts.length);
+  if (stableJson(previous.lastArchive ?? null) !== stableJson(next.lastArchive ?? null) &&
+      !(previous.lastArchive && !next.lastArchive && added.length > 0)) unsafe();
   const { bindingEpoch: beforeEpoch, ...before } = previous.scope; const { bindingEpoch: afterEpoch, ...after } = next.scope;
   const preparation = previous.preparation;
   const prepared = preparation?.state === "REPLACE_PENDING" && next.preparation === null && afterEpoch === preparation.previousEpoch + 1 && stableJson(next.context) === stableJson(preparation.candidate) && stableJson(next.settings) === stableJson(preparation.settings) && next.ready === false;
@@ -145,6 +155,14 @@ function validateChange(previous: RuntimeRecord, next: RuntimeRecord) {
       if (afterEpoch !== beforeEpoch || stableJson(previous.context) !== stableJson(next.context) || stableJson(previous.settings) !== stableJson(next.settings)) unsafe();
     }
   } else if (next.preparation && (next.preparation.state !== "PROVIDER_PENDING" || next.preparation.candidate !== null)) unsafe();
+  if (previous.context && !prepared && !invalidated) {
+    const current = next.context;
+    const { level: oldLevel, ownedTurns: oldTurns, ...oldIdentity } = previous.context;
+    if (!current) unsafe();
+    const { level: newLevel, ownedTurns: newTurns, ...newIdentity } = current;
+    if (stableJson(oldIdentity) !== stableJson(newIdentity) || oldLevel === "L2" && newLevel !== "L2" ||
+        stableJson(oldTurns) !== stableJson(newTurns.slice(0, oldTurns.length))) unsafe();
+  }
   // Intent order determines the latest receipt; compaction must never reorder surviving intents.
   const positions = new Map(previous.operations.map((o, index) => [o.operationId, index])); let last = -1, appended = false;
   for (const operation of next.operations) {
@@ -160,6 +178,7 @@ function validateChange(previous: RuntimeRecord, next: RuntimeRecord) {
   }
   for (const [index, old] of previous.attempts.entries()) {
     const current = next.attempts[index];
+    if (old.state === "UPLOADED" && stableJson(old) !== stableJson(current)) unsafe();
     if (!current || old.requestId !== current.requestId || old.claimOperationId && old.claimOperationId !== current.claimOperationId || old.unstartedClosure && stableJson(old) !== stableJson(current)) unsafe();
     if (!old.claimOperationId && current.claimOperationId) {
       const claims = previous.operations.filter(o => o.action === "claim" && o.body.requestId === old.requestId && o.body.bindingEpoch === old.scope.bindingEpoch);
@@ -174,6 +193,8 @@ function validateChange(previous: RuntimeRecord, next: RuntimeRecord) {
     if (old.receipt && stableJson(old.receipt) !== stableJson(current.receipt)) unsafe();
   }
   for (const appended of next.attempts.slice(previous.attempts.length)) {
+    if ((previous.archives ?? []).some(ref => ref.requestIds.includes(appended.requestId))) unsafe();
+    if (stableJson(appended.scope) !== stableJson(next.scope) || appended.generation !== next.context?.generation) unsafe();
     if (!appended.claimOperationId || appended.state !== "CLAIM_PENDING" || appended.snapshot || appended.unstartedClosure || appended.native || appended.terminal || appended.receipt || appended.toolCalls.length) unsafe();
     if (previous.attempts.some(old => old.requestId === appended.requestId && old.state !== "NOT_STARTED")) unsafe();
   }
@@ -199,21 +220,62 @@ async function readSecure(path: string, limit: number, check = () => {}) {
     const data = Buffer.alloc(limit + 1); const { bytesRead } = await handle.read(data, 0, data.length, 0); check();
     const after = await handle.stat(); check(); const current = await lstat(path); check();
     if (bytesRead > limit || bytesRead !== opened.size || [after, current].some(s => s.dev !== opened.dev || s.ino !== opened.ino || s.size !== opened.size || s.mtimeMs !== opened.mtimeMs || s.ctimeMs !== opened.ctimeMs)) unsafe();
-    return { value: JSON.parse(new TextDecoder("utf-8", { fatal: true }).decode(data.subarray(0, bytesRead))), stat: opened };
+    return { value: JSON.parse(new TextDecoder("utf-8", { fatal: true }).decode(data.subarray(0, bytesRead))), stat: opened, bytes: data.subarray(0, bytesRead) };
   } finally { await handle.close(); }
 }
 async function syncDirectory(path: string) { const handle = await open(path, constants.O_RDONLY | constants.O_NOFOLLOW); try { await handle.sync(); } finally { await handle.close(); } }
 export function unresolvedRuntime(record: RuntimeRecord) { return !!record.preparation || record.attempts.some(a => !["UPLOADED", "NOT_STARTED"].includes(a.state)) || record.operations.some(o => !["CONFIRMED", "CLOSED"].includes(o.state)); }
+function archiveAttemptId(attempt: AttemptJournal): string {
+  return attempt.claimOperationId ?? attempt.snapshot!.attemptId;
+}
+function bundleOperations(value: RuntimeRecord, requests: Set<string>): Set<string> {
+  const refs = new Set(value.attempts.filter(a => requests.has(a.requestId)).flatMap(a =>
+    [a.claimOperationId, ...a.toolCalls.map(call => call.operationId)]));
+  return new Set(value.operations.filter(op => requests.has(String(op.body.requestId)) || refs.has(op.operationId)).map(op => op.operationId));
+}
+function completedRequests(value: RuntimeRecord): string[] {
+  return [...new Set(value.attempts.map(a => a.requestId))].filter(requestId => {
+    const attempts = value.attempts.filter(a => a.requestId === requestId);
+    if (!attempts.some(a => a.state === "UPLOADED") || attempts.some(a => a.state !== "UPLOADED" && !(a.state === "NOT_STARTED" && a.unstartedClosure))) return false;
+    for (const attempt of attempts.filter(a => a.state === "UPLOADED")) {
+      if (!value.operations.some(op => ["complete", "observe"].includes(op.action) && op.state === "CONFIRMED" &&
+          attemptMatches(attempt, op) && op.body.terminal === attempt.terminal!.terminal &&
+          op.body.publicText === attempt.terminal!.publicText && stableJson(op.result) === stableJson(attempt.receipt))) return false;
+    }
+    const operations = bundleOperations(value, new Set([requestId]));
+    if (value.operations.some(op => operations.has(op.operationId) && !["CONFIRMED", "CLOSED"].includes(op.state))) return false;
+    if (value.preparation && operations.has(value.preparation.operationId)) return false;
+    return !value.attempts.some(a => a.requestId !== requestId &&
+      (a.claimOperationId && operations.has(a.claimOperationId) || a.toolCalls.some(call => call.operationId && operations.has(call.operationId))));
+  });
+}
+
+// These are bytes left free under the 2 MiB cap, not whole-file size thresholds.
+export const terminalReserveBytes = 1536 * 1024;
+export const admissionReserveBytes = 1792 * 1024;
+export const terminalReserveOperations = 8;
+export function assertRuntimeCapacity(value: RuntimeRecord, admission = false, extraBytes = 0, extraOperations = 0): void {
+  const reserve = admission ? admissionReserveBytes : terminalReserveBytes;
+  if (Buffer.byteLength(JSON.stringify(value)) + extraBytes + reserve > journalByteLimit ||
+      value.operations.length + extraOperations + terminalReserveOperations + (admission ? 2 : 0) > 1024 ||
+      admission && (value.attempts.length >= 256 || (value.context?.ownedTurns.length ?? 0) >= 256 ||
+        (value.archives ?? []).length >= archiveReferenceLimit ||
+        (value.archives ?? []).reduce((sum, ref) => sum + ref.requestIds.length, 0) >= archiveRequestLimit)) {
+    throw new RuntimeError("RUNTIME_CAPACITY");
+  }
+}
 export class RuntimeStore {
   readonly dir: string; readonly file: string;
   private writes: Promise<unknown> = Promise.resolve();
+  private readonly archive: RuntimeArchive;
   constructor(readonly stateDir: string, readonly profile: string, readonly agentId: string) {
     if (!/^[a-z0-9][a-z0-9-]{0,39}$/.test(profile) || !isId(agentId)) unsafe();
     this.dir = join(resolve(stateDir), "runtime", profile); this.file = join(this.dir, `${agentId}.json`);
+    this.archive = new RuntimeArchive(this.dir, agentId);
   }
   async read(): Promise<RuntimeRecord | undefined> {
     await directory(resolve(this.stateDir)); await directory(this.dir, () => {}, resolve(this.stateDir));
-    try { const { value } = await readSecure(this.file, 2 * 1024 * 1024); validate(value); if (value.scope.agentId !== this.agentId) unsafe(); return value; }
+    try { const { value } = await readSecure(this.file, 2 * 1024 * 1024); validate(value); if (value.scope.agentId !== this.agentId) unsafe(); await this.archiveRecords(value); return value; }
     catch (e) { if ((e as NodeJS.ErrnoException).code === "ENOENT") return undefined; if (e instanceof RuntimeError) throw e; unsafe(); }
   }
   write(value: RuntimeRecord, check = () => {}): Promise<void> {
@@ -222,7 +284,13 @@ export class RuntimeStore {
       check(); await directory(resolve(this.stateDir), check); await directory(this.dir, check, resolve(this.stateDir)); check();
       let previous: RuntimeRecord | undefined;
       try { const input = await readSecure(this.file, 2 * 1024 * 1024, check); validate(input.value); previous = input.value; } catch (e) { if ((e as NodeJS.ErrnoException).code !== "ENOENT") throw e; }
-      check(); if (previous) validateChange(previous, snapshot);
+      check();
+      if (previous) {
+        await this.archiveRecords(previous, check);
+        validateChange(previous, snapshot);
+      } else if ((snapshot.archives ?? []).length || snapshot.lastArchive) unsafe();
+      await this.archiveRecords(snapshot, check);
+      check();
       const bytes = JSON.stringify(snapshot); if (Buffer.byteLength(bytes) > 2 * 1024 * 1024) unsafe();
       const temp = join(this.dir, `.${this.agentId}-${randomUUID()}.tmp`); let handle: FileHandle | undefined;
       try {
@@ -233,6 +301,108 @@ export class RuntimeStore {
       } finally { await handle?.close(); await unlink(temp).catch(() => {}); }
     });
     this.writes = work.catch(() => {}); return work;
+  }
+  private async archiveRecords(value: RuntimeRecord, check = () => {}): Promise<RuntimeRecord[]> {
+    const refs = value.archives ?? [];
+    const bytes = await this.archive.verify(refs, check);
+    const records: RuntimeRecord[] = [];
+    let previousEpoch = 0;
+    for (let index = 0; index < refs.length; index++) {
+      let source: unknown;
+      try {
+        source = JSON.parse(new TextDecoder("utf-8", { fatal: true }).decode(bytes[index]));
+      }
+      catch { unsafe(); }
+      validate(source);
+      const { bindingEpoch: epoch, ...scope } = source.scope;
+      const { bindingEpoch: currentEpoch, ...currentScope } = value.scope;
+      if (stableJson(scope) !== stableJson(currentScope) || epoch > currentEpoch || epoch < previousEpoch ||
+          stableJson(source.archives ?? []) !== stableJson(refs.slice(0, index))) unsafe();
+      previousEpoch = epoch;
+      const eligible = completedRequests(source);
+      const selected = refs[index].requestIds;
+      if (selected.some(id => !eligible.includes(id)) ||
+          stableJson(selected) !== stableJson(eligible.filter(id => selected.includes(id)))) unsafe();
+      if (source.lastArchive) {
+        const prior = records.find((_, i) => refs[i].hash === source.lastArchive!.hash);
+        if (!prior || prior.attempts.filter(a => archiveAttemptId(a) === source.lastArchive!.attemptId &&
+            refs[records.indexOf(prior)].requestIds.includes(a.requestId)).length !== 1) unsafe();
+      }
+      records.push(source);
+    }
+    if (value.lastArchive) {
+      const index = refs.findIndex(ref => ref.hash === value.lastArchive!.hash);
+      if (index < 0 || records[index].attempts.filter(a => archiveAttemptId(a) === value.lastArchive!.attemptId && refs[index].requestIds.includes(a.requestId)).length !== 1) unsafe();
+    }
+    return records;
+  }
+  async lastAttempt(value: RuntimeRecord): Promise<AttemptJournal | undefined> {
+    validate(value);
+    if (value.scope.agentId !== this.agentId) unsafe();
+    const records = await this.archiveRecords(value);
+    if (!value.lastArchive) return value.attempts.at(-1);
+    const index = (value.archives ?? []).findIndex(ref => ref.hash === value.lastArchive!.hash);
+    return structuredClone(records[index].attempts.find(a => archiveAttemptId(a) === value.lastArchive!.attemptId));
+  }
+  compact(value: RuntimeRecord, check = () => {}): Promise<RuntimeRecord> {
+    const snapshot = structuredClone(value);
+    validate(snapshot);
+    const work = this.writes.then(async () => {
+      check();
+      await directory(resolve(this.stateDir), check);
+      await directory(this.dir, check, resolve(this.stateDir));
+      const input = await readSecure(this.file, journalByteLimit, check);
+      validate(input.value);
+      if (input.value.scope.agentId !== this.agentId || stableJson(input.value) !== stableJson(snapshot)) unsafe();
+      await this.archiveRecords(input.value, check);
+      const requestIds = completedRequests(snapshot);
+      if (!requestIds.length) return snapshot;
+      const refs = snapshot.archives ?? [];
+      if (refs.length >= archiveReferenceLimit || refs.reduce((sum, ref) => sum + ref.requestIds.length, 0) + requestIds.length > archiveRequestLimit) {
+        throw new RuntimeError("RUNTIME_CAPACITY");
+      }
+      const next = structuredClone(snapshot);
+      const removedOperations = bundleOperations(snapshot, new Set(requestIds));
+      const hash = digest(input.bytes);
+      next.archives = [...refs, { hash, requestIds }];
+      const last = snapshot.attempts.at(-1);
+      if (!snapshot.lastArchive && last && requestIds.includes(last.requestId)) {
+        next.lastArchive = { hash, attemptId: archiveAttemptId(last) };
+      }
+      next.attempts = next.attempts.filter(a => !requestIds.includes(a.requestId));
+      next.operations = next.operations.filter(o => !removedOperations.has(o.operationId));
+      validate(next);
+      const bytes = Buffer.from(JSON.stringify(next));
+      if (bytes.length > journalByteLimit) throw new RuntimeError("RUNTIME_CAPACITY");
+      // No general write can use this deletion exception. The source is the exact owned disk bytes.
+      await this.archive.save(input.bytes, check);
+      await this.archiveRecords(next, check);
+      const temp = join(this.dir, `.${this.agentId}-${randomUUID()}.tmp`);
+      let handle: FileHandle | undefined;
+      try {
+        check();
+        handle = await open(temp, constants.O_WRONLY | constants.O_CREAT | constants.O_EXCL | constants.O_NOFOLLOW, 0o600);
+        check();
+        await handle.writeFile(bytes);
+        check();
+        await handle.sync();
+        check();
+        await handle.close();
+        handle = undefined;
+        const current = await readSecure(this.file, journalByteLimit, check);
+        if (!current.bytes.equals(input.bytes)) unsafe();
+        check();
+        await rename(temp, this.file);
+        await syncDirectory(this.dir);
+        check();
+      } finally {
+        await handle?.close();
+        await unlink(temp).catch(() => {});
+      }
+      return next;
+    });
+    this.writes = work.catch(() => {});
+    return work;
   }
   async drainWrites() { await this.writes; }
   async locked<T>(run: (recovered: boolean) => Promise<T>) {

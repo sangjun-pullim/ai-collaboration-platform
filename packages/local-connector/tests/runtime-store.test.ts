@@ -2,9 +2,9 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import { chmod, link, lstat, readFile, symlink, unlink, writeFile } from "node:fs/promises";
 import { join } from "node:path";
-import { RuntimeStore, pruneConfirmedReady } from "../src/runtime-store.ts";
-import { RuntimeError, digest, stableJson, type RuntimeOperation, type AttemptJournal } from "../src/runtime-contracts.ts";
-import { runtimeFixture, uuid, observation } from "./runtime-fixture.ts";
+import { RuntimeStore, pruneConfirmedReady, assertRuntimeCapacity, terminalReserveBytes, admissionReserveBytes } from "../src/runtime-store.ts";
+import { RuntimeError, digest, stableJson, type RuntimeOperation, type AttemptJournal, type TerminalEvidence } from "../src/runtime-contracts.ts";
+import { runtimeFixture, uuid, observation, appendFixtureCompletion } from "./runtime-fixture.ts";
 import { runnerFixture, SyntheticAdapter } from "./runner-fixture.ts";
 
 test("should reject duplicate live claims forged unstarted proofs and changes to closed attempt evidence", async () => {
@@ -201,4 +201,161 @@ test("should recover pending operations without changing their action or payload
     assert.deepEqual(recovered.operations[0], operation); const changed = structuredClone(recovered); changed.operations[0].body.reportedReady = true;
     changed.operations[0].payloadHash = digest(stableJson({ action: "ready", body: changed.operations[0].body })); await assert.rejects(f.store.write(changed));
   } finally { await f.close(); }
+});
+
+test("should preserve unresolved evidence and reject archived request reexecution", async () => {
+  const f = await runtimeFixture();
+  try {
+    const archived = appendFixtureCompletion(f.record);
+    const unknown = appendFixtureCompletion(f.record); unknown.state = "UNKNOWN"; unknown.terminal = null; unknown.receipt = null;
+    const terminal = appendFixtureCompletion(f.record); terminal.state = "TERMINAL"; terminal.receipt = null;
+    const question = appendFixtureCompletion(f.record);
+    const operationId = uuid();
+    const body = { protocol: 1, agentId: f.scope.agentId, bindingEpoch: 1, operationId, requestId: question.requestId,
+      attemptId: question.snapshot!.attemptId, fence: 1, publicText: "Fixture question", confirmed: true };
+    f.record.operations.push({ operationId, action: "question", body, payloadHash: digest(stableJson({ action: "question", body })), state: "TRANSMITTED", result: null });
+    question.toolCalls.push({ callId: "question", payloadHash: digest("question"), operationId, result: null });
+    const protectedAttempts = structuredClone(f.record.attempts.slice(1));
+    const ownedTurns = structuredClone(f.record.context!.ownedTurns);
+    await f.store.write(f.record);
+    const next = await f.store.compact(f.record);
+    assert.deepEqual(next.attempts, protectedAttempts);
+    assert.deepEqual(next.context!.ownedTurns, ownedTurns);
+    const reused = structuredClone(next);
+    reused.attempts.push({ requestId: archived.requestId, scope: f.scope, generation: f.context.generation,
+      state: "CLAIM_PENDING", claimOperationId: uuid(), snapshot: null, native: null, terminal: null, receipt: null, reason: null, toolCalls: [] });
+    await assert.rejects(async () => f.store.write(reused), { code: "UNSAFE_STORAGE" });
+    for (const mutate of [
+      (r: typeof next) => { r.archives = []; },
+      (r: typeof next) => { r.context!.ownedTurns = []; },
+      (r: typeof next) => { r.archives![0].requestIds.push(uuid()); },
+    ]) {
+      const bad = structuredClone(next); mutate(bad);
+      await assert.rejects(async () => f.store.write(bad), { code: "UNSAFE_STORAGE" });
+    }
+    assert.deepEqual(await f.store.read(), next);
+  } finally { await f.close(); }
+});
+
+test("should keep the committed archive snapshot across late writes and shutdown", async () => {
+  const f = await runtimeFixture();
+  try {
+    appendFixtureCompletion(f.record); await f.store.write(f.record);
+    const stale = structuredClone(f.record);
+    const committed = await f.store.compact(f.record);
+    await assert.rejects(async () => f.store.write({ ...stale, ready: false }), { code: "UNSAFE_STORAGE" });
+    await assert.rejects(f.store.compact(stale), { code: "UNSAFE_STORAGE" });
+    await f.store.write({ ...committed, ready: false });
+    assert.deepEqual(await f.store.read(), committed);
+    const forged = structuredClone(committed); forged.lastArchive!.attemptId = uuid();
+    await assert.rejects(async () => f.store.write(forged), { code: "UNSAFE_STORAGE" });
+    const cleared = structuredClone(committed); delete cleared.lastArchive;
+    await assert.rejects(async () => f.store.write(cleared), { code: "UNSAFE_STORAGE" });
+    cleared.attempts.push({ requestId: uuid(), scope: structuredClone(f.scope), generation: f.context.generation,
+      state: "CLAIM_PENDING", claimOperationId: uuid(), snapshot: null, native: null, terminal: null, receipt: null, reason: null, toolCalls: [] });
+    await f.store.write(cleared);
+    assert.equal((await f.store.lastAttempt(cleared))!.state, "CLAIM_PENDING");
+  } finally { await f.close(); }
+});
+
+test("should reserve terminal and outbox bytes against lease readiness and tool growth", async () => {
+  const f = await runtimeFixture();
+  try {
+    const escaped = "\u0001".repeat(512);
+    const worst: TerminalEvidence = { threadId: escaped, turnId: escaped, terminal: "COMPLETED", privateText: "\u0001".repeat(65536),
+      publicText: "\u0001".repeat(4000), finalItems: Array.from({ length: 256 }, () => ({ id: escaped, hash: "a".repeat(64) })),
+      textProof: "UNCONFIRMED", observation: { requested: { model: escaped, effort: escaped },
+        thread: { model: escaped, provider: escaped, effort: escaped },
+        turn: { requestedModel: escaped, requestedEffort: escaped, model: escaped, rerouted: false, effortVerification: "UNVERIFIED" } } };
+    // JSON escaping of every permitted string unit costs at most six bytes. A byte-limited
+    // text has no more code units than its byte limit, including lone surrogates.
+    assert.equal(Buffer.byteLength(JSON.stringify("\u0001".repeat(65536))), 6 * 65536 + 2);
+    const terminalBytes = Buffer.byteLength(JSON.stringify(worst));
+    const ackBytes = 3 * (6 * 512 + 128); // native pair plus owned turn (terminal/state overhead included)
+    const outboxBytes = 2 * (16384 + 1024); // complete and observe validated bodies plus operation wrappers
+    const responseBytes = 8 * 2048; // fixed ready/interrupt/terminal receipts, duplicate adoption, UNKNOWN and cleanup
+    const terminalObligations = terminalBytes + ackBytes + outboxBytes + responseBytes;
+    assert.ok(terminalObligations <= terminalReserveBytes);
+    // Admission additionally covers claim/start responses and both snapshot refreshes.
+    assert.ok(terminalObligations + 4 * 65536 <= admissionReserveBytes);
+    const baseBytes = Buffer.byteLength(JSON.stringify(f.record));
+    assertRuntimeCapacity(f.record, false, 2 * 1024 * 1024 - terminalReserveBytes - baseBytes);
+    assert.throws(() => assertRuntimeCapacity(f.record, false, 2 * 1024 * 1024 - terminalReserveBytes - baseBytes + 1), { code: "RUNTIME_CAPACITY" });
+    assertRuntimeCapacity(f.record, true, 2 * 1024 * 1024 - admissionReserveBytes - baseBytes);
+    assert.throws(() => assertRuntimeCapacity(f.record, true, 2 * 1024 * 1024 - admissionReserveBytes - baseBytes + 1), { code: "RUNTIME_CAPACITY" });
+    const withReservations = structuredClone(f.record);
+    withReservations.settings!.handoff = "x".repeat(65536);
+    assert.throws(() => assertRuntimeCapacity(withReservations, false, 4 * 131072), { code: "RUNTIME_CAPACITY" });
+    const persisted = appendFixtureCompletion(f.record);
+    persisted.state = "TERMINAL"; persisted.receipt = null;
+    persisted.native = { threadId: worst.threadId, turnId: worst.turnId }; persisted.terminal = worst;
+    f.record.context!.threadId = worst.threadId;
+    f.record.context!.ownedTurns = [{ turnId: worst.turnId, terminal: "COMPLETED" }];
+    f.record.operations.pop();
+    await f.store.write(f.record);
+    assert.deepEqual((await f.store.read())!.attempts[0].terminal, worst);
+    assert.ok(Buffer.byteLength(JSON.stringify(f.record)) < 2 * 1024 * 1024);
+
+  } finally { await f.close(); }
+});
+
+test("should reject new admission at the retained request bound without resetting its context", async () => {
+  const f = await runtimeFixture();
+  try {
+    f.record.archives = Array.from({ length: 16 }, (_, index) => ({ hash: digest(String(index)),
+      requestIds: Array.from({ length: index === 15 ? 255 : 256 }, () => uuid()) }));
+    assertRuntimeCapacity(f.record, true);
+    const turns = structuredClone(f.record.context!.ownedTurns);
+    f.record.archives[15].requestIds.push(uuid());
+    assert.throws(() => assertRuntimeCapacity(f.record, true), { code: "RUNTIME_CAPACITY" });
+    assert.deepEqual(f.record.context!.ownedTurns, turns);
+  } finally { await f.close(); }
+});
+
+test("should archive a whole reclaimed request only after its unstarted proof and upload are closed", async () => {
+  const f = await runnerFixture();
+  try {
+    f.queue();
+    await f.runner(f.adapter, { beforeMutation: async kind => {
+      if (kind === "server-intent") throw new RuntimeError("UNKNOWN");
+    } }).run({ once: true });
+    f.expireUnstarted();
+    const adapter = new SyntheticAdapter();
+    await f.runner(adapter).run({ once: true });
+    const before = (await f.store.read())!;
+    assert.equal(before.attempts[0].state, "NOT_STARTED");
+    assert.equal(before.attempts[1].state, "UPLOADED");
+    assert.equal(before.attempts[0].requestId, before.attempts[1].requestId);
+    const source = await readFile(f.store.file);
+    const next = await f.store.compact(before);
+    assert.equal(next.attempts.length, 0);
+    assert.deepEqual(next.archives![0].requestIds, [before.attempts[0].requestId]);
+    assert.deepEqual(await readFile(join(f.store.dir, "archives", f.scope.agentId, `${digest(source)}.json`)), source);
+    assert.deepEqual(next.context!.ownedTurns, before.context!.ownedTurns);
+    assert.equal((await f.store.lastAttempt(next))!.state, "UPLOADED");
+    assert.equal(adapter.starts, 1);
+  } finally { await f.close(); }
+});
+
+test("should exclude completed bundles referenced by another attempt or preparation", async () => {
+  for (const reference of ["attempt", "preparation"] as const) {
+    const f = await runtimeFixture();
+    try {
+      const completed = appendFixtureCompletion(f.record);
+      const completedOperation = f.record.operations.at(-1)!;
+      const retained = appendFixtureCompletion(f.record);
+      retained.state = "UNKNOWN"; retained.terminal = null; retained.receipt = null;
+      if (reference === "attempt") {
+        retained.toolCalls.push({ callId: "foreign-reference", payloadHash: digest("foreign-reference"), operationId: completedOperation.operationId, result: null });
+      } else {
+        f.record.preparation = { operationId: completedOperation.operationId, previousEpoch: 1, generation: uuid(),
+          settings: f.settings, candidate: null, state: "PROVIDER_PENDING" };
+      }
+      await f.store.write(f.record);
+      const after = await f.store.compact(f.record);
+      assert.deepEqual(after, f.record);
+      assert.equal(after.archives, undefined);
+      assert.deepEqual(after.attempts.find(a => a.requestId === completed.requestId), completed);
+    } finally { await f.close(); }
+  }
 });
