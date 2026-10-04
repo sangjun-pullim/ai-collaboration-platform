@@ -101,7 +101,7 @@
 
 - 현상: 설치된 공식 Codex 0.159.1에서 no-turn `thread/start`만 수행하면 rollout이 아직 생성되지 않아 즉시 full history read가 실패하고 새 프로세스의 같은 ID resume도 실패했다. 실제 설치 runtime의 exact owned 합성 thread로 재현했다.
 - 보정: 같은 새 connector-owned ID에 공식 `thread/name/set`으로 고정 제품명을 지정하고 저장된 zero-turn full history를 검증한 뒤 candidate를 전달한다. 이름 설정/저장 실패에 새 thread나 priming turn을 자동 생성하지 않는다.
-- 검증: root no-turn probe는 이름 설정 전 실패와 설정 후 저장·full read·별도 프로세스 동일 ID resume 성공을 확인했다. 모델 호출·로그인·auth 복사·개인 설정 변경은 없었다. 제품 회귀 테스트와 전체 검증은 진행 중이며 [S24](sources.md#s24)의 설치 근거와 실제 공동 조사 수용을 구분한다.
+- 검증: root no-turn probe는 이름 설정 전 실패와 설정 후 저장·full read·별도 프로세스 동일 ID resume 성공을 확인했다. 모델 호출·로그인·auth 복사·개인 설정 변경은 없었다. 제품 회귀 테스트와 전체 검증은 진행 중이며 [S24](research/sources.md#s24)의 설치 근거와 실제 공동 조사 수용을 구분한다.
 
 ## 2026-10-02 — 기본 paginated 이력과 준비 문맥 계약의 불일치
 
@@ -113,4 +113,4 @@
 
 - 현상: 실제 세 실행이 정상 종결·업로드된 뒤, ANSWER 이벤트를 하나로 기대한 검증 스크립트가 `2 !== 1`로 실패했다. 중앙 계약은 같은 답변의 PENDING과 ACCEPTED를 각각 기록한다.
 - 판정: 원본 실패는 보존했다. 도달한 제어 흐름과 정확한 소유 문맥의 공식 native 이력으로 세 정상 종결·최종 답변·업로드를 확인하고 별도 독립 검토를 받았다. 정리된 DB 이벤트 원문을 다시 검증했다고 주장하지 않는다.
-- 검증: 남은 실제 중단 검사에서는 중앙 ACK를 정확한 request/attempt/fence와 대조하고 typed INTERRUPTED·업로드·소유 프로세스 정리를 확인했다. 합성 검사와 실제 모델 호출의 수치·범위는 [진행 상태](delivery-and-validation.md#현재-진행-상태)에 유지한다.
+- 검증: 남은 실제 중단 검사에서는 중앙 ACK를 정확한 request/attempt/fence와 대조하고 typed INTERRUPTED·업로드·소유 프로세스 정리를 확인했다. 합성 검사와 실제 모델 호출의 수치·범위는 [진행 상태](planning/delivery-and-validation.md#현재-진행-상태)에 유지한다.

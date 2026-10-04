@@ -2,9 +2,9 @@
 
 웹 로그인은 사람을 식별하고, 로컬 저장소와 AI 연결은 별도로 등록한다. 사용자가 접속 전에 모든 설정값을 알아야 하는 흐름으로 만들지 않는다. 웹에서 준비 상태와 안내를 확인하고 필요한 로컬 등록을 진행할 수 있게 한다.
 
-질문만 하는 참가자는 웹 로그인과 방의 질문 권한으로 준비된 상대 AI에 질문한다. 자기 AI·로컬 경로·기기 등록은 선택 사항이다. 답변용 AI를 제공하거나 자기 AI로 공동 조사할 때만 아래 로컬 연결 절차를 진행한다. [직접 질문 구현](impl-spec/archive/010-human-direct-questions.md)은 기존 두 AI의 조사 시작과 별도로 동작한다. 현재 검증과 남은 Claude 연동 범위는 [진행 상태](delivery-and-validation.md#현재-진행-상태)를 따른다.
+질문만 하는 참가자는 웹 로그인과 방의 질문 권한으로 준비된 상대 AI에 질문한다. 자기 AI·로컬 경로·기기 등록은 선택 사항이다. 답변용 AI를 제공하거나 자기 AI로 공동 조사할 때만 아래 로컬 연결 절차를 진행한다. [직접 질문 구현](../impl-spec/archive/010-human-direct-questions.md)은 기존 두 AI의 조사 시작과 별도로 동작한다. 현재 검증과 남은 Claude 연동 범위는 [진행 상태](../planning/delivery-and-validation.md#현재-진행-상태)를 따른다.
 
-브라우저의 폴더 접근 handle과 로컬 CLI 실행은 다르다. 실제 경로는 connector의 로컬 선택 화면/CLI에서 등록하고 웹에서는 등록된 binding을 선택한다. 설치·접속 방식과 공급자별 연결 가능 범위는 [로컬 AI 연결 조사](local-ai-connection-research.md)를 따른다.
+브라우저의 폴더 접근 handle과 로컬 CLI 실행은 다르다. 실제 경로는 connector의 로컬 선택 화면/CLI에서 등록하고 웹에서는 등록된 binding을 선택한다. 설치·접속 방식과 공급자별 연결 가능 범위는 [로컬 AI 연결 조사](../research/local-ai-connection-research.md)를 따른다.
 
 ## 설정의 세 층
 
@@ -34,7 +34,7 @@ Vercel/Supabase 후보를 선택하더라도 구현 시작 전에 클라우드 �
 | Vercel 배포·Supabase 클라우드 연동 | 운영자의 Vercel 계정/프로젝트, Supabase 계정/프로젝트와 환경 설정 | 실제 클라우드 연결 검증 전에 필요 |
 | 실제 AI 실행 실험 | 각 사용자의 설치된 runtime와 공급자가 허용한 인증·과금 경로 | 호스팅 계정 준비와 별개이며 실제 호출 전에 필요 |
 
-Supabase의 신규 로컬 개발 흐름은 CLI·container runtime으로 시작하고, 원격 프로젝트를 연결할 때 로그인·프로젝트 연결을 수행한다. Vercel 배포에는 Vercel 계정이 필요하다. [공식 준비 조건](sources.md#s15)
+Supabase의 신규 로컬 개발 흐름은 CLI·container runtime으로 시작하고, 원격 프로젝트를 연결할 때 로그인·프로젝트 연결을 수행한다. Vercel 배포에는 Vercel 계정이 필요하다. [공식 준비 조건](../research/sources.md#s15)
 
 권고 순서는 로컬 핵심 흐름 검증 → 선택한 클라우드의 계정·프로젝트 준비 → 배포·로그인·기기 연결·두 PC 왕복 검증이다. 클라우드 단계에서는 서비스 주소, 인증 redirect, 환경 변수, 방·기기 권한도 실제 배포 기준으로 확인한다. 질문만 하는 참여자는 제품 계정·방 권한을 준비한다. AI를 제공할 참여자만 자기 AI 인증과 로컬 연결을 추가한다.
 
@@ -42,15 +42,15 @@ Supabase의 신규 로컬 개발 흐름은 CLI·container runtime으로 시작�
 
 실제 웹 경로는 `/login`, `/app`, `/app/rooms/<roomId>`, `/app/connections`다. 이메일 코드를 확인하면 자기 그룹·방을 만들고 participant/observer 초대를 발급하거나 코드로 참가할 수 있다. 현재 DB membership으로 권한을 확인한다. 기기 코드 승인·공개 저장소/session 등록은 가능하다. 실제 Codex 실행은 아래 로컬 CLI로 준비하며, 등록만으로 실행 준비가 완료되지는 않는다.
 
-방의 실제 공동 이력은 DB cursor polling으로 복원한다. 참가자는 공동 발언과 조사/중단/방·조사 재개를 구분해 사용할 수 있다. driver가 없는 binding은 미검증 안내를 유지한다. 중앙 조정과 실제 Codex의 한 PC 왕복·중단을 검증했다. 검사 수치와 실제 두 PC·Claude의 남은 범위는 [진행 상태](delivery-and-validation.md#현재-진행-상태)에 유지한다.
+방의 실제 공동 이력은 DB cursor polling으로 복원한다. 참가자는 공동 발언과 조사/중단/방·조사 재개를 구분해 사용할 수 있다. driver가 없는 binding은 미검증 안내를 유지한다. 중앙 조정과 실제 Codex의 한 PC 왕복·중단을 검증했다. 검사 수치와 실제 두 PC·Claude의 남은 범위는 [진행 상태](../planning/delivery-and-validation.md#현재-진행-상태)에 유지한다.
 
-개발자는 Node 24에서 `npm ci` 후, [환경 변수 예시](../.env.example)의 `SUPABASE_URL`, `SUPABASE_PUBLISHABLE_KEY`, `APP_ORIGIN`을 프로세스 환경에 전달해 `npm run dev`를 실행한다. `APP_ORIGIN`은 브라우저로 접속할 정확한 origin이어야 한다. 제품 웹 서버에는 admin/service-role key·DB password·AI 공급자 인증을 전달하지 않는다. 실제 설정을 파일로 만들 때는 개인 자격증명을 저장소에 포함하지 않는다.
+개발자는 Node 24에서 `npm ci` 후, [환경 변수 예시](../../.env.example)의 `SUPABASE_URL`, `SUPABASE_PUBLISHABLE_KEY`, `APP_ORIGIN`을 프로세스 환경에 전달해 `npm run dev`를 실행한다. `APP_ORIGIN`은 브라우저로 접속할 정확한 origin이어야 한다. 제품 웹 서버에는 admin/service-role key·DB password·AI 공급자 인증을 전달하지 않는다. 실제 설정을 파일로 만들 때는 개인 자격증명을 저장소에 포함하지 않는다.
 
-새 격리 로컬 Supabase에는 [첫 migration](../supabase/migrations/20261001000100-web-auth-room-access.sql)부터 [실행 조정](../supabase/migrations/20261001000600-durable-investigation-coordinator.sql)까지 여섯 파일을 이름 순서대로 적용한다. 기존 DB에는 아직 적용하지 않은 후속 파일만 적용하며 reset·기적용 파일 수정/재적용을 하지 않는다. 실행 중인 PostgREST에는 적용 후 DB에서 `NOTIFY pgrst, 'reload schema';`를 보내 schema cache를 갱신한다. OTP 메일 template은 [magic-link.html](../supabase/templates/magic-link.html)의 `{{ .Token }}`을 local Auth의 magic-link·confirmation 설정에 연결한 뒤 해당 stack을 재시작해 실제 발송을 확인한다. 개발용 Mailpit을 사용하는 loopback 실험은 외부 이메일을 발송하지 않는다.
+새 격리 로컬 Supabase에는 [첫 migration](../../supabase/migrations/20261001000100-web-auth-room-access.sql)부터 [실행 조정](../../supabase/migrations/20261001000600-durable-investigation-coordinator.sql)까지 여섯 파일을 이름 순서대로 적용한다. 기존 DB에는 아직 적용하지 않은 후속 파일만 적용하며 reset·기적용 파일 수정/재적용을 하지 않는다. 실행 중인 PostgREST에는 적용 후 DB에서 `NOTIFY pgrst, 'reload schema';`를 보내 schema cache를 갱신한다. OTP 메일 template은 [magic-link.html](../../supabase/templates/magic-link.html)의 `{{ .Token }}`을 local Auth의 magic-link·confirmation 설정에 연결한 뒤 해당 stack을 재시작해 실제 발송을 확인한다. 개발용 Mailpit을 사용하는 loopback 실험은 외부 이메일을 발송하지 않는다.
 
-현재 실제 검사는 소유권을 확인한 로컬 Docker project의 여섯 container와 API/DB/Mailpit의 고정 loopback port를 사용한다. `test:integration`, `test:e2e:auth`의 test-parent 환경은 [local-access-stack](../tests/helpers/local-access-stack.ts)이 제한하며 일반 `npm test`·모의 browser 검사와 분리된다. parent에만 `LOCAL_ACCESS_PROJECT`, `LOCAL_ACCESS_STACK_WORKDIR`, `LOCAL_ACCESS_DB_URL`, `LOCAL_ACCESS_MAIL_URL`, `LOCAL_ACCESS_ADMIN_KEY`, `LOCAL_ACCESS_SIGNING_JWK`가 필요하다. browser에는 scope가 제한된 fixture bridge만 전달하고 제품 child에는 위 세 제품 설정만 전달한다. 설정이 원격이거나 다른 project이면 fixture 생성·삭제를 거절한다. 정리는 생성한 합성 ID와 inbox만 대상으로 한다.
+현재 실제 검사는 소유권을 확인한 로컬 Docker project의 여섯 container와 API/DB/Mailpit의 고정 loopback port를 사용한다. `test:integration`, `test:e2e:auth`의 test-parent 환경은 [local-access-stack](../../tests/helpers/local-access-stack.ts)이 제한하며 일반 `npm test`·모의 browser 검사와 분리된다. parent에만 `LOCAL_ACCESS_PROJECT`, `LOCAL_ACCESS_STACK_WORKDIR`, `LOCAL_ACCESS_DB_URL`, `LOCAL_ACCESS_MAIL_URL`, `LOCAL_ACCESS_ADMIN_KEY`, `LOCAL_ACCESS_SIGNING_JWK`가 필요하다. browser에는 scope가 제한된 fixture bridge만 전달하고 제품 child에는 위 세 제품 설정만 전달한다. 설정이 원격이거나 다른 project이면 fixture 생성·삭제를 거절한다. 정리는 생성한 합성 ID와 inbox만 대상으로 한다.
 
-사람 인증·방 접근과 기기 등록의 통합·브라우저 검사 및 독립 리뷰를 완료했다. 두 PC·Claude·Realtime·개인 설명의 제품 통합은 후속 범위다. 현재 검증 수치와 순서는 [개발 순서와 검증 계획](delivery-and-validation.md#현재-진행-상태)을 따른다.
+사람 인증·방 접근과 기기 등록의 통합·브라우저 검사 및 독립 리뷰를 완료했다. 두 PC·Claude·Realtime·개인 설명의 제품 통합은 후속 범위다. 현재 검증 수치와 순서는 [개발 순서와 검증 계획](../planning/delivery-and-validation.md#현재-진행-상태)을 따른다.
 
 ## 현재 로컬 기기와 저장소 등록
 
@@ -72,9 +72,9 @@ private profile은 기본적으로 사용자의 `Library/Application Support/ai-
 
 ## 로컬 Codex 실행 준비
 
-[007](impl-spec/archive/007-owned-codex-workflow-runner.md)의 CLI 구현을 기준으로 한 로컬 절차다. 기존 설정 파일을 유지한 공식 Codex의 왕복·중단을 한 PC의 합성 저장소에서 확인했고 독립 구현 리뷰를 완료했다. 실제 두 PC·다른 계정의 검증은 남아 있다. 현재 공개 binding에는 모델·effort나 검증 완료 표시를 추가하지 않았다.
+[007](../impl-spec/archive/007-owned-codex-workflow-runner.md)의 CLI 구현을 기준으로 한 로컬 절차다. 기존 설정 파일을 유지한 공식 Codex의 왕복·중단을 한 PC의 합성 저장소에서 확인했고 독립 구현 리뷰를 완료했다. 실제 두 PC·다른 계정의 검증은 남아 있다. 현재 공개 binding에는 모델·effort나 검증 완료 표시를 추가하지 않았다.
 
-같은 server/profile의 `runtime-capabilities --root <등록한-root>`로 설치 버전·지원 모델/effort를 확인한다. 모델 목록은 계정의 실제 호출 성공을 뜻하지 않는다. 기존 개인·프로젝트 지침과 설정 파일을 유지하고, 사용자가 후속 확정한 읽기 전용 우선에 따라 권한을 검증하지 못한 MCP·플러그인·훅 실행은 조사 세션에서 제한한다. 전용 Codex 로그인 프로필을 필수로 만들지 않으며 기존 공식 CLI 로그인과 관리 정책·승인 규칙을 유지한다. 관리자가 강제한 기능과 작업 제한이 충돌하면 준비를 거절하며 이를 우회하지 않는다. 토큰을 복사하지 않는다. [설정 유지와 공유 경계](ai-runtime-integration.md#기존-개인-에이전트-설정-유지)
+같은 server/profile의 `runtime-capabilities --root <등록한-root>`로 설치 버전·지원 모델/effort를 확인한다. 모델 목록은 계정의 실제 호출 성공을 뜻하지 않는다. 기존 개인·프로젝트 지침과 설정 파일을 유지하고, 사용자가 후속 확정한 읽기 전용 우선에 따라 권한을 검증하지 못한 MCP·플러그인·훅 실행은 조사 세션에서 제한한다. 전용 Codex 로그인 프로필을 필수로 만들지 않으며 기존 공식 CLI 로그인과 관리 정책·승인 규칙을 유지한다. 관리자가 강제한 기능과 작업 제한이 충돌하면 준비를 거절하며 이를 우회하지 않는다. 토큰을 복사하지 않는다. [설정 유지와 공유 경계](../research/ai-runtime-integration.md#기존-개인-에이전트-설정-유지)
 
 `runtime-prepare`에는 `--agent-id`, 등록 root, `--model`과 `--effort` 또는 `--runtime-default yes`, `--files '["상대/파일.ts"]'`, 선택한 `--handoff`, `--confirm-new-context yes`, `--confirm-public yes`를 지정한다. 자동 질문을 허용할 때 `--confirm-auto-questions yes`도 지정한다. 준비는 새 owned 맥락을 만들고 binding epoch를 교체하며 모델 turn을 실행하지 않는다. 제품이 전달하는 자료는 선택한 파일과 인계이며 로컬 AI는 기존 개인·프로젝트 지침도 사용한다. L1으로 시작하고, 종결 뒤 같은 소유 thread를 재개하면 L2다. 임의 등록 session을 자동 resume하지 않는다.
 
@@ -89,15 +89,15 @@ private profile은 기본적으로 사용자의 `Library/Application Support/ai-
 1. **웹 접속·로그인:** 초대 링크 또는 서비스 URL로 접속한다. 질문 권한이 있는 참가자는 준비된 상대 AI를 선택해 질문한다. 이 흐름에는 자기 connector·경로·AI가 필요 없다. 관찰만 하는 observer는 방을 읽는다. 자기 AI를 제공하려면 선택 사항인 ‘내 AI 연결’로 이어간다.
 2. **기기 연결:** 지원 OS와 설치 안내를 보여준다. connector의 일회용 code로 자기 기기를 확인한다. 이미 연결된 기기는 새 설치 대신 연결 상태를 보여준다.
 3. **저장소 등록:** 로컬에서 폴더를 선택한다. root·Git/worktree·branch·dirty 상태를 확인하고 공유할 별칭을 정한다.
-4. **AI 연결:** 설치된 지원 도구를 감지해 제안한다. 사용자는 Codex/Claude Code·모델·지원되는 effort와 허용된 자기 계정/과금 경로·기존/새 session을 확인한다. Claude는 기존 구독으로 각 PC의 공식 비변조 CLI에 직접 로그인하는 경로를 우선 검토한다. 제품 실행 조건과 실제 버전의 인증·권한을 확인하며 세부 근거는 [S20](sources.md#s20)을 따른다. 공급자 인증은 허용된 로컬 흐름에서 처리하고 저장소 cwd·session 소유권·지침·도구·권한을 검사한다. 기존 앱이 같은 session을 사용 중이면 자동 동시 resume하지 않는다.
+4. **AI 연결:** 설치된 지원 도구를 감지해 제안한다. 사용자는 Codex/Claude Code·모델·지원되는 effort와 허용된 자기 계정/과금 경로·기존/새 session을 확인한다. Claude는 기존 구독으로 각 PC의 공식 비변조 CLI에 직접 로그인하는 경로를 우선 검토한다. 제품 실행 조건과 실제 버전의 인증·권한을 확인하며 세부 근거는 [S20](../research/sources.md#s20)을 따른다. 공급자 인증은 허용된 로컬 흐름에서 처리하고 저장소 cwd·session 소유권·지침·도구·권한을 검사한다. 기존 앱이 같은 session을 사용 중이면 자동 동시 resume하지 않는다.
 5. **공유 범위 확인:** 코드 발췌·검증 결과·작업 이벤트 중 허용 범위를 보여준다. 설명 대화와 인증정보는 공동 공개 범위에 포함하지 않는다.
 6. **방 연결:** 내 등록 연결과 확인한 공유 범위를 방에 연결한다. 답변용 로컬 연결 프로그램이 온라인이고 AI 실행 준비가 확인되면 다른 참가자의 질문을 받을 수 있다. 두 AI의 공동 조사에는 양쪽 연결 준비를 확인한다.
 
-2–6은 AI 연결 소유자의 절차다. 질문만 하는 참가자는 이 단계를 건너뛴다. 답변용 연결을 준비해 둔 소유자는 매 질문을 직접 입력하지 않아도 되지만 웹 로그인만으로 로컬 실행 준비가 완료되지는 않는다. 서로 다른 provider를 사용할 수 있으며 상대방의 API 키나 로그인 토큰을 받아 실행하지 않는다. 방에 지정한 binding으로만 질문을 라우팅한다. 공급자별 구현 지점과 실제 확인 범위는 [연결 조사](local-ai-connection-research.md#codex의-연결-지점)를 따른다.
+2–6은 AI 연결 소유자의 절차다. 질문만 하는 참가자는 이 단계를 건너뛴다. 답변용 연결을 준비해 둔 소유자는 매 질문을 직접 입력하지 않아도 되지만 웹 로그인만으로 로컬 실행 준비가 완료되지는 않는다. 서로 다른 provider를 사용할 수 있으며 상대방의 API 키나 로그인 토큰을 받아 실행하지 않는다. 방에 지정한 binding으로만 질문을 라우팅한다. 공급자별 구현 지점과 실제 확인 범위는 [연결 조사](../research/local-ai-connection-research.md#codex의-연결-지점)를 따른다.
 
 한 번 등록한 뒤에는 저장된 연결을 선택한다. 폴더 이동·worktree 변경·session 교체·기기 취소 등 실제 설정이 바뀔 때만 다시 확인한다. 최근 사용 연결은 추천할 수 있으나 사용자 확인 없이 잘못된 저장소를 실행하지 않는다.
 
-도구·모델·effort는 각자의 AI 연결별로 저장한다. 웹 채팅방에서 자기 선택을 확인·변경하며 처음에는 로컬 기본값, 재입장 때는 마지막 선택을 보여준다. 같은 방의 다른 참가자는 다른 값을 선택할 수 있다. 실행 중 변경은 종결 확인 뒤 다음 실행에 적용한다. 지원 밖 조합이나 요청/적용 불일치는 준비 완료로 표시하지 않는다. 이 선택 기능은 후속 구현 요구사항이며 [실행 설정과 변경 규칙](ai-runtime-integration.md#참가자별-도구모델effort-선택)을 따른다.
+도구·모델·effort는 각자의 AI 연결별로 저장한다. 웹 채팅방에서 자기 선택을 확인·변경하며 처음에는 로컬 기본값, 재입장 때는 마지막 선택을 보여준다. 같은 방의 다른 참가자는 다른 값을 선택할 수 있다. 실행 중 변경은 종결 확인 뒤 다음 실행에 적용한다. 지원 밖 조합이나 요청/적용 불일치는 준비 완료로 표시하지 않는다. 이 선택 기능은 후속 구현 요구사항이며 [실행 설정과 변경 규칙](../research/ai-runtime-integration.md#참가자별-도구모델effort-선택)을 따른다.
 
 ## 웹에서 보여줄 준비 카드
 

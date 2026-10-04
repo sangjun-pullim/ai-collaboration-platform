@@ -1,6 +1,6 @@
 # 웹에서 로컬 저장소와 각자의 AI 연결 조사
 
-확인일: **2026-10-02**. 공식 인터페이스, 로컬 프로토콜과 합성 저장소의 실제 실행 결과를 기록한다. 제품의 Codex 연결기와 웹 제어는 단계별로 구현했다. 사람의 직접 질문·Claude 호환성·두 PC 협업의 검증과 남은 작업은 [진행 상태](delivery-and-validation.md#현재-진행-상태)를 따른다. 세션 연결 수준의 정본은 [AI 런타임 연동](ai-runtime-integration.md), 실행 규칙의 정본은 [비즈니스 로직](BUSINESS-LOGIC.md)이다.
+확인일: **2026-10-02**. 공식 인터페이스, 로컬 프로토콜과 합성 저장소의 실제 실행 결과를 기록한다. 제품의 Codex 연결기와 웹 제어는 단계별로 구현했다. 사람의 직접 질문·Claude 호환성·두 PC 협업의 검증과 남은 작업은 [진행 상태](../planning/delivery-and-validation.md#현재-진행-상태)를 따른다. 세션 연결 수준의 정본은 [AI 런타임 연동](ai-runtime-integration.md), 실행 규칙의 정본은 [비즈니스 로직](../BUSINESS-LOGIC.md)이다.
 
 ## 조사 결론
 
@@ -31,7 +31,7 @@
 
 ## 권고 연결 방식과 대안
 
-전체 연결도와 처리 경계는 [아키텍처](ARCHITECTURE.md#추천-구조)가 정본이다. 웹은 등록된 binding의 작업을 요청하고 각 PC의 connector가 자기 runtime를 실행한다. connector의 outbound 연결에는 PC의 외부 공개 포트가 필요하지 않다. 모델 호출은 해당 공급자로 나간다.
+전체 연결도와 처리 경계는 [아키텍처](../ARCHITECTURE.md#추천-구조)가 정본이다. 웹은 등록된 binding의 작업을 요청하고 각 PC의 connector가 자기 runtime를 실행한다. connector의 outbound 연결에는 PC의 외부 공개 포트가 필요하지 않다. 모델 호출은 해당 공급자로 나간다.
 
 | 방식 | 가능한 범위 | 부담·선택 |
 |---|---|---|
@@ -44,7 +44,7 @@ Chrome은 공용 웹에서 loopback/로컬 네트워크로 보내는 요청에 �
 
 ## 각자의 AI로 접속하는 순서
 
-접속 순서와 계정·기기·저장소·session 확인은 [최초 접속 흐름](onboarding-and-settings.md#최초-접속-흐름)에 모았다. [005](impl-spec/archive/005-device-and-workspace-binding.md)의 제품 connector 등록·교체·취소와 [007](impl-spec/archive/007-owned-codex-workflow-runner.md)의 Codex 실행 명령을 구현·검증했다. 공식 Codex의 한 PC 왕복·중단과 기존 설정 파일 보존을 확인했다. 실제 두 PC·Claude의 남은 검증과 수치는 [진행 상태](delivery-and-validation.md#현재-진행-상태)에 유지한다.
+접속 순서와 계정·기기·저장소·session 확인은 [최초 접속 흐름](../guides/onboarding-and-settings.md#최초-접속-흐름)에 모았다. [005](../impl-spec/archive/005-device-and-workspace-binding.md)의 제품 connector 등록·교체·취소와 [007](../impl-spec/archive/007-owned-codex-workflow-runner.md)의 Codex 실행 명령을 구현·검증했다. 공식 Codex의 한 PC 왕복·중단과 기존 설정 파일 보존을 확인했다. 실제 두 PC·Claude의 남은 검증과 수치는 [진행 상태](../planning/delivery-and-validation.md#현재-진행-상태)에 유지한다.
 
 제품 설계는 A가 Codex, B가 Claude여도 각자의 adapter가 같은 제품 메시지를 runtime 입력으로 바꾸도록 한다. 소유자의 AI가 자기 저장소에서 근거를 만들어 공유한다. Claude adapter와 공급자 간 실제 왕복은 후속 구현이다.
 
@@ -65,7 +65,7 @@ Chrome은 공용 웹에서 loopback/로컬 네트워크로 보내는 요청에 �
 
 ## Claude의 연결 지점
 
-[009 계획](impl-spec/009-claude-code-runtime-compatibility.md)은 공식 비변조 Claude Code를 직접 실행하는 독립 호환성 검사를 정의한다. 기존 로컬 로그인과 개인 설정을 유지하며 native 저장·재개·도구·중단의 차이를 먼저 확인한다. 계획의 리뷰 통과는 실제 Claude 연결 완료 증거가 아니다.
+[009 계획](../impl-spec/009-claude-code-runtime-compatibility.md)은 공식 비변조 Claude Code를 직접 실행하는 독립 호환성 검사를 정의한다. 기존 로컬 로그인과 개인 설정을 유지하며 native 저장·재개·도구·중단의 차이를 먼저 확인한다. 계획의 리뷰 통과는 실제 Claude 연결 완료 증거가 아니다.
 
 Agent SDK는 connector가 운영하는 프로세스에서 Claude Code 실행을 관리하는 후보다. 공식 문서에서 cwd·저장 session 조회·resume·fork·stream·interrupt 경로를 확인할 수 있다. 개인 지침과 설정의 로딩 범위도 검증해야 하며 원래 앱과 동일한 도구·개인 맥락이 보존된다고 자동 표시하지 않는다. [SDK 근거](sources.md#s5), [설정 근거](sources.md#s14)
 
@@ -109,14 +109,14 @@ Claude는 SDK overview의 제3자 제품 인증 조건과 도움말의 개인 �
 
 대화 재개·중단 성공과 파일 읽기 성공은 다르다. 현재 제한 설정에서 모델의 파일 읽기를 확인하지 못했으므로 실제 저장소 조사 준비 완료로 표시하지 않는다. 이 PC의 기존 로그인에서 호출이 수락된 사실을 hosted 제품의 구독 통합 허용으로 확대하지 않는다.
 
-설치 버전의 기본 schema에는 `thread/start.dynamicTools`가 없지만 `generate-json-schema --experimental` 생성본에는 해당 배열과 `item/tool/call` callback 계약이 있다. 현재 공식 문서는 experimental opt-in과 도구의 rollout 저장·resume 복원을 설명한다. 첫 flat 등록은 callback 없이 끝났고 그 실패 기록을 보존했다. 이후 두 도구를 고정 namespace에 등록하고 process-local `features.code_mode.direct_only_tool_namespaces`를 그 한 항목으로 제한한 후보에서 실제 new/resume 도구 사용을 검증했다. 셸·code mode host 등 14개 기능 차단과 MCP/plugin 비활성화는 유지했다. 설치 tag에는 직접 namespace 노출 분기가 있지만 실제 내부 ModelInfo를 조회하지 않았으므로 최초 실패의 원인은 가설로 구분한다. [완료한 003 명세](impl-spec/archive/003-scoped-runtime-tools.md), [공식 설명과 로컬 schema의 구분](sources.md#s17), [설치 tag의 도구 노출 코드](https://raw.githubusercontent.com/openai/codex/rust-v0.159.1/codex-rs/core/src/tools/spec_plan.rs)
+설치 버전의 기본 schema에는 `thread/start.dynamicTools`가 없지만 `generate-json-schema --experimental` 생성본에는 해당 배열과 `item/tool/call` callback 계약이 있다. 현재 공식 문서는 experimental opt-in과 도구의 rollout 저장·resume 복원을 설명한다. 첫 flat 등록은 callback 없이 끝났고 그 실패 기록을 보존했다. 이후 두 도구를 고정 namespace에 등록하고 process-local `features.code_mode.direct_only_tool_namespaces`를 그 한 항목으로 제한한 후보에서 실제 new/resume 도구 사용을 검증했다. 셸·code mode host 등 14개 기능 차단과 MCP/plugin 비활성화는 유지했다. 설치 tag에는 직접 namespace 노출 분기가 있지만 실제 내부 ModelInfo를 조회하지 않았으므로 최초 실패의 원인은 가설로 구분한다. [완료한 003 명세](../impl-spec/archive/003-scoped-runtime-tools.md), [공식 설명과 로컬 schema의 구분](sources.md#s17), [설치 tag의 도구 노출 코드](https://raw.githubusercontent.com/openai/codex/rust-v0.159.1/codex-rs/core/src/tools/spec_plan.rs)
 
 재현 절차는 `codex --version`, `codex app-server --help`, `codex app-server generate-json-schema --out <임시 디렉터리>`로 schema를 생성하고, stdio 프로세스에 `initialize`/`initialized`만 보내는 것이다. 생성 파일은 임시 산출물이며 이 조사 문서에 확인 결과를 남긴다.
 
 ## 구현 전에 닫을 실험
 
-공급자별 미확인 항목은 [런타임 실험 목록](ai-runtime-integration.md#실제-실험으로-닫을-항목), 두 PC 왕복·인증·중단·복구·private 격리의 실행 순서와 통과 근거는 [제품 성립 조건 실험](delivery-and-validation.md#0-제품-성립-조건-실험)과 [필수 검증](delivery-and-validation.md#의미-있는-필수-검증)에 모았다.
+공급자별 미확인 항목은 [런타임 실험 목록](ai-runtime-integration.md#실제-실험으로-닫을-항목), 두 PC 왕복·인증·중단·복구·private 격리의 실행 순서와 통과 근거는 [제품 성립 조건 실험](../planning/delivery-and-validation.md#0-제품-성립-조건-실험)과 [필수 검증](../planning/delivery-and-validation.md#의미-있는-필수-검증)에 모았다.
 
 이 PC의 CLI 설치 사실로 두 사람의 평소 앱·버전·OS를 추정하지 않는다. 측정 전 무료 운영·구독 재사용을 완료 상태로 표시하지 않는다.
 
-이후 결과는 이 문서의 확인 표와 [미결 항목](decisions-and-open-items.md)에 반영한다. 구조와 불변식이 바뀌면 ARCHITECTURE/BUSINESS-LOGIC, 기술 선택이 확정되면 ADR을 갱신한다. 코드 수준 계획은 실제 구현 요청 후 `docs/impl-spec/`에 작성한다.
+이후 결과는 이 문서의 확인 표와 [미결 항목](../planning/decisions-and-open-items.md)에 반영한다. 구조와 불변식이 바뀌면 ARCHITECTURE/BUSINESS-LOGIC, 기술 선택이 확정되면 ADR을 갱신한다. 코드 수준 계획은 실제 구현 요청 후 `docs/impl-spec/`에 작성한다.

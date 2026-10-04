@@ -9,11 +9,11 @@ risk-surface: permission
 
 ## Context
 
-[PRD의 로컬 AI 연결](../../PRD.md#로컬-ai-연결)과 [관찰·개입](../../PRD.md#실시간-관찰과-개입)을 구현하기 전에 실제 런타임의 실행·이벤트·중단 계약을 확인한다. 전체 제품 순서는 [단계별 명세 범위](../../delivery-and-validation.md#단계별-명세-범위)를 따른다.
+[PRD의 로컬 AI 연결](../../PRD.md#로컬-ai-연결)과 [관찰·개입](../../PRD.md#실시간-관찰과-개입)을 구현하기 전에 실제 런타임의 실행·이벤트·중단 계약을 확인한다. 전체 제품 순서는 [단계별 명세 범위](../../planning/delivery-and-validation.md#단계별-명세-범위)를 따른다.
 
-현재 프로젝트에는 Markdown 문서만 있고 소스·package·테스트 러너·Git 저장소가 없다. 기존 로컬 증거는 Codex 0.159.1의 schema와 추론 없는 초기화까지다. [확인 범위](../../local-ai-connection-research.md#이번에-실제-확인한-로컬-증거)를 실제 turn 성공으로 확대하지 않는다.
+현재 프로젝트에는 Markdown 문서만 있고 소스·package·테스트 러너·Git 저장소가 없다. 기존 로컬 증거는 Codex 0.159.1의 schema와 추론 없는 초기화까지다. [확인 범위](../../research/local-ai-connection-research.md#이번에-실제-확인한-로컬-증거)를 실제 turn 성공으로 확대하지 않는다.
 
-이번 명세는 실험 CLI 구현과 실행 계획이다. 언어는 TypeScript, 실행 환경은 Node.js 24 LTS, 패키지 관리는 npm으로 잡는다. 현재 설치된 Node는 20.19.5이므로 구현 검증 전에 프로젝트용 Node 24 환경을 준비한다. TypeScript·타입 패키지의 실제 설치 버전은 구현 시 lockfile에 고정한다. [Node 근거](../../sources.md#s16)
+이번 명세는 실험 CLI 구현과 실행 계획이다. 언어는 TypeScript, 실행 환경은 Node.js 24 LTS, 패키지 관리는 npm으로 잡는다. 현재 설치된 Node는 20.19.5이므로 구현 검증 전에 프로젝트용 Node 24 환경을 준비한다. TypeScript·타입 패키지의 실제 설치 버전은 구현 시 lockfile에 고정한다. [Node 근거](../../research/sources.md#s16)
 
 Codex는 설치·프로토콜 증거가 있는 첫 실험 대상이다. 팀의 실제 도구나 제품의 유일한 provider로 확정하는 선택이 아니다. 웹·Supabase·Claude adapter·기기 pairing·공동 조사·기존 앱 live attach는 후속 범위다.
 

@@ -13,7 +13,7 @@ sources:
 ---
 # 사람 인증·조사방·기기·실행 조정 계약
 
-2026-10-02의 Git 기준 소스와 작업트리를 확인했다. 이 문서는 현재 사람 cookie Auth·기기 bearer·내구 조사 계약을 설명한다. 실행 보고와 실제 provider 종결의 검증은 구분한다. 진행 상태와 검증 수치는 [개발 순서와 검증 계획](delivery-and-validation.md#현재-진행-상태)에 유지한다.
+2026-10-02의 Git 기준 소스와 작업트리를 확인했다. 이 문서는 현재 사람 cookie Auth·기기 bearer·내구 조사 계약을 설명한다. 실행 보고와 실제 provider 종결의 검증은 구분한다. 진행 상태와 검증 수치는 [개발 순서와 검증 계획](planning/delivery-and-validation.md#현재-진행-상태)에 유지한다.
 
 ## 공통 요청과 응답
 
@@ -70,7 +70,7 @@ sources:
 
 `ask`는 질문자 AI·기기·경로 없이 다른 소유자의 준비된 대상 하나에 질문한다. 본문은 `protocol:1`, `roomId`, `operationId`, `expectedUserId`, `targetAgentId`, `targetEpoch`, `expectedRoomRevision`, `publicText`, `confirmed:true`다. `cancel`의 본문은 `protocol:1`, `roomId`, `operationId`, `expectedUserId`, `requestId`, `expectedRoomRevision`이며 질문자나 대상 소유자가 해당 직접 질문 하나만 취소·중단할 수 있다. UUID `expectedUserId`는 화면을 연 뒤 로그인 주체가 바뀌지 않았다는 사전 조건이다. 서버는 현재 Auth가 없으면 `UNAUTHENTICATED`, 식별자가 다르면 `FORBIDDEN`을 반환한다. 이 필드로 다른 사용자의 권한을 얻을 수 없다. 원본 본문의 크기·필드를 검사한 뒤 사전 조건을 제거하고 실제 Auth를 기준으로 기존 권한·receipt를 처리한다. 동일 사람·operation·정규화 본문의 재전달은 저장된 결과를 반환한다.
 
-직접 질문의 cycle은 `mode:DIRECT`, `targetAgentId`, `targetEpoch`, `generation:1`, `runsReserved:1`, `peerRoundsReserved:0`, `canInterrupt`를 반환한다. HUMAN 질문 하나에 기존 PEER 실행 하나만 연결하고 자동 continuation은 만들지 않는다. 원래 AI_PAIR cycle과 기기의 PEER wire 형태는 유지한다. 실제 검증 범위와 남은 provider 연동은 [진행 상태](delivery-and-validation.md#현재-진행-상태)를 따른다.
+직접 질문의 cycle은 `mode:DIRECT`, `targetAgentId`, `targetEpoch`, `generation:1`, `runsReserved:1`, `peerRoundsReserved:0`, `canInterrupt`를 반환한다. HUMAN 질문 하나에 기존 PEER 실행 하나만 연결하고 자동 continuation은 만들지 않는다. 원래 AI_PAIR cycle과 기기의 PEER wire 형태는 유지한다. 실제 검증 범위와 남은 provider 연동은 [진행 상태](planning/delivery-and-validation.md#현재-진행-상태)를 따른다.
 
 기기의 `/api/workflow/<action>`은 `ready`, `poll`, `claim`, `start-intent`, `lease`, `question`, `complete`, `interrupt-ack`, `observe`만 허용한다. 현재 opaque bearer에서 자기 binding scope를 계산하고 각 attempt의 requestId·attemptId·fence·bindingEpoch를 대조한다. 중앙 API가 native session ID·명령·모델 설정을 받지 않는다.
 
@@ -88,4 +88,4 @@ sources:
 
 `workspace`/`agent`/`replace`에는 확인한 공개 metadata와 opaque ID/operation/epoch만 받는다. 임의 owner/tenant·root·native session·provider key·RPC·명령·callback URL은 받지 않는다. exchange·rotate·등록·교체 receipt는 동일 operation/payload와 현재 credential·scope·epoch 조건을 만족할 때 제한된 시간 동안 복구한다. 후속 회전·교체·권한 취소 뒤 옛 결과를 재사용하지 않는다.
 
-현재 공개 binding은 `codex`, `registered`, `unverified`로 표시한다. 007의 모델/effort·owned context는 로컬 private 계약이며 기존 서버 DTO에 원시 설정이나 실행 명령을 추가하지 않는다. 웹의 설정 계약·Claude·Realtime는 후속 범위다. 내구 질문·실행 보고는 별도의 workflow 계약을 사용한다. 제품의 device upstream과 CLI server는 HTTPS 또는 canonical loopback HTTP만 허용하고 redirect를 거절한다. CLI의 private state와 복구 순서는 [온보딩](onboarding-and-settings.md#현재-로컬-기기와-저장소-등록)을 따른다.
+현재 공개 binding은 `codex`, `registered`, `unverified`로 표시한다. 007의 모델/effort·owned context는 로컬 private 계약이며 기존 서버 DTO에 원시 설정이나 실행 명령을 추가하지 않는다. 웹의 설정 계약·Claude·Realtime는 후속 범위다. 내구 질문·실행 보고는 별도의 workflow 계약을 사용한다. 제품의 device upstream과 CLI server는 HTTPS 또는 canonical loopback HTTP만 허용하고 redirect를 거절한다. CLI의 private state와 복구 순서는 [온보딩](guides/onboarding-and-settings.md#현재-로컬-기기와-저장소-등록)을 따른다.

@@ -145,7 +145,7 @@ SDK overview는 사전 승인 없는 제3자 제품의 claude.ai 로그인·구�
 - [Supabase Local development workflow](https://supabase.com/docs/guides/local-development/cli-workflows): 신규 로컬 프로젝트는 `init`/`start`로 시작하고 원격 프로젝트 연결은 로그인·link 단계로 구분.
 - [Supabase Next.js quickstart](https://supabase.com/docs/guides/getting-started/quickstarts/nextjs): 클라우드 프로젝트 생성·연결 정보와 애플리케이션 환경 설정.
 
-로컬 화면·connector 구현과 클라우드 배포 준비를 구분하는 근거다. 실제 계정·프로젝트를 만들거나 배포한 결과는 아니다. 준비 담당과 시점은 [첫 사용 설정](onboarding-and-settings.md#개발-단계별-계정-준비)이 정본이다.
+로컬 화면·connector 구현과 클라우드 배포 준비를 구분하는 근거다. 실제 계정·프로젝트를 만들거나 배포한 결과는 아니다. 준비 담당과 시점은 [첫 사용 설정](../guides/onboarding-and-settings.md#개발-단계별-계정-준비)이 정본이다.
 
 ## S16
 
@@ -156,7 +156,7 @@ SDK overview는 사전 승인 없는 제3자 제품의 claude.ai 로그인·구�
 - 당시 기본 `node --version`은 `v20.19.5`였다. 이후 구현·격리 검사·실제 로컬 검증은 별도로 준비한 Node 24.21.0을 명시해서 수행했다. 기본 shell의 Node 버전이 바뀌었다고 표현하지 않는다.
 - 로컬 Codex 0.159.1 schema를 다시 생성해 thread start의 `sandbox`, turn start의 `sandboxPolicy`, interrupt의 `threadId`/`turnId`, 승인 응답의 `decision` 필드를 확인했다. 실제 turn 실행 증거는 아니다.
 
-구체적인 구현·검증 범위는 [첫 구현 명세](impl-spec/archive/001-local-ai-runtime-spike.md)를 따른다. 이 확인 과정에서 Node 설치 변경·계정 인증 변경·모델 호출은 수행하지 않았다.
+구체적인 구현·검증 범위는 [첫 구현 명세](../impl-spec/archive/001-local-ai-runtime-spike.md)를 따른다. 이 확인 과정에서 Node 설치 변경·계정 인증 변경·모델 호출은 수행하지 않았다.
 
 ## S17
 
@@ -165,7 +165,7 @@ SDK overview는 사전 승인 없는 제3자 제품의 claude.ai 로그인·구�
 - [공식 Codex app-server](https://learn.chatgpt.com/docs/app-server): `dynamicTools`와 `item/tool/call`은 experimental API이며 opt-in이 필요하다. 공식 문서는 도구를 thread rollout metadata에 보관하고 resume에서 복원하는 동작을 설명한다.
 - 설치된 Codex 0.159.1의 stable 314개·experimental 440개 생성 schema에서 등록·callback·응답 형식을 확인했다. 이후 003에서 소유 합성 thread의 제한된 두 namespace 도구 callback·파일 표식 읽기와 별도 process의 동일 thread/cwd resume를 실제 확인했다. 질문 상대는 합성 fixture이며 사용자 저장소·실제 다른 AI 왕복을 검증한 결과는 아니다.
 
-이 환경의 실제 확인 범위는 [연결 조사](local-ai-connection-research.md#이번에-실제-확인한-로컬-증거)와 [완료한 003 호환성 명세](impl-spec/archive/003-scoped-runtime-tools.md)에 기록한다. 공식 동작 설명과 실제 실행 증거는 구분한다.
+이 환경의 실제 확인 범위는 [연결 조사](local-ai-connection-research.md#이번에-실제-확인한-로컬-증거)와 [완료한 003 호환성 명세](../impl-spec/archive/003-scoped-runtime-tools.md)에 기록한다. 공식 동작 설명과 실제 실행 증거는 구분한다.
 
 ## S18
 

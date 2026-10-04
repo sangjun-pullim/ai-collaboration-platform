@@ -13,7 +13,7 @@ risk-surface: permission
 
 옵션 해석은 명령을 제외한 문자열 배열을 일반 객체로 변환한다. 필수 옵션 조회·플랫폼과 Node 검사·명령 판단·store/client/runner 조립·출력은 `main`에 남는다. profile 제거는 원래 store 객체와 runner factory를 사용해 모든 agent의 보호를 확보한 뒤 원래 transaction에서 다시 검증하고 삭제한다. credential·소유 runtime을 삭제하는 권한 경로이므로 전후 동작 비교와 새 독립 구현 리뷰가 필요하다.
 
-실제 Claude·두 PC 검증은 [진행 정본](../../delivery-and-validation.md#현재-진행-상태)의 별도 조건이다. 이번 이동에서는 실제 공급자 입력·remote·DB reset·migration·외부 발송을 하지 않는다.
+실제 Claude·두 PC 검증은 [진행 정본](../../planning/delivery-and-validation.md#현재-진행-상태)의 별도 조건이다. 이번 이동에서는 실제 공급자 입력·remote·DB reset·migration·외부 발송을 하지 않는다.
 
 ## Affected Files
 

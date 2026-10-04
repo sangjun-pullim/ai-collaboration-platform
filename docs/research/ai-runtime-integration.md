@@ -4,7 +4,7 @@
 
 ## ‘내 AI’를 연결한다는 의미
 
-자기 AI 연결은 답변용 AI를 제공하거나 AI 간 공동 조사에 참여할 때 필요하다. 상대 AI에 웹으로 질문하는 참가자는 자기 runtime·모델·로컬 경로를 연결하지 않아도 된다. 대상 연결 소유자의 설정과 실행·공유 범위는 그대로 적용한다. [직접 질문 규칙](BUSINESS-LOGIC.md#사람이-상대-ai에-직접-질문하는-흐름)
+자기 AI 연결은 답변용 AI를 제공하거나 AI 간 공동 조사에 참여할 때 필요하다. 상대 AI에 웹으로 질문하는 참가자는 자기 runtime·모델·로컬 경로를 연결하지 않아도 된다. 대상 연결 소유자의 설정과 실행·공유 범위는 그대로 적용한다. [직접 질문 규칙](../BUSINESS-LOGIC.md#사람이-상대-ai에-직접-질문하는-흐름)
 
 | 수준 | 내용 | 보존하는 것 | 제약 |
 |---|---|---|---|
@@ -72,9 +72,9 @@ interface AgentRuntime {
 
 ### Claude native 상태 정보와 실행 증거
 
-[009의 공식 CLI 관찰](impl-spec/009-claude-code-runtime-compatibility.md#review-notes)에서 `command_lifecycle`은 입력 명령의 상태 정보다. `command_uuid`는 보낸 입력 UUID이고 `queued`, `started`, `completed`, `cancelled`, `discarded`, `refused`를 사용한다. 같은 예약 session과 입력의 정보만 읽고 원문 대신 hash를 기록한다. 이 이벤트로 도구 권한을 열거나 입력 ACK·typed 종결을 확정하지 않는다. `completed`나 `cancelled`라는 이름만으로 다음 입력을 만들지 않는다.
+[009의 공식 CLI 관찰](../impl-spec/009-claude-code-runtime-compatibility.md#review-notes)에서 `command_lifecycle`은 입력 명령의 상태 정보다. `command_uuid`는 보낸 입력 UUID이고 `queued`, `started`, `completed`, `cancelled`, `discarded`, `refused`를 사용한다. 같은 예약 session과 입력의 정보만 읽고 원문 대신 hash를 기록한다. 이 이벤트로 도구 권한을 열거나 입력 ACK·typed 종결을 확정하지 않는다. `completed`나 `cancelled`라는 이름만으로 다음 입력을 만들지 않는다.
 
-예약한 native UUID의 이력 파일 생성과 같은 입력 UUID·본문 hash의 사용자 기록은 저장 사실이다. 초기화가 보고한 ID·cwd, 입력 echo ACK, assistant tool-use, MCP dispatch, typed result는 각각 별도 증거다. 파일이 생성되어도 실제 답변·재개·중단을 확인하지 못하면 실행을 `UNKNOWN`으로 보존한다. 현재 판정과 다음 실제 검사 조건은 [진행 상태](delivery-and-validation.md#현재-진행-상태)를 따른다.
+예약한 native UUID의 이력 파일 생성과 같은 입력 UUID·본문 hash의 사용자 기록은 저장 사실이다. 초기화가 보고한 ID·cwd, 입력 echo ACK, assistant tool-use, MCP dispatch, typed result는 각각 별도 증거다. 파일이 생성되어도 실제 답변·재개·중단을 확인하지 못하면 실행을 `UNKNOWN`으로 보존한다. 현재 판정과 다음 실제 검사 조건은 [진행 상태](../planning/delivery-and-validation.md#현재-진행-상태)를 따른다.
 
 009의 private 검증 드라이버는 같은 활성 입력의 `system/thinking_tokens`를 진행 상태 정보로만 읽고 개수와 마지막 값만 유지한다. 거절한 상태 정보는 제한된 private 원문에 남기며 ACK·도구 권한·완료 증거로 사용하지 않는다. `control_cancel_request`도 host가 이미 중단을 요청한 소유 파일 callback의 취소 정보만 해석한다. 그 정보로 tool response를 만들거나 종결을 확정하지 않으며 interrupt receipt와 native typed 종결을 별도로 요구한다. 합성 실행의 통과는 공식 Claude의 실제 실행·이력 재개나 제품 연동의 완료를 뜻하지 않는다.
 
@@ -97,7 +97,7 @@ interface AgentRuntime {
 
 후속 수용 검사는 두 binding의 서로 다른 선택 유지, 모델별 effort 범위, 요청/적용 불일치, 재시작·resume 후 설정 보존, active/UNKNOWN 변경 차단, 권한 취소와 설정 경쟁, Codex↔Claude의 실제 질문 왕복을 포함한다. 인증·과금 경로는 [공급자 인증 경계](#인증과-비용--우선-확인할-제약)를 그대로 적용한다.
 
-007의 로컬 Codex 구현은 binding별 요청 설정과 owned context를 별도 private 저널에 저장한다. 지원 목록·명시적 선택을 확인하고 thread start/resume와 turn start에 model/effort를 각각 지정한다. 요청값, thread가 보고한 값, turn model/reroute, turn effort 미확인을 구분한다. 웹의 공개 설정 DTO와 Claude adapter는 이어 구현하며 실제 수용 완료 전까지 두 공급자 연결을 지원 완료로 표시하지 않는다. [현재 로컬 명령과 검증 경계](onboarding-and-settings.md#로컬-codex-실행-준비)
+007의 로컬 Codex 구현은 binding별 요청 설정과 owned context를 별도 private 저널에 저장한다. 지원 목록·명시적 선택을 확인하고 thread start/resume와 turn start에 model/effort를 각각 지정한다. 요청값, thread가 보고한 값, turn model/reroute, turn effort 미확인을 구분한다. 웹의 공개 설정 DTO와 Claude adapter는 이어 구현하며 실제 수용 완료 전까지 두 공급자 연결을 지원 완료로 표시하지 않는다. [현재 로컬 명령과 검증 경계](../guides/onboarding-and-settings.md#로컬-codex-실행-준비)
 
 ## 기존 개인 에이전트 설정 유지
 
@@ -107,7 +107,7 @@ interface AgentRuntime {
 
 공유 범위 확인은 권한 있는 해당 방·조사 목적·선택 근거에 관한 AI 생성 결론의 사전 공유 동의다. 자동 질문은 별도 동의를 받아 지정 상대에게 전송한다. 개인 설정이 생성 내용에 영향을 줄 수 있지만 개인 지침·훅·설정 원문 공개나 파일 수정 권한으로 확대되지 않는다. 공동 조사에 추가할 협업 입력은 질문·final 양쪽에 설정 원문·인증정보·내부 식별자·출처 경로의 재출력을 금지한다. 제품 DTO에는 원시 설정·provider 응답을 복사하지 않고 알려진 민감값과 미확정 출력을 보류한다. 확정 답변 이벤트는 문구 전체의 출처를 증명하지 않으며 모르는 개인 평문까지 검사한다고 보장하지 않는다.
 
-개인 설명 이력의 분리는 제품이 관리하는 설명 transcript·session ID·인계를 공동 owned 세션에 자동 import/resume/fork하지 않는 경계다. 공급자의 기존 전역 선호·memory에 과거 개인 정보가 전혀 없다는 의미가 아니다. 개인 설명 기능 자체는 후속 구현 범위로 남아 있다. 사용자는 공동 조사를 읽기·격리 검증·수정 제안으로 확정했다. 개인 설정은 유지하며 조사 세션에는 읽기 전용 실행 권한을 적용한다. 원본 프로젝트 수정·커밋·배포는 하지 않으며 개인 설정이나 상대 질문으로 수정 승인을 추정하지 않는다. 격리 검증 환경의 쓰기 경계를 확인할 수 없으면 실행 대신 검증 방법을 제안한다. 공급자별 적용과 실제 확인 범위는 [진행 상태](delivery-and-validation.md#현재-진행-상태)를 따른다.
+개인 설명 이력의 분리는 제품이 관리하는 설명 transcript·session ID·인계를 공동 owned 세션에 자동 import/resume/fork하지 않는 경계다. 공급자의 기존 전역 선호·memory에 과거 개인 정보가 전혀 없다는 의미가 아니다. 개인 설명 기능 자체는 후속 구현 범위로 남아 있다. 사용자는 공동 조사를 읽기·격리 검증·수정 제안으로 확정했다. 개인 설정은 유지하며 조사 세션에는 읽기 전용 실행 권한을 적용한다. 원본 프로젝트 수정·커밋·배포는 하지 않으며 개인 설정이나 상대 질문으로 수정 승인을 추정하지 않는다. 격리 검증 환경의 쓰기 경계를 확인할 수 없으면 실행 대신 검증 방법을 제안한다. 공급자별 적용과 실제 확인 범위는 [진행 상태](../planning/delivery-and-validation.md#현재-진행-상태)를 따른다.
 
 Claude 일반 `-p`는 `--bare` 없이 개인·프로젝트 맥락을 로드하는 공식 경로다. 기존 로그인·지침을 유지하며 실행 기능의 권한 제한을 별도로 검증한다. 공식 문서의 동작과 각 설치 버전에서 관찰한 적용 범위는 구분하며 상세 근거는 [S23](sources.md#s23)에 둔다. Codex의 007은 개인 지침·설정 파일 보존과 작업 전용 실행 제한을 함께 적용한다. 실제 확인 범위는 공급자별 코드·실행 증거·독립 리뷰를 기준으로 기록한다.
 
@@ -134,7 +134,7 @@ Claude 일반 `-p`는 `--bare` 없이 개인·프로젝트 맥락을 로드하�
 
 응답 저장과 시도 snapshot 저장은 각각 남은 공간을 계산한다. 이미 저장한 응답을 예약에서 다시 더하지 않으며, 실제 commit이 확인되기 전에 공용 예약을 줄이지 않는다. 재시작에서 큰 종결 결과가 남으면 같은 완료 전송 작업의 ID·본문으로 회복한 뒤 기존 준비·질문 작업을 처리한다. 새 공급자 실행으로 전송을 우회하지 않는다.
 
-마지막 완료 요청을 보관한 뒤에는 검증된 원문에서 상태·종결·서버 확정을 표시한다. 새 claim이 유효하게 저장된 이후에만 새 시도를 표시한다. 명시적 로컬 연결 제거는 기존 미해결 상태 검사와 주 파일 제거를 유지하며 보관 원문을 자동 삭제하거나 새 연결에 채택하지 않는다. 일반 저장은 보관 파일을 한 번 읽고 해석한 결과로 이전·다음 관계를 따로 확인한다. 검증 범위 전후의 열린 파일·현재 경로·디렉터리 확인이 끝나야 주 파일을 교체하며 모든 handle의 종료를 시도한다. 결과는 한 저장을 넘겨 보관하지 않는다. 보관 읽기 비용은 현재 원문 합계에 비례한다. 구현의 수용 상태와 성능 측정·후속 최적화는 [진행 정본](delivery-and-validation.md#현재-진행-상태)에 기록한다.
+마지막 완료 요청을 보관한 뒤에는 검증된 원문에서 상태·종결·서버 확정을 표시한다. 새 claim이 유효하게 저장된 이후에만 새 시도를 표시한다. 명시적 로컬 연결 제거는 기존 미해결 상태 검사와 주 파일 제거를 유지하며 보관 원문을 자동 삭제하거나 새 연결에 채택하지 않는다. 일반 저장은 보관 파일을 한 번 읽고 해석한 결과로 이전·다음 관계를 따로 확인한다. 검증 범위 전후의 열린 파일·현재 경로·디렉터리 확인이 끝나야 주 파일을 교체하며 모든 handle의 종료를 시도한다. 결과는 한 저장을 넘겨 보관하지 않는다. 보관 읽기 비용은 현재 원문 합계에 비례한다. 구현의 수용 상태와 성능 측정·후속 최적화는 [진행 정본](../planning/delivery-and-validation.md#현재-진행-상태)에 기록한다.
 
 ## 개인 설명 세션
 
