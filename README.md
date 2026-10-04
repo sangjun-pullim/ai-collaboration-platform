@@ -39,7 +39,7 @@ Postgres에 공동 기록과 요청 상태를 보관하고, Realtime은 변경 �
 | [첫 사용 설정](docs/onboarding-and-settings.md) | 웹 접속, PC·저장소·계정·세션 연결, 준비 상태·오류 안내 |
 | [제약과 보안](docs/constraints-and-security.md) | 실패·권한·정보 공유·운영·비용·환경 제약 |
 | [개발·검증 순서](docs/delivery-and-validation.md) | 실험, 단계별 출시, 의미 있는 검증, 성공 측정 |
-| [첫 구현 명세](docs/impl-spec/001-local-ai-runtime-spike.md) | 런타임 실험 도구의 계획. 실제 실행·resume·중단 증거 확보, 팀 도구/L3 필요성 확인은 미결 |
+| [첫 구현 명세](docs/impl-spec/archive/001-local-ai-runtime-spike.md) | 초기 Codex 실행·재개·중단 검증과 후속 요구 확인 완료. 실제 Claude·두 PC 등 남은 범위는 [개발·검증 상태](docs/delivery-and-validation.md#현재-진행-상태)를 따른다. |
 | [웹 기본 흐름 명세](docs/impl-spec/archive/002-web-base-experience.md) | 완료된 모의 웹 계획의 보관 기록. 현재 구현은 frontend 구조 문서를 기준으로 확인 |
 | [런타임 도구 명세](docs/impl-spec/archive/003-scoped-runtime-tools.md) | 제한 도구의 실제 새 실행·저장 세션 재개까지 검증한 완료 명세 |
 | [사람 인증·방 접근 계획](docs/impl-spec/archive/004-web-auth-and-room-access.md) | 완료한 사람 인증·방 접근 계획의 보관 기록. 현재 소스·검사는 frontend/DB/API 문서 기준 |
@@ -97,7 +97,7 @@ npm test
 npm run probe
 ```
 
-기본 검사는 실제 AI 질문을 실행하지 않는다. 모델 호출을 명시한 실험과 계정·권한·합성 저장소 조건은 [001 검증 절](docs/impl-spec/001-local-ai-runtime-spike.md#verification)을 따른다. 실제 대화 재개·중단 증거와 아직 미확인인 파일 읽기·두 PC 왕복은 [연결 조사](docs/local-ai-connection-research.md#이번에-실제-확인한-로컬-증거)를 따른다.
+기본 검사는 실제 AI 질문을 실행하지 않는다. 모델 호출을 명시한 실험과 계정·권한·합성 저장소 조건은 [001 검증 절](docs/impl-spec/archive/001-local-ai-runtime-spike.md#verification)을 따른다. 실제 대화 재개·중단·합성 파일 읽기 증거와 아직 미확인인 실제 사용자 저장소·두 PC 왕복은 [연결 조사](docs/local-ai-connection-research.md#이번에-실제-확인한-로컬-증거)를 따른다.
 
 ## 읽는 순서
 

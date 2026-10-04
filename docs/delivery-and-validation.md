@@ -10,7 +10,7 @@
 
 | 순서 | 명세 범위 | 단계 완료 기준 | 필요한 조건 |
 |---|---|---|---|
-| 1 | [로컬 AI 런타임 연결 검증](impl-spec/001-local-ai-runtime-spike.md) | 격리 protocol 테스트와 실제 runtime의 질문·이벤트·중단·저장 맥락 증거 | TypeScript/Node 실험. 실제 호출은 허용 계정·model·실효 권한 확인 후 수행 |
+| 1 | [로컬 AI 런타임 연결 검증](impl-spec/archive/001-local-ai-runtime-spike.md) | 격리 protocol 테스트와 실제 runtime의 질문·이벤트·중단·저장 맥락 증거 | TypeScript/Node 실험. 실제 호출은 허용 계정·model·실효 권한 확인 후 수행 |
 | 2 | [웹 기본 흐름](impl-spec/archive/002-web-base-experience.md) | 연결 선택·공동 대화·발신·개인 입력·정지·결과를 모의 runtime로 체험 | 실제 연동과 독립적인 Next.js/TypeScript 화면. 모의 결과는 연결 성공의 증거가 아님 |
 | 2 다음 선행 검증 | [허용된 런타임 도구](impl-spec/archive/003-scoped-runtime-tools.md) | 실제 모델의 allowlisted 파일 읽기·구조화된 로컬 질문 callback·저장 thread 도구 보존 확인 완료 | 001에서 드러난 파일 도구 미확인을 해소한 합성 호환성 검사. 실제 공동 질문 왕복과 구분 |
 | 3 | 상대 AI 질문과 공동 조사 | 사람→지정 AI의 질문·답변과 두 binding 사이 공동 왕복, 인증·기기 scope·내구 기록이 동작 | 직접 질문에는 대상 AI 하나만 필요. 공동 왕복에는 두 AI 계정·세션 경로 필요. 원격 검증에는 접속 가능한 서비스 주소 필요 |
@@ -27,6 +27,7 @@
 
 | 범위 | 상태 | 검증 근거와 남은 작업 |
 |---|---|---|
+| Codex 연결 실험 [001](impl-spec/archive/001-local-ai-runtime-spike.md) | 완료 | 당시 격리 검사와 독립 구현 리뷰, 합성 저장소의 실제 새 실행·동일 소유 thread/cwd 재개·대화 표식 일치·INTERRUPTED 종결을 확인했다. 이후 macOS·Claude Code 중심 참여, 기존 공식 로그인·개인 설정과 connector 소유 세션의 요구를 확정해 마지막 단계의 미완료 표시를 보정했다. 기존 기록과 현재 검사 정의를 대조한 독립 종료 리뷰를 통과해 명세를 보관했다. 실제 AI를 다시 실행하지 않았으며 Claude 호환성과 두 PC 검증은 별도 미완료 범위다. |
 | 사람 인증·방 접근 | 완료 | 실제 Auth·DB·HTTP 14건, Auth 브라우저 4건과 독립 리뷰 완료. 변경 없는 입력의 결과를 재사용한다. |
 | 기기 pairing·저장소 binding | 완료 | 현재 기기 통합 12/12, 브라우저 4/4 통과. |
 | 내구 조사 조정 [006](impl-spec/archive/006-durable-investigation-coordinator.md) | 완료 | 현재 DB·HTTP·가짜 driver 통합 18/18과 workflow 브라우저 4/4 통과. |

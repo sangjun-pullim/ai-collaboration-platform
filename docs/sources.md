@@ -156,7 +156,7 @@ SDK overview는 사전 승인 없는 제3자 제품의 claude.ai 로그인·구�
 - 당시 기본 `node --version`은 `v20.19.5`였다. 이후 구현·격리 검사·실제 로컬 검증은 별도로 준비한 Node 24.21.0을 명시해서 수행했다. 기본 shell의 Node 버전이 바뀌었다고 표현하지 않는다.
 - 로컬 Codex 0.159.1 schema를 다시 생성해 thread start의 `sandbox`, turn start의 `sandboxPolicy`, interrupt의 `threadId`/`turnId`, 승인 응답의 `decision` 필드를 확인했다. 실제 turn 실행 증거는 아니다.
 
-구체적인 구현·검증 범위는 [첫 구현 명세](impl-spec/001-local-ai-runtime-spike.md)를 따른다. 이 확인 과정에서 Node 설치 변경·계정 인증 변경·모델 호출은 수행하지 않았다.
+구체적인 구현·검증 범위는 [첫 구현 명세](impl-spec/archive/001-local-ai-runtime-spike.md)를 따른다. 이 확인 과정에서 Node 설치 변경·계정 인증 변경·모델 호출은 수행하지 않았다.
 
 ## S17
 
