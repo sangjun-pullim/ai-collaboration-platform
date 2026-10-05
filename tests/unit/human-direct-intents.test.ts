@@ -50,6 +50,7 @@ async function restore(
         },
       ];
     },
+    useLayoutEffect: () => {},
     useRef: (current: unknown) => ({ current }),
     useEffect: (effect: () => unknown) => {
       effects.push(effect);
@@ -69,6 +70,16 @@ async function restore(
       if (name === "./investigation-client") return { callInvestigation };
       if (name === "./history-state") return { emptyHistory, mergeHistory };
       if (name === "./polling-policy") return { pollingDelay: () => 10_000 };
+      if (
+        [
+          "./chat-timeline",
+          "./chat-composer",
+          "./advanced-controls",
+          "../../components/ui/button",
+        ].includes(name)
+      )
+        return new Proxy({}, { get: (_, key) => ({ displayName: String(key) }) });
+      if (name === "./chat-presentation") return { nearTimelineBottom: () => true };
       throw new Error("Unexpected isolated UI dependency");
     },
     sessionStorage: {

@@ -8,9 +8,9 @@ import {
   productEnvironment,
   type StackConfig,
   type FixturePerson,
+  TEST_TEAM_CODE,
 } from "../helpers/local-access-stack.js";
 import { createHash } from "node:crypto";
-import { setTimeout as delay } from "node:timers/promises";
 
 async function fixture(label: string, run: (stack: LocalAccessStack) => Promise<void>) {
   const stack = await LocalAccessStack.open(label);
@@ -77,76 +77,65 @@ async function state(stack: LocalAccessStack, organizationId: string, roomId: st
   });
 }
 
-test("should sign in with a real email code and persist the session", async () =>
-  fixture("otp", async (stack) => {
-    const signup = await stack.firstTimeSignup("new-signup");
-    const empty = await signup.web.dataClient().from("rooms").select("id");
+test("should enter with a company code and persist the same actual session", async () =>
+  fixture("entry", async (stack) => {
+    const person = await stack.firstTimeSignup("first-entry");
+    const identity = person.id;
+    for (let i = 0; i < 2; i++)
+      ensure((await person.web.request("/app")).status === 200, "Same session must persist");
+    const response = await person.web.post("/api/auth/enter", {
+      code: TEST_TEAM_CODE,
+      displayName: "바꾼 이름",
+    });
+    const result = await response.json();
     ensure(
-      !empty.error && empty.data.length === 0,
-      "First-time signup must not grant another group's room access",
+      response.status === 200 && result.data.userId === identity,
+      "Name change must retain identity",
     );
     ensure(
-      (await signup.web.request("/app")).status === 200,
-      "First-time signup should establish its own persisted session",
+      response.headers.getSetCookie().every((c) => /httponly/i.test(c) && /samesite=lax/i.test(c)),
+      "Auth cookie writes must be HttpOnly and Lax",
     );
-    const person = await stack.person("user", false);
-    await stack.requestCode(person.email);
-    const code = await stack.code(person.email);
-    const wrong = code === "000000" ? "111111" : "000000";
     await rejected(
-      await person.web.post("/api/auth/verify", { email: person.email, code: wrong }),
+      await person.web.post("/api/auth/enter", { code: "wrong-code", displayName: "바꾼 이름" }),
       400,
       "CODE_REJECTED",
     );
-    const response = await person.web.post("/api/auth/verify", { email: person.email, code });
-    ensure(response.status === 200, "Real Auth email code should succeed");
-    ensure(
-      response.headers
-        .getSetCookie()
-        .some((cookie) => /httponly/i.test(cookie) && /samesite=lax/i.test(cookie)),
-      "Session cookies must be HttpOnly and Lax",
-    );
-    for (let index = 0; index < 2; index++)
-      ensure(
-        (await person.web.request("/app")).status === 200,
-        "Session should survive a fresh protected request",
-      );
-    await rejected(
-      await new WebSession(stack.config).post("/api/auth/verify", { email: person.email, code }),
-      400,
-      "CODE_REJECTED",
-    );
+    const other = await stack.firstTimeSignup("first-entry");
+    ensure(other.id !== identity, "Equal names must not recover someone else's identity");
   }));
-
-test("should reject email codes during cooldown and after expiry", async () =>
-  fixture("otp-time", async (stack) => {
-    const person = await stack.person("time", false);
-    await stack.requestCode(person.email);
-    await rejected(
-      await person.web.post("/api/auth/code", { email: person.email }),
-      429,
-      "CODE_COOLDOWN",
-    );
-    const code = await stack.code(person.email);
-    const restore = await stack.expireCode(person);
-    try {
+test("should preserve rejected code attempts and stop repeated guesses", async () =>
+  fixture("entry-quota", async (stack) => {
+    const person = await stack.person("wrong-code");
+    for (let i = 0; i < 5; i++)
       await rejected(
-        await person.web.post("/api/auth/verify", { email: person.email, code }),
+        await person.web.post("/api/auth/enter", {
+          code: "wrong-code",
+          displayName: person.displayName,
+        }),
         400,
         "CODE_REJECTED",
       );
-    } finally {
-      await restore();
-    }
-    // Restore this account's timestamps before requesting a fresh code; global config is unchanged.
-    await delay(1100);
-    await stack.requestCode(person.email);
-    const fresh = await stack.code(person.email, code);
-    ensure(fresh !== code, "Fresh request must issue a new code");
-    ensure(
-      (await person.web.post("/api/auth/verify", { email: person.email, code: fresh })).status ===
-        200,
-      "New code should authenticate after expiry",
+    await rejected(
+      await person.web.post("/api/auth/enter", {
+        code: TEST_TEAM_CODE,
+        displayName: person.displayName,
+      }),
+      429,
+      "CODE_COOLDOWN",
+    );
+    await rejected(
+      await person.web.post("/api/auth/code", { email: "synthetic@example.test" }),
+      404,
+      "NOT_FOUND",
+    );
+    await rejected(
+      await person.web.post("/api/auth/verify", {
+        email: "synthetic@example.test",
+        code: "123456",
+      }),
+      404,
+      "NOT_FOUND",
     );
   }));
 
@@ -562,8 +551,8 @@ test("should reject unsafe origins redirects and oversized or forged mutation bo
         "INVALID_BODY",
       );
     await rejected(
-      await person.web.post("/api/auth/verify", {
-        email: person.email,
+      await person.web.post("/api/auth/enter", {
+        displayName: person.displayName,
         code: "123456",
         redirect: "//attacker.invalid",
       }),

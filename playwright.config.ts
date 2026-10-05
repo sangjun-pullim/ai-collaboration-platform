@@ -22,6 +22,12 @@ export default defineConfig({
     url: "http://127.0.0.1:4317",
     reuseExistingServer: false,
     timeout: 180_000,
-    env: { NEXT_TELEMETRY_DISABLED: "1" },
+    env: {
+      NEXT_TELEMETRY_DISABLED: "1",
+      // Synthetic public configuration: no database or auth provider is contacted by demo tests.
+      SUPABASE_URL: "http://127.0.0.1:9",
+      SUPABASE_PUBLISHABLE_KEY: "sb_publishable_demo_only",
+      APP_ORIGIN: "http://127.0.0.1:4317",
+    },
   },
 });

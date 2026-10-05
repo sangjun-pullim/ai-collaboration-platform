@@ -1,6 +1,7 @@
 import { test, expect, type Browser, type TestInfo, type Page } from "@playwright/test";
 import { installAuthArtifactPolicy } from "../helpers/auth-browser-artifact-policy.js";
 installAuthArtifactPolicy(test);
+import { enterTeam, type BrowserEntry, type BrowserPerson } from "../helpers/browser-team-entry.js";
 function check(value: unknown): asserts value {
   if (!value) throw new Error("Owned device browser assertion failed");
 }
@@ -24,35 +25,20 @@ async function context(browser: Browser, info: TestInfo) {
     hasTouch: info.project.use.hasTouch,
   });
 }
-async function login(page: Page) {
-  const p = await broker<{ id: string; email: string }>("person", {});
-  await page.goto("/login");
-  await page.getByLabel("이메일", { exact: true }).fill(p.email);
-  await page.getByRole("button", { name: "코드 받기", exact: true }).click();
-  await expect(page.getByLabel("로그인 코드", { exact: true })).toBeVisible();
-  const otp = await broker<{ code: string }>("code", { id: p.id });
-  await page.getByLabel("로그인 코드", { exact: true }).fill(otp.code);
-  await page.getByRole("button", { name: "로그인", exact: true }).click();
-  await expect(page.getByRole("heading", { name: "내 조사방", exact: true })).toBeVisible();
-  return p;
+async function login(page: Page, displayName: string) {
+  const person = await broker<BrowserPerson>("person", {});
+  await enterTeam(page, person, () => broker<BrowserEntry>("code", { id: person.id }), displayName);
+  return person;
 }
+
 async function createRoom(page: Page) {
-  const section = page
-    .locator("section")
-    .filter({ has: page.getByRole("heading", { name: "새 그룹과 첫 방 만들기", exact: true }) });
-  for (const [label, value] of [
-    ["그룹 이름", "연결 검사 그룹"],
-    ["방 이름", "기기 검사방"],
-    ["조사 목표", "합성 목표"],
-    ["관찰 근거", "합성 근거"],
-    ["환경", "격리 환경"],
-    ["내 별칭", "소유자"],
-  ])
-    await section.getByLabel(label, { exact: true }).fill(value);
+  await page.getByRole("button", { name: "새 채팅방", exact: true }).click();
+  const section = page.getByRole("dialog", { name: "새 채팅방", exact: true });
+  await section.getByLabel("방 이름", { exact: true }).fill("기기 검사방");
   const response = page.waitForResponse(
     (r) => r.request().method() === "POST" && r.url().endsWith("/api/access/bootstrap"),
   );
-  await section.getByRole("button", { name: "그룹과 방 만들기", exact: true }).click();
+  await section.getByRole("button", { name: "방 만들기", exact: true }).click();
   const result = await (await response).json();
   check(result.ok);
   await broker("track", { organizationId: result.data.organizationId });
@@ -60,6 +46,7 @@ async function createRoom(page: Page) {
   return result.data as { roomId: string; organizationId: string };
 }
 async function join(owner: Page, member: Page, role: string) {
+  await owner.getByRole("button", { name: "채팅방 관리", exact: true }).click();
   await owner.getByRole("combobox", { name: "초대 역할", exact: true }).selectOption(role);
   await owner.getByRole("button", { name: "초대 발급", exact: true }).click();
   const output = owner.getByLabel("발급된 초대 코드", { exact: true });
@@ -67,14 +54,12 @@ async function join(owner: Page, member: Page, role: string) {
   const code = await output.textContent();
   check(code);
   await member.goto("/app");
+  await member.getByRole("button", { name: "초대로 참가", exact: true }).click();
   await member.getByLabel("초대 코드", { exact: true }).fill(code);
-  await member
-    .getByLabel("내 별칭", { exact: true })
-    .first()
-    .fill(role === "observer" ? "관찰자" : "참여자");
   await member.getByRole("button", { name: "방 참가", exact: true }).click();
   await expect(member.getByRole("heading", { name: "기기 검사방", exact: true })).toBeVisible();
   await owner.getByRole("button", { name: "코드 숨기기", exact: true }).click();
+  await owner.keyboard.press("Escape");
 }
 async function connect(page: Page, id: string, name: string, roomId: string) {
   const p = await broker<{ name: string; code: string }>("pair", { id, name });
@@ -99,9 +84,9 @@ test("should approve an owned connection and display only public unverified bind
     const ap = await a.newPage(),
       bp = await b.newPage(),
       op = await observer.newPage();
-    const owner = await login(ap),
-      participant = await login(bp);
-    await login(op);
+    const owner = await login(ap, "소유자"),
+      participant = await login(bp, "참여자");
+    await login(op, "관찰자");
     const scope = await createRoom(ap);
     await join(ap, bp, "participant");
     await join(ap, op, "observer");
@@ -118,9 +103,11 @@ test("should approve an owned connection and display only public unverified bind
       scope.roomId,
     );
     await op.goto(`/app/rooms/${scope.roomId}`);
+    const participantButton = op.getByRole("button", { name: "참가자 정보 열기", exact: true });
+    if (await participantButton.isVisible()) await participantButton.click();
     const roster = op.getByRole("region", { name: "공개 기기 등록" });
     await expect(roster.getByText("공개 저장소 · 공개 세션", { exact: true })).toHaveCount(2);
-    await expect(roster.getByText("등록 · 실행 미검증", { exact: true })).toHaveCount(2);
+    await expect(roster.getByText("등록 · 최근 통신 있음", { exact: true })).toHaveCount(2);
     await expect(roster).toContainText("codex");
     await expect(op.getByRole("button", { name: "기기 승인", exact: true })).toHaveCount(0);
     await op.goto("/app/connections");
@@ -157,8 +144,8 @@ test("should revoke a connection and require fresh approval after membership rem
   try {
     const ap = await a.newPage(),
       bp = await b.newPage();
-    const owner = await login(ap),
-      member = await login(bp);
+    const owner = await login(ap, "소유자"),
+      member = await login(bp, "참여자");
     const scope = await createRoom(ap);
     await join(ap, bp, "participant");
     const suffix = info.project.name.includes("mobile") ? "mobile" : "desktop",
@@ -184,10 +171,14 @@ test("should revoke a connection and require fresh approval after membership rem
         200,
     );
     await ap.goto(`/app/rooms/${scope.roomId}`);
+    const participantButton = ap.getByRole("button", { name: "참가자 정보 열기", exact: true });
+    if (await participantButton.isVisible()) await participantButton.click();
     const roster = ap.getByRole("region", { name: "공개 기기 등록" });
     const memberBinding = roster.locator("li").filter({ hasText: `기기 ${active}` });
     await expect(memberBinding).toHaveCount(1);
     await expect(roster.getByText("공개 저장소 · 공개 세션", { exact: true })).toHaveCount(2);
+    await ap.keyboard.press("Escape");
+    await ap.getByRole("button", { name: "채팅방 관리", exact: true }).click();
     await ap.getByRole("button", { name: "참여자 방에서 제거", exact: true }).click();
     await expect(ap.getByRole("button", { name: "참여자 방에서 제거", exact: true })).toHaveCount(
       0,
@@ -200,8 +191,10 @@ test("should revoke a connection and require fresh approval after membership rem
       (await broker<{ status: number }>("heartbeat", { id: owner.id, name: own })).status === 200,
     );
     await ap.reload();
+    if (await participantButton.isVisible()) await participantButton.click();
     await expect(memberBinding).toHaveCount(0);
     await expect(roster.getByText("공개 저장소 · 공개 세션", { exact: true })).toHaveCount(1);
+    await ap.keyboard.press("Escape");
     await join(ap, bp, "participant");
     check(
       (await broker<{ status: number }>("heartbeat", { id: member.id, name: target })).status ===
@@ -214,9 +207,9 @@ test("should revoke a connection and require fresh approval after membership rem
     await bp.goto("/app/connections");
     await expect(bp.getByText("제거됨 · 새 승인 필요", { exact: true })).toBeVisible();
     await expect(bp.getByText("취소됨 · 새 승인 필요", { exact: true })).toBeVisible();
-    await bp.getByRole("link", { name: "내 조사방", exact: true }).focus();
+    await bp.getByRole("link", { name: "내 AI 채팅방", exact: true }).focus();
     await bp.keyboard.press("Enter");
-    await expect(bp.getByRole("heading", { name: "내 조사방", exact: true })).toBeVisible();
+    await expect(bp.getByRole("heading", { name: "내 AI 채팅방", exact: true })).toBeVisible();
     await connect(bp, member.id, `fresh-${suffix}`, scope.roomId);
     check(
       (await broker<{ status: number }>("heartbeat", { id: member.id, name: active })).status ===
@@ -226,6 +219,7 @@ test("should revoke a connection and require fresh approval after membership rem
       (await broker<{ status: number }>("heartbeat", { id: owner.id, name: own })).status === 200,
     );
     await ap.reload();
+    if (await participantButton.isVisible()) await participantButton.click();
     await expect(memberBinding).toHaveCount(0);
     await expect(roster.getByText("공개 저장소 · 공개 세션", { exact: true })).toHaveCount(2);
   } finally {

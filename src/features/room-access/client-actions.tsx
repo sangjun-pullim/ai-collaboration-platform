@@ -2,9 +2,12 @@
 import { useRouter } from "next/navigation";
 import { useEffect, useRef, useState } from "react";
 import { messages, type AccessErrorCode } from "./contracts";
+import { Button } from "../../components/ui/button";
+import { Input } from "../../components/ui/input";
 import styles from "./access.module.css";
 export function useMutation() {
   const [error, setError] = useState("");
+  const [errorCode, setErrorCode] = useState<AccessErrorCode | null>(null);
   const [busy, setBusy] = useState(false);
   const errorRef = useRef<HTMLParagraphElement>(null);
   useEffect(() => {
@@ -13,6 +16,7 @@ export function useMutation() {
   async function send<T>(path: string, body: Record<string, string>): Promise<T | undefined> {
     setBusy(true);
     setError("");
+    setErrorCode(null);
     try {
       const response = await fetch(path, {
         method: "POST",
@@ -22,13 +26,17 @@ export function useMutation() {
       });
       const result = await response.json();
       if (!result.ok) {
-        const code = result.error?.code as AccessErrorCode;
-        setError(messages[code] ?? messages.UNAVAILABLE);
+        const code: AccessErrorCode = Object.hasOwn(messages, result.error?.code)
+          ? result.error.code
+          : "UNAVAILABLE";
+        setError(messages[code]);
+        setErrorCode(code);
         return;
       }
       return result.data as T;
     } catch {
       setError(messages.UNAVAILABLE);
+      setErrorCode("UNAVAILABLE");
     } finally {
       setBusy(false);
     }
@@ -36,6 +44,7 @@ export function useMutation() {
   return {
     send,
     busy,
+    errorCode,
     errorNode: error ? (
       <p ref={errorRef} tabIndex={-1} role="alert" className={styles.error}>
         {error}
@@ -52,8 +61,9 @@ export function LogoutButton() {
   return (
     <div>
       {errorNode}
-      <button
-        className="button"
+      <Button
+        variant="ghost"
+        size="sm"
         disabled={busy}
         onClick={async () => {
           if (await send("/api/auth/logout", {})) {
@@ -63,29 +73,15 @@ export function LogoutButton() {
         }}
       >
         로그아웃
-      </button>
+      </Button>
     </div>
   );
 }
 export function RoomFields() {
   return (
-    <>
-      <label className={styles.field}>
-        방 이름
-        <input name="title" required maxLength={160} />
-      </label>
-      <label className={styles.field}>
-        조사 목표
-        <textarea name="goal" required maxLength={2000} />
-      </label>
-      <label className={styles.field}>
-        관찰 근거
-        <textarea name="observation" required maxLength={2000} />
-      </label>
-      <label className={styles.field}>
-        환경
-        <textarea name="environment" required maxLength={2000} />
-      </label>
-    </>
+    <label className={styles.field}>
+      방 이름
+      <Input name="title" required maxLength={160} />
+    </label>
   );
 }

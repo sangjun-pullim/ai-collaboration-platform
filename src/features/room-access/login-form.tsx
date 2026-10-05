@@ -1,72 +1,72 @@
 "use client";
-import { useState, type FormEvent } from "react";
+import { type FormEvent } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useMutation, formValues } from "./client-actions";
 import styles from "./access.module.css";
-export function LoginForm() {
+import { Button } from "../../components/ui/button";
+import { Input } from "../../components/ui/input";
+
+export function LoginForm({ destination = "/app" }: { destination?: string }) {
   const router = useRouter();
-  const [email, setEmail] = useState<string | null>(null);
-  const { send, busy, errorNode } = useMutation();
+  const { send, busy, errorNode, errorCode } = useMutation();
   async function submit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
-    const values = formValues(event.currentTarget);
-    if (email === null) {
-      if (await send("/api/auth/code", values)) setEmail(values.email);
-    } else if (await send("/api/auth/verify", { email, code: values.code })) {
-      router.replace("/app");
+    const form = event.currentTarget;
+    const values = formValues(form);
+    // Keep the code only in the in-flight request, never in the rendered form.
+    const code = form.elements.namedItem("code");
+    if (code instanceof HTMLInputElement) code.value = "";
+    if (await send("/api/auth/enter", values)) {
+      router.replace(destination);
       router.refresh();
     }
   }
   return (
-    <main className={styles.shell}>
-      <section className={styles.panel}>
-        <h1>조사실 로그인</h1>
-        <p>이메일로 받은 일회용 코드로 로그인하세요.</p>
+    <main className="mx-auto flex min-h-dvh max-w-md items-center px-5 py-10">
+      <section className="w-full space-y-6 rounded-xl border p-6 sm:p-8">
+        <h1 className="text-xl font-semibold">AI 채팅방 입장</h1>
+        <p className="text-sm text-neutral-500">
+          회사에서 받은 입장 코드와 대화에 사용할 이름을 입력하세요.
+        </p>
         {errorNode}
         <form onSubmit={submit} className={styles.form}>
-          {email === null ? (
-            <label className={styles.field}>
-              이메일
-              <input name="email" type="email" autoComplete="email" required maxLength={254} />
-            </label>
-          ) : (
-            <>
-              <p>입력한 이메일로 코드를 보냈습니다.</p>
-              <label className={styles.field}>
-                로그인 코드
-                <input
-                  key="code"
-                  name="code"
-                  inputMode="numeric"
-                  autoComplete="one-time-code"
-                  pattern="[0-9]{6}"
-                  required
-                  maxLength={6}
-                  autoFocus
-                />
-              </label>
-            </>
-          )}
-          <button className="button primary" disabled={busy}>
-            {email === null ? "코드 받기" : "로그인"}
-          </button>
+          <label className={styles.field}>
+            회사 입장 코드
+            <Input
+              name="code"
+              type="password"
+              autoComplete="off"
+              required
+              maxLength={128}
+              autoFocus
+            />
+          </label>
+          <label className={styles.field}>
+            표시 이름
+            <Input name="displayName" autoComplete="off" required maxLength={80} />
+          </label>
+          <Button disabled={busy}>입장하기</Button>
         </form>
-        {email !== null && (
-          <div className={styles.actions}>
-            <button
-              className="button"
+        {errorCode === "UNAUTHENTICATED" && (
+          <div className="space-y-3 text-sm">
+            <p className="text-neutral-500">
+              현재 사용자 세션을 사용할 수 없습니다. 로그아웃하면 새 사용자로 입장할 수 있습니다.
+              이전 사용자와 AI 소유권은 같은 표시 이름으로 복구할 수 없습니다.
+            </p>
+            <Button
+              type="button"
+              variant="outline"
               disabled={busy}
-              onClick={() => send("/api/auth/code", { email })}
+              onClick={async () => {
+                if (await send("/api/auth/logout", {})) router.refresh();
+              }}
             >
-              코드 다시 받기
-            </button>
-            <button className="button" disabled={busy} onClick={() => setEmail(null)}>
-              다른 이메일 사용
-            </button>
+              로그아웃하고 새 입장 준비
+            </Button>
           </div>
         )}
-        <Link href="/">모의 체험으로 돌아가기</Link>
+        <Link href="/demo">예제 체험</Link>
       </section>
     </main>
   );

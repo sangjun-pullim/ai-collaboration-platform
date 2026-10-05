@@ -12,10 +12,10 @@ import {
 import { execFile, spawn } from "node:child_process";
 import { promisify } from "node:util";
 import { createServer } from "node:http";
-import { setTimeout as delay } from "node:timers/promises";
 import type { AddressInfo } from "node:net";
 import { realpath } from "node:fs/promises";
 import { authBrowserChildEnvironment } from "./auth-browser-artifact-policy.js";
+import { waitForFixtureEntry } from "./entry-quota.js";
 const execute = promisify(execFile);
 export const OWNED_PROJECT = "ai-collab-txxcvm61";
 export type StackConfig = {
@@ -305,9 +305,11 @@ export class WebSession {
     });
   }
 }
-export type FixturePerson = { id: string; email: string; web: WebSession };
+export const TEST_TEAM_CODE = "fixture-company-entry-code";
+export type FixturePerson = { id: string; displayName: string; web: WebSession };
 export class LocalAccessStack {
   readonly users = new Set<string>();
+  private readonly browserEntries = new Map<string, string>();
   readonly organizations = new Set<string>();
   readonly organizationOwners = new Map<string, string>();
   onOwnedIdentity?: () => Promise<void>;
@@ -337,91 +339,122 @@ export class LocalAccessStack {
   }
   async firstTimeSignup(label: string): Promise<FixturePerson> {
     await assertOwnedStack(this.config);
-    const email = `${this.namespace}-${label}-${randomUUID()}@example.test`;
-    this.inboxes.add(email);
+    await this.waitForEntryQuota();
     const web = new WebSession(this.config);
-    await this.requestCode(email);
-    // Record only the exact newly requested synthetic account before verification.
-    const created = await this.db.query("select id,created_at from auth.users where email=$1", [
-      email,
-    ]);
-    ensure(created.rowCount === 1, "First email request must create its own synthetic signup");
-    const id = created.rows[0].id as string;
-    this.users.add(id);
-    await this.onOwnedIdentity?.();
-    const response = await web.post("/api/auth/verify", { email, code: await this.code(email) });
-    ensure(response.status === 200, "First-time OTP signup must verify");
+    const displayName = `${this.namespace}-${label}`.slice(0, 80);
+    const response = await web.post("/api/auth/enter", { code: TEST_TEAM_CODE, displayName });
+    ensure(response.status === 200, "Actual code entry must succeed");
+    const result = await response.json();
     const verified = await web.dataClient().auth.getUser(web.sessionData().access_token as string);
     ensure(
-      !verified.error && verified.data.user?.id === id,
-      "New signup must have a verified actual Auth identity",
+      result.ok && !verified.error && verified.data.user?.id === result.data.userId,
+      "Actual code entry identity must verify",
     );
-    return { id, email, web };
-  }
-  async person(label: string, login = true): Promise<FixturePerson> {
-    await assertOwnedStack(this.config);
-    const email = `${this.namespace}-${label}-${randomUUID()}@example.test`;
-    this.inboxes.add(email);
-    const { data, error } = await this.admin.auth.admin.createUser({ email, email_confirm: true });
-    ensure(!error && data.user, "Could not create an owned synthetic account");
-    this.users.add(data.user.id);
+    this.users.add(result.data.userId);
     await this.onOwnedIdentity?.();
-    const person = { id: data.user.id, email, web: new WebSession(this.config) };
-    if (login) await this.signIn(person);
-    return person;
+    return { id: result.data.userId, displayName, web };
   }
-  async requestCode(email: string) {
-    ensure(this.inboxes.has(email), "Refusing an unowned inbox");
-    const response = await new WebSession(this.config).post("/api/auth/code", { email });
-    ensure(response.status === 200, "Synthetic email code request failed");
-  }
-  async code(email: string, previous?: string): Promise<string> {
-    ensure(this.inboxes.has(email), "Refusing an unowned inbox");
-    for (let attempt = 0; attempt < 80; attempt++) {
-      const search = await fetch(
-        `${this.config.mail}/api/v1/search?query=${encodeURIComponent(`to:${email}`)}`,
-      );
-      ensure(search.ok, "Owned mailbox query failed");
-      const list = (await search.json()) as {
-        messages?: { ID: string; To: { Address: string }[]; Created: string }[];
-      };
-      const messages = (list.messages ?? [])
-        .filter((m) => m.To.some((to) => to.Address === email))
-        .sort((a, b) => b.Created.localeCompare(a.Created));
-      if (messages.length) {
-        const response = await fetch(
-          `${this.config.mail}/api/v1/message/${encodeURIComponent(messages[0].ID)}`,
-        );
-        const detail = (await response.json()) as { Text?: string; HTML?: string };
-        const text = `${detail.Text ?? ""} ${detail.HTML ?? ""}`;
-        const match = text.match(/\b(\d{6})\b/);
-        ensure(
-          text.includes("조사실 로그인 코드") && match,
-          "Owned Auth template does not contain the expected OTP",
-        );
-        if (match[1] !== previous) return match[1];
-      }
-      await delay(100);
-    }
-    throw new Error("Owned synthetic OTP did not arrive");
-  }
-  async signIn(person: FixturePerson) {
-    await this.requestCode(person.email);
-    const response = await person.web.post("/api/auth/verify", {
-      email: person.email,
-      code: await this.code(person.email),
+  async person(label: string): Promise<FixturePerson> {
+    await assertOwnedStack(this.config);
+    await this.waitForEntryQuota();
+    const client = createClient(this.config.api, this.config.key, {
+      auth: { persistSession: false, autoRefreshToken: false },
     });
-    ensure(response.status === 200 && person.web.jar.size > 0, "Real email code login failed");
-    const data = person.web.sessionData();
+    const created = await client.auth.signInAnonymously();
     ensure(
-      typeof data.access_token === "string" && typeof data.refresh_token === "string",
-      "Real Auth session was not issued",
+      !created.error && created.data.user && created.data.session,
+      "Owned anonymous session must be real",
     );
-    const verified = await person.web.dataClient().auth.getUser(data.access_token as string);
+    const id = created.data.user.id;
+    this.users.add(id);
+    await this.onOwnedIdentity?.();
+    const displayName = `${this.namespace}-${label}`.slice(0, 80);
+    const web = new WebSession(this.config);
+    // Build SSR cookies from this exact real provider session. The product entry
+    // still verifies getUser and code admission; no old email ID is reassigned.
+    web.replaceSession({ ...created.data.session });
+    const response = await web.post("/api/auth/enter", { code: TEST_TEAM_CODE, displayName });
+    ensure(response.status === 200, "Owned product code admission failed");
+    const result = await response.json();
     ensure(
-      !verified.error && verified.data.user?.id === person.id,
-      "Local Auth identity did not match the owned account",
+      result.ok && result.data.userId === id,
+      "Admission must retain the actual provider identity",
     );
+    return { id, displayName, web };
+  }
+  private waitForEntryQuota() {
+    // Pace legitimate synthetic admissions against the real product limit. Never
+    // reset counters or weaken quotas to make an unrelated fixture test pass.
+    return waitForFixtureEntry(async () => {
+      const result = await this.db.query(
+        "select count(*)::int active, coalesce(greatest(0,extract(epoch from min(t)+interval '60 seconds'-clock_timestamp())*1000),0) wait_ms from team_entry_private.global_attempts,unnest(recent) t where id=1 and t>clock_timestamp()-interval '60 seconds'",
+      );
+      return { active: result.rows[0].active, nextWaitMs: Number(result.rows[0].wait_ms) };
+    });
+  }
+  entryForBrowser(person: FixturePerson) {
+    ensure(this.users.has(person.id), "Refusing an unowned browser session");
+    return {
+      code: TEST_TEAM_CODE,
+      cookies: [...person.web.jar].map(([name, value]) => ({
+        name,
+        value,
+        url: this.config.app,
+        httpOnly: true,
+        sameSite: "Lax",
+      })),
+    };
+  }
+  reserveBrowserEntry() {
+    const reservationId = randomUUID();
+    const displayName = `${this.namespace.slice(0, 38)}-${randomUUID()}`;
+    this.browserEntries.set(reservationId, displayName);
+    return { reservationId, displayName, code: TEST_TEAM_CODE };
+  }
+  async claimBrowserEntry(input: {
+    reservationId: string;
+    userId: string;
+    cookies: { name: string; value: string }[];
+  }): Promise<FixturePerson> {
+    await assertOwnedStack(this.config);
+    const displayName = this.browserEntries.get(input.reservationId);
+    ensure(displayName && !this.users.has(input.userId), "Unowned browser entry reservation");
+    ensure(
+      Array.isArray(input.cookies) && input.cookies.length > 0 && input.cookies.length <= 4,
+      "Invalid browser entry cookies",
+    );
+    const base = `sb-${new URL(this.config.api).hostname.split(".")[0]}-auth-token`;
+    const web = new WebSession(this.config);
+    for (const cookie of input.cookies) {
+      ensure(
+        typeof cookie.name === "string" &&
+          (cookie.name === base || new RegExp(`^${base}\\.[0-3]$`).test(cookie.name)) &&
+          typeof cookie.value === "string" &&
+          cookie.value.length > 0 &&
+          cookie.value.length <= 6000 &&
+          !web.jar.has(cookie.name),
+        "Invalid scoped browser entry cookie",
+      );
+      web.jar.set(cookie.name, cookie.value);
+    }
+    const client = web.dataClient();
+    const identity = await client.auth.getUser(web.sessionData().access_token as string);
+    ensure(
+      !identity.error && identity.data.user?.id === input.userId,
+      "Browser entry must prove its actual provider identity",
+    );
+    const admission = await client.rpc("team_entry_status");
+    ensure(
+      !admission.error &&
+        admission.data?.admitted === true &&
+        admission.data.userId === input.userId &&
+        admission.data.displayName === displayName,
+      "Browser admission must match its one-time fixture reservation",
+    );
+    this.users.add(input.userId);
+    this.browserEntries.delete(input.reservationId);
+    await this.onOwnedIdentity?.();
+    return { id: input.userId, displayName, web };
   }
   async trackOrganization(id: string) {
     const result = await this.db.query(
@@ -457,28 +490,6 @@ export class LocalAccessStack {
   async join(person: FixturePerson, code: string, displayAlias = "합성 멤버") {
     return person.web.mutate("join", { code, displayAlias });
   }
-  async expireCode(person: FixturePerson) {
-    ensure(this.users.has(person.id), "Refusing an unowned token fixture");
-    await assertOwnedStack(this.config);
-    // GoTrue uses confirmation or recovery timestamps for signup or magic-link OTP.
-    const before = await this.db.query(
-      "select confirmation_sent_at,recovery_sent_at from auth.users where id=$1",
-      [person.id],
-    );
-    ensure(before.rowCount === 1, "Owned token timestamp fixture is missing");
-    await this.db.query(
-      "update auth.users set confirmation_sent_at=now()-interval '2 hours',recovery_sent_at=now()-interval '2 hours' where id=$1",
-      [person.id],
-    );
-    return async () => {
-      ensure(this.users.has(person.id), "Refusing an unowned timestamp restoration");
-      await assertOwnedStack(this.config);
-      await this.db.query(
-        "update auth.users set confirmation_sent_at=$2,recovery_sent_at=$3 where id=$1",
-        [person.id, before.rows[0].confirmation_sent_at, before.rows[0].recovery_sent_at],
-      );
-    };
-  }
   async deleteAccount(person: FixturePerson) {
     ensure(this.users.has(person.id), "Refusing an unowned account deletion");
     await assertOwnedStack(this.config);
@@ -487,7 +498,7 @@ export class LocalAccessStack {
     this.users.delete(person.id);
     await this.onOwnedIdentity?.();
   }
-  async disable(person: FixturePerson) {
+  async disable(person: Pick<FixturePerson, "id">) {
     ensure(this.users.has(person.id), "Refusing an unowned account mutation");
     await assertOwnedStack(this.config);
     const { error } = await this.admin.auth.admin.updateUserById(person.id, {
@@ -557,18 +568,36 @@ async function runBrowserParent() {
       let body = "";
       for await (const part of request) {
         body += part.toString();
-        ensure(body.length <= 4096, "Fixture request too large");
+        ensure(body.length <= 16384, "Fixture request too large");
       }
       const input = JSON.parse(body);
       let data: unknown;
       if (request.url === "/person") {
-        const person = await fixture.person(String(input.label), false);
+        const person = await fixture.person(String(input.label));
         people.set(person.id, person);
-        data = { id: person.id, email: person.email };
+        data = { id: person.id, displayName: person.displayName };
+      } else if (request.url === "/fresh-entry") {
+        ensure(Object.keys(input).length === 0, "Invalid fresh browser reservation");
+        data = fixture.reserveBrowserEntry();
+      } else if (request.url === "/claim-entry") {
+        ensure(Object.keys(input).length === 3, "Invalid browser entry claim");
+        const person = await fixture.claimBrowserEntry(input);
+        people.set(person.id, person);
+        data = { id: person.id, displayName: person.displayName };
       } else if (request.url === "/code") {
         const person = people.get(input.id);
         ensure(person, "Unknown fixture identity");
-        data = { code: await fixture.code(person.email) };
+        data = fixture.entryForBrowser(person);
+      } else if (request.url === "/delete-person") {
+        ensure(
+          Object.keys(input).length === 1 && typeof input.id === "string",
+          "Invalid owned deletion",
+        );
+        const person = people.get(input.id);
+        ensure(person, "Unknown fixture identity");
+        await fixture.deleteAccount(person);
+        people.delete(input.id);
+        data = {};
       } else if (request.url === "/track") {
         await fixture.trackOrganization(input.organizationId);
         data = {};

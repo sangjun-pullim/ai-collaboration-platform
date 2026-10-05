@@ -358,13 +358,14 @@ for (const variant of [variants[1], variants[2]]) {
   });
 }
 
-test("should retain room field limits, trimming, UUID, email, code and role validation", async () => {
+test("should retain room field limits, trimming, UUID, entry code and role validation", async () => {
   const variant = variants[0];
   const policy = loadPolicy(variant);
   const read = (action: string, body: unknown) =>
     policy.read(request(JSON.stringify(body)), action, true);
-  assert.deepEqual(plain(await read("code", { email: " user@example.com " })), {
-    email: "user@example.com",
+  assert.deepEqual(plain(await read("enter", { code: " shared ", displayName: " 이름 " })), {
+    code: " shared ",
+    displayName: "이름",
   });
   assert.deepEqual(plain(await read("invite", { roomId: id, role: " observer " })), {
     roomId: id,
@@ -386,10 +387,10 @@ test("should retain room field limits, trimming, UUID, email, code and role vali
     );
   }
   for (const [action, body] of [
-    ["code", { email: "bad" }],
-    ["code", { email: 1 }],
-    ["code", { email: "x\u0000@example.com" }],
-    ["verify", { email: "user@example.com", code: "12345x" }],
+    ["enter", { code: "", displayName: "이름" }],
+    ["enter", { code: 1, displayName: "이름" }],
+    ["enter", { code: "x\u0000", displayName: "이름" }],
+    ["enter", { code: "c", displayName: " " }],
     ["join", { code: "A".repeat(64), displayAlias: "alias" }],
     ["invite", { roomId: ` ${id} `, role: "observer" }],
     ["invite", { roomId: "invalid", role: "observer" }],
@@ -398,9 +399,9 @@ test("should retain room field limits, trimming, UUID, email, code and role vali
     ["bootstrap", { ...bootstrap, groupName: "g".repeat(101) }],
   ] as const)
     await assert.rejects(read(action, body), errorIs(variant, "INVALID_BODY"));
-  assert.deepEqual(plain(await read("verify", { email: "user@example.com", code: "123456" })), {
-    email: "user@example.com",
+  assert.deepEqual(plain(await read("enter", { code: "123456", displayName: "이름" })), {
     code: "123456",
+    displayName: "이름",
   });
   assert.deepEqual(plain(await read("join", { code: token, displayAlias: " alias " })), {
     code: token,
@@ -472,12 +473,12 @@ test("should retain workflow trimming, text limits and strict UTF-8 across split
     roomPolicy.read(
       request(
         Buffer.concat([
-          Buffer.from('{"email":"'),
+          Buffer.from('{"code":"'),
           Buffer.from([0xff]),
-          Buffer.from('@example.com"}'),
+          Buffer.from('","displayName":"이름"}'),
         ]),
       ),
-      "code",
+      "enter",
       true,
     ),
     errorIs(variants[0], "INVALID_BODY"),
