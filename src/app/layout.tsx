@@ -2,9 +2,9 @@ import type { Metadata } from "next";
 import "./globals.css";
 
 export const metadata: Metadata = {
-  title: "조사실 · 공동 조사",
+  title: "AI 채팅방",
   description:
-    "이메일 로그인과 조사방 접근 관리, 공동 조사 모의 체험을 제공합니다. AI와 기기 연결은 준비 중입니다.",
+    "동료의 AI에게 질문하고 함께 대화하는 AI 채팅방. 내 AI 연결 없이도 질문할 수 있습니다.",
 };
 export default function RootLayout({ children }: Readonly<{ children: React.ReactNode }>) {
   return (
