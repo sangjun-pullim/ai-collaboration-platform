@@ -19,6 +19,12 @@ import {
   type FixturePerson,
 } from "./local-access-stack.js";
 import { authBrowserChildEnvironment } from "./auth-browser-artifact-policy.js";
+import { SourceBrowserRegistry } from "./source-browser-fixture.js";
+import {
+  sourceRead,
+  sourceFixtureAutoManifest,
+  uploadFixtureSource,
+} from "./shared-source-history-fixture.js";
 import {
   projectEnvelope,
   validateBody,
@@ -618,6 +624,83 @@ export async function runWorkflowBrowserParent() {
   const people = new Map<string, FixturePerson>();
   const active = new Map<string, AttemptSnapshot>();
   const steps = new Map<string, Set<string>>();
+  const sourceScenes = new SourceBrowserRegistry<WorkflowScene>({
+    async prepare(label) {
+      await assertOwnedStack(fixture.stack.config);
+      const scene = await fixture.scene(label);
+      const admission = await fixture.start(scene);
+      const attempt = await fixture.run(scene.origin, admission.requestId!);
+      const questionOperationId = randomUUID();
+      const source = sourceFixtureAutoManifest(questionOperationId);
+      await uploadFixtureSource(fixture, scene, attempt, source);
+      const asked = await fixture.device(scene.origin, "question", {
+        ...fixture.identity(attempt),
+        operationId: questionOperationId,
+        publicText: "합성 공개 질문",
+        confirmed: true,
+      });
+      ensure(asked.status === 200, "Owned source question failed");
+      const questionId = (asked.data.data as { questionId: string }).questionId;
+      const question = (await fixture.history(scene)).events.find(
+        (event) => event.kind === "QUESTION" && event.questionId === questionId,
+      );
+      ensure(question, "Owned source question event missing");
+      const recipient = await sourceRead(fixture, scene, question.eventId);
+      ensure(
+        recipient.state === "NO_SOURCE" && recipient.target?.agentId === scene.responder.agentId,
+        "Owned source question recipient mismatch",
+      );
+      await fixture.complete(scene.origin, attempt, "COMPLETED", "당시 저장소의 공개 답변");
+      const event = (await fixture.history(scene)).events.find(
+        (item) => item.senderKind === "AGENT" && item.publicText === "당시 저장소의 공개 답변",
+      );
+      ensure(event, "Owned source terminal event missing");
+      const original = await sourceRead(fixture, scene, event.eventId);
+      ensure(original.manifestHash === source.manifestHash, "Owned source manifest mismatch");
+      await fixture.stack.db.query(
+        "update device_binding_private.agents set session_alias='Later source session' where id=$1 and device_id=$2 and room_id=$3",
+        [scene.origin.agentId, scene.origin.deviceId, scene.scope.roomId],
+      );
+      const outsider = await scene.outsider.web.post(
+        "/api/investigations/source-read",
+        validateBody("source-read", {
+          protocol: 1,
+          roomId: scene.scope.roomId,
+          eventId: event.eventId,
+          afterIndex: null,
+        }),
+      );
+      ensure(outsider.status === 403, "Owned source outsider access was not refused");
+      return {
+        state: scene,
+        publicScene: {
+          roomId: scene.scope.roomId,
+          owner: { id: scene.owner.id, displayName: scene.owner.displayName },
+          observer: { id: scene.observer.id, displayName: scene.observer.displayName },
+          eventId: event.eventId,
+          question: { eventId: question.eventId, publicText: question.publicText },
+          original,
+          recipient,
+        },
+      };
+    },
+    async entry(scene, id) {
+      const person = [scene.owner, scene.observer].find((person) => person.id === id);
+      ensure(person && fixture.stack.users.has(person.id), "Unowned source browser entry");
+      const entry = fixture.stack.entryForBrowser(person);
+      return {
+        code: entry.code,
+        cookies: entry.cookies.map((cookie) => ({ ...cookie, sameSite: "Lax" as const })),
+      };
+    },
+    async dispose(scene) {
+      // The parent fixture owns DB/device cleanup in its final close; revoke this registry scope now.
+      ensure(
+        fixture.rooms.get(scene.scope.roomId) === scene.scope.organizationId,
+        "Unowned source browser cleanup",
+      );
+    },
+  });
   const server = createServer(async (req, res) => {
     try {
       ensure(
@@ -641,7 +724,9 @@ export async function runWorkflowBrowserParent() {
       }
       const input = JSON.parse(Buffer.concat(chunks).toString()) as Record<string, string>;
       let data: unknown;
-      if (req.url === "/setup") {
+      if (["/source-setup", "/source-code", "/source-dispose"].includes(req.url ?? "")) {
+        data = await sourceScenes.dispatch(req.url!.slice(1), input);
+      } else if (req.url === "/setup") {
         ensure(
           Object.keys(input).length === 1 &&
             /^(?:desktop|mobile)-(?:history|control|input-pause|direct-single|direct-multiple|direct-actor|direct-cookie|direct-history)$/.test(
@@ -1067,7 +1152,11 @@ export async function runWorkflowBrowserParent() {
     });
   } finally {
     await new Promise<void>((r) => server.close(() => r()));
-    await fixture.close();
+    try {
+      await sourceScenes.close();
+    } finally {
+      await fixture.close();
+    }
   }
 }
 if (process.argv.includes("--workflow-e2e-runner"))

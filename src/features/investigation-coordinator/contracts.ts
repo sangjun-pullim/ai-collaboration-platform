@@ -1,5 +1,21 @@
+import {
+  validPacketJson,
+  sourceHash,
+  sourceUint,
+  validSourceResponse,
+} from "./source-contracts.ts";
+export type {
+  SourceReadPage,
+  SourceTarget,
+  SourceSummary,
+  SourceFileRow,
+  SourceConfirmation,
+  SourceAcknowledgement,
+  SourceSupport,
+} from "./source-contracts.ts";
 export const humanActions = [
   "read",
+  "source-read",
   "input-state",
   "input-control",
   "speak",
@@ -12,6 +28,9 @@ export const humanActions = [
 ] as const;
 export const deviceActions = [
   "ready",
+  "source-support",
+  "source-upload",
+  "source-confirm",
   "admission",
   "admission-ack",
   "poll",
@@ -94,7 +113,7 @@ export type RunState = (typeof runStates)[number];
 export type Terminal = (typeof terminals)[number];
 export type RequestKind = (typeof requestKinds)[number];
 export type Adoption = (typeof adoptions)[number];
-export type Body = Record<string, string | number | boolean>;
+export type Body = Record<string, string | number | boolean | null>;
 export interface PublicEvent {
   eventId: string;
   roomId: string;
@@ -326,6 +345,17 @@ const pair: Shape = {
 };
 const bodies: Record<Action, Shape> = {
   read: { roomId: id, afterSequence: uint },
+  "source-read": { roomId: id, eventId: id, afterIndex: nullable((v) => sourceUint(v, 4095)) },
+  "source-support": { agentId: id, bindingEpoch: positive },
+  "source-upload": { ...identity, packetJson: validPacketJson },
+  "source-confirm": {
+    agentId: id,
+    bindingEpoch: positive,
+    requestId: id,
+    attemptId: id,
+    fence: positive,
+    manifestHash: sourceHash,
+  },
   "input-state": { roomId: id },
   "input-control": {
     roomId: id,
@@ -741,6 +771,10 @@ const validInputState: Check = (v) =>
       v.appliedEpoch === v.bindingEpoch &&
       v.appliedAt !== null);
 const responses: Record<Action, Shape> = {
+  "source-read": {},
+  "source-support": {},
+  "source-upload": {},
+  "source-confirm": {},
   "input-state": { roomId: id, bindings: list(validInputState, 20) },
   "input-control": inputState,
   admission: inputState,
@@ -784,6 +818,15 @@ const responses: Record<Action, Shape> = {
   observe: receipt,
 };
 export function projectResponse(action: Action, value: unknown): unknown {
+  if (
+    action === "source-read" ||
+    action === "source-support" ||
+    action === "source-upload" ||
+    action === "source-confirm"
+  ) {
+    if (!validSourceResponse(action, value)) throw new WorkflowError("UNAVAILABLE");
+    return value;
+  }
   if (!matches(value, responses[action])) throw new WorkflowError("UNAVAILABLE");
   if (
     new TextEncoder().encode(JSON.stringify(value)).length >

@@ -1,3 +1,5 @@
+import { sourcePackets } from "../src/workflow/source-publisher.ts";
+import type { SourceIdentity, SourcePacket } from "../src/workflow/source-contracts.ts";
 import { randomBytes } from "node:crypto";
 import { StateStore } from "../src/state-store.ts";
 import { WorkflowClient } from "../src/workflow-client.ts";
@@ -164,6 +166,7 @@ export async function runnerFixture(
     appliedAt: applied?.revision === inputRevision && applied.epoch === epoch ? applied.at : null,
   });
   const attempts = new Map<string, AttemptSnapshot>();
+  const sourceUploads = new Map<string, Map<number, SourcePacket>>();
   let fence = 0;
   let questionCount = 0;
   const faults = {
@@ -287,7 +290,13 @@ export async function runnerFixture(
         }
         const key = stableJson({ action, body });
         const prior = receipts.get(String(body.operationId));
-        const ephemeral = ["poll", "admission", "admission-ack"].includes(action);
+        const ephemeral = [
+          "poll",
+          "admission",
+          "admission-ack",
+          "source-support",
+          "source-confirm",
+        ].includes(action);
         if (prior && !ephemeral) {
           if (prior.key !== key) throw new RuntimeError("INVALID_RUNTIME");
           result =
@@ -295,7 +304,35 @@ export async function runnerFixture(
               ? structuredClone(attempts.get((prior.result as AttemptSnapshot).attemptId))
               : prior.result;
         } else {
-          if (action === "admission") result = inputState();
+          if (action === "source-support")
+            result = { version: 2, agentId: f.scope.agentId, bindingEpoch: epoch };
+          else if (action === "source-confirm") {
+            if (
+              !attempt ||
+              body.attemptId !== attempt.attemptId ||
+              body.requestId !== attempt.requestId ||
+              body.fence !== attempt.fence
+            )
+              return fail(409, "CONFLICT");
+            const uploads = sourceUploads.get(attempt.attemptId),
+              first = uploads?.values().next().value;
+            if (first && first.manifestHash !== body.manifestHash) return fail(409, "CONFLICT");
+            let next = 0;
+            while (uploads?.has(next)) next++;
+            result = {
+              version: 2,
+              agentId: body.agentId,
+              bindingEpoch: body.bindingEpoch,
+              requestId: body.requestId,
+              attemptId: body.attemptId,
+              fence: body.fence,
+              manifestHash: body.manifestHash,
+              state: !first ? "ABSENT" : next === first.count ? "CONFIRMED" : "PARTIAL",
+              count: first?.count ?? null,
+              totalBytes: first?.totalBytes ?? null,
+              nextMissingIndex: next,
+            };
+          } else if (action === "admission") result = inputState();
           else if (action === "admission-ack") {
             if (body.revision !== inputRevision || body.paused !== inputPaused)
               return fail(409, "CONFLICT");
@@ -344,7 +381,53 @@ export async function runnerFixture(
             ) {
               return fail(409, "CONFLICT");
             }
-            if (action === "start-intent") {
+            if (action === "source-upload") {
+              const packet = JSON.parse(String(body.packetJson)) as SourcePacket;
+              const uploads =
+                sourceUploads.get(attempt.attemptId) ?? new Map<number, SourcePacket>();
+              const priorPacket = uploads.get(packet.index),
+                first = uploads.values().next().value;
+              if (
+                (priorPacket && stableJson(priorPacket) !== stableJson(packet)) ||
+                (first &&
+                  (first.manifestHash !== packet.manifestHash ||
+                    first.count !== packet.count ||
+                    first.totalBytes !== packet.totalBytes))
+              )
+                return fail(409, "CONFLICT");
+              uploads.set(packet.index, packet);
+              sourceUploads.set(attempt.attemptId, uploads);
+              if (uploads.size === packet.count) {
+                const bytes = Buffer.concat(
+                  Array.from({ length: packet.count }, (_, i) =>
+                    Buffer.from(uploads.get(i)!.bytesBase64, "base64"),
+                  ),
+                );
+                sourcePackets(
+                  {
+                    agentId: String(body.agentId),
+                    bindingEpoch: Number(body.bindingEpoch),
+                    requestId: String(body.requestId),
+                    attemptId: String(body.attemptId),
+                    fence: Number(body.fence),
+                  } satisfies SourceIdentity,
+                  bytes,
+                  packet.manifestHash,
+                );
+              }
+              result = {
+                version: 2,
+                agentId: body.agentId,
+                bindingEpoch: body.bindingEpoch,
+                requestId: body.requestId,
+                attemptId: body.attemptId,
+                fence: body.fence,
+                manifestHash: packet.manifestHash,
+                operationId: body.operationId,
+                index: packet.index,
+                chunkHash: packet.chunkHash,
+              };
+            } else if (action === "start-intent") {
               if (!["LEASED", "EXECUTING"].includes(attempt.state)) return fail(409, "CONFLICT");
               attempt.state = "EXECUTING";
               attempt.startIntentAt = new Date().toISOString();

@@ -560,3 +560,68 @@ test("should enforce the 10000ms composite deadline without waiting ten seconds"
     for (const deadline of deadlines) if (!deadline.signal.aborted) deadline.abort();
   }
 });
+
+test("should bound source-read actual whitespace bytes and cancel overflow", async () => {
+  const data = {
+    version: 2,
+    roomId: read.body.roomId,
+    eventId: "00000000-0000-4000-8000-000000000099",
+    state: "NO_TARGET_SNAPSHOT",
+    target: null,
+    manifestHash: null,
+    summary: null,
+    files: [],
+    nextIndex: null,
+  };
+  const body = { protocol: 1, roomId: data.roomId, eventId: data.eventId, afterIndex: null };
+  const padded = new Uint8Array(16384).fill(0x20);
+  padded.set(encoded({ ok: true, data }));
+  let cancelled = 0,
+    pulled = 0;
+  const value = new Response(
+    new ReadableStream<Uint8Array>({
+      pull(controller) {
+        if (pulled === 0) controller.enqueue(padded);
+        else controller.enqueue(new Uint8Array([0x20]));
+        pulled++;
+      },
+      cancel() {
+        cancelled++;
+      },
+    }),
+    { headers: { "Content-Type": "application/json" } },
+  );
+  await assert.rejects(
+    client(async () => value)("source-read", body, new AbortController().signal),
+    (error: unknown) => {
+      assert.ok(error instanceof contracts.WorkflowError);
+      assert.equal(error.code, "UNAVAILABLE");
+      return true;
+    },
+  );
+  assert.equal(cancelled, 1);
+  assert.equal(value.body!.locked, false);
+});
+
+test("should accept the exact source-read stream limit including whitespace", async () => {
+  const data = {
+    version: 2,
+    roomId: read.body.roomId,
+    eventId: "00000000-0000-4000-8000-000000000099",
+    state: "NO_TARGET_SNAPSHOT",
+    target: null,
+    manifestHash: null,
+    summary: null,
+    files: [],
+    nextIndex: null,
+  };
+  const body = { protocol: 1, roomId: data.roomId, eventId: data.eventId, afterIndex: null };
+  const padded = new Uint8Array(16384).fill(0x20);
+  padded.set(encoded({ ok: true, data }));
+  const value = response([padded.subarray(0, 8192), padded.subarray(8192)]);
+  assert.deepEqual(
+    plain(await client(async () => value)("source-read", body, new AbortController().signal)),
+    data,
+  );
+  assert.equal(value.body!.locked, false);
+});

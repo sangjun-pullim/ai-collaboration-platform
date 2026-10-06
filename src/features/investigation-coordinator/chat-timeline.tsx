@@ -2,20 +2,20 @@
 import type { RefObject, UIEventHandler } from "react";
 import type { PublicBinding, PublicEvent, RunSummary } from "./contracts";
 import type { HistoricalRun } from "./history-state";
-import { eventTarget, questionForReply, timelineEvents } from "./chat-presentation";
+import { questionForReply, timelineEvents } from "./chat-presentation";
+import { RunSourceView } from "./run-source-view";
 import { Avatar, AvatarFallback } from "../../components/ui/avatar";
 import { Badge } from "../../components/ui/badge";
 import { Button } from "../../components/ui/button";
 export function ChatTimeline({
   events,
-  runs,
-  historicalRuns,
   bindings,
   labels,
   scrollRef,
   onScroll,
   unread,
   onLatest,
+  onAccessLost,
 }: {
   events: PublicEvent[];
   runs: RunSummary[];
@@ -26,6 +26,7 @@ export function ChatTimeline({
   onScroll: UIEventHandler<HTMLDivElement>;
   unread: boolean;
   onLatest: () => void;
+  onAccessLost: () => void;
 }) {
   return (
     <div className="relative flex min-h-0 flex-1 flex-col">
@@ -43,7 +44,6 @@ export function ChatTimeline({
             </li>
           )}
           {timelineEvents(events).map((event) => {
-            const target = eventTarget(event, runs, bindings, historicalRuns);
             const question = questionForReply(event, events);
             const kind =
               event.kind === "SPEECH"
@@ -82,23 +82,16 @@ export function ChatTimeline({
                       {event.publicText}
                     </p>
                   )}
-                  {target && (
-                    <div className="mt-2 space-y-1 rounded-md border bg-neutral-50 px-3 py-2 text-xs text-neutral-500">
-                      <p className="break-all">
-                        저장된 대상: {target.savedAlias ?? "별칭 정보 없음"} · {target.agentId} ·
-                        epoch {target.epoch}
-                      </p>
-                      {target.current ? (
-                        <p>
-                          현재 연결 정보: {target.current.ownerAlias} · {target.current.runtime} ·{" "}
-                          {target.current.repositoryAlias} · {target.current.sessionAlias}
-                        </p>
-                      ) : (
-                        <p>현재 같은 연결 없음</p>
-                      )}
-                      <p>당시 저장소 정보 없음{target.state ? ` · ${labels[target.state]}` : ""}</p>
-                      {event.requestId && <p className="break-all">요청 {event.requestId}</p>}
-                    </div>
+                  {(event.kind === "QUESTION" ||
+                    event.kind === "ANSWER" ||
+                    event.senderKind === "AGENT") && (
+                    <RunSourceView
+                      key={`${event.roomId}:${event.eventId}`}
+                      roomId={event.roomId}
+                      eventId={event.eventId}
+                      bindings={bindings}
+                      onAccessLost={onAccessLost}
+                    />
                   )}
                   {event.adoption !== "NONE" && (
                     <Badge variant="secondary" className="mt-2 text-[10px]">

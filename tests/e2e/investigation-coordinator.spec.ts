@@ -367,7 +367,9 @@ test("should show a direct question form without an own AI connection", async ({
         .filter({ hasText: "한국어 키보드 직접 질문 😀" })
         .first();
       await expect(questionRecord).toContainText("저장된 대상:");
-      await expect(questionRecord).toContainText("당시 저장소 정보 없음");
+      await expect(questionRecord).toContainText(
+        "당시 대상은 저장되어 있으나 파일 관찰 자료는 없습니다.",
+      );
       if (variant === "single") {
         await expect(
           region.getByRole("button", { name: "새 메시지 · 아래로 이동", exact: true }),
@@ -627,11 +629,21 @@ test("should retain saved direct identity through completed replacement and deta
     const question = list
       .getByRole("listitem")
       .filter({ has: page.getByText("질문", { exact: true }) });
-    const stored = await question.locator("p").filter({ hasText: "저장된 대상:" }).textContent();
-    check(stored && stored.includes(data.targetAgentIds[0]));
-    const epoch = stored.match(/epoch\s+(\d+)/)?.[1];
-    check(epoch && Number(epoch) > 0);
-    await expect(question).toContainText("당시 저장소 정보 없음");
+    const sourceResponse = page.waitForResponse(
+      (response) =>
+        response.request().method() === "POST" &&
+        response.url().endsWith("/api/investigations/source-read"),
+    );
+    await question.getByRole("button", { name: "저장소·자료", exact: true }).click();
+    const sourceEnvelope = await (await sourceResponse).json();
+    const storedTarget = sourceEnvelope.data?.target;
+    check(
+      sourceEnvelope.ok &&
+        storedTarget?.agentId === data.targetAgentIds[0] &&
+        storedTarget.bindingEpoch > 0,
+    );
+    const epoch = storedTarget.bindingEpoch;
+    await expect(question).toContainText("당시 대상은 저장되어 있으나 파일 관찰 자료는 없습니다.");
 
     const draft = "답변을 읽으며 쓰는 다음 질문";
     await input.fill(draft);
@@ -668,20 +680,31 @@ test("should retain saved direct identity through completed replacement and deta
     check(askCount() === 1);
 
     async function savedHistory() {
-      const records = list.getByRole("listitem").filter({ hasText: "저장된 대상:" });
+      const records = list.getByRole("listitem").filter({ has: page.getByText(/^(질문|답변)$/) });
       await expect(records.filter({ has: page.getByText(/^(질문|답변)$/) })).toHaveCount(2);
       for (const record of await records.all()) {
-        const metadata = await record
-          .locator("p")
-          .filter({ hasText: "저장된 대상:" })
-          .textContent();
-        check(
-          metadata &&
-            metadata.includes(data.targetAgentIds[0]) &&
-            metadata.match(/epoch\s+(\d+)/)?.[1] === epoch,
-        );
+        const detail = record.getByRole("button", { name: "저장소·자료", exact: true });
+        if (await detail.count()) {
+          const response = page.waitForResponse(
+            (value) =>
+              value.request().method() === "POST" &&
+              value.url().endsWith("/api/investigations/source-read"),
+          );
+          await detail.click();
+          const source = await (await response).json();
+          check(
+            source.ok &&
+              source.data?.target?.agentId === data.targetAgentIds[0] &&
+              source.data.target.bindingEpoch === epoch,
+          );
+        }
+        await expect(record).toContainText(storedTarget.ownerAlias);
+        await expect(record).toContainText(storedTarget.repositoryAlias);
+        await expect(record).toContainText(storedTarget.sessionAlias);
         await expect(record).toContainText("현재 같은 연결 없음");
-        await expect(record).toContainText("당시 저장소 정보 없음");
+        await expect(record).toContainText(
+          "당시 대상은 저장되어 있으나 파일 관찰 자료는 없습니다.",
+        );
         await expect(record).not.toContainText("완료 뒤 새 저장소");
       }
       await expect(

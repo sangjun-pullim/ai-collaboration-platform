@@ -1,4 +1,5 @@
 import type { PublicBinding, PublicEvent, RunSummary } from "./contracts.ts";
+import type { SourceTarget } from "./source-contracts.ts";
 import type { HistoricalRun } from "./history-state.ts";
 
 function answerIdentity(event: PublicEvent) {
@@ -36,7 +37,21 @@ export function eventTarget(
   runs: RunSummary[],
   bindings: PublicBinding[],
   historicalRuns: HistoricalRun[] = [],
+  snapshot: SourceTarget | null = null,
 ) {
+  if (snapshot)
+    return {
+      agentId: snapshot.agentId,
+      epoch: snapshot.bindingEpoch,
+      savedAlias: `${snapshot.ownerAlias} · ${snapshot.sessionAlias}`,
+      current: bindings.find(
+        (binding) =>
+          binding.agentId === snapshot.agentId && binding.bindingEpoch === snapshot.bindingEpoch,
+      ),
+      state: historicalRuns.find((run) => run.requestId === snapshot.requestId)?.state,
+    };
+  // An agent question's event identity belongs to the origin, not the recipient.
+  if (event.kind === "QUESTION" && event.senderKind === "AGENT") return null;
   const run = runs.find((run) =>
     event.requestId
       ? run.requestId === event.requestId

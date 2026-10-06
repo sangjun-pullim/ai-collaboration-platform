@@ -77,6 +77,7 @@ function RoomInvestigation({ userId, roomId, role }: Props) {
   const scrollRef = useRef<HTMLDivElement>(null);
   const follow = useRef(true);
   const latestSequence = useRef(0);
+  const accessLost = useRef(false);
   useLayoutEffect(() => {
     const element = scrollRef.current;
     const sequence =
@@ -162,6 +163,17 @@ function RoomInvestigation({ userId, roomId, role }: Props) {
     if (error) errorRef.current?.focus();
   }, [error]);
 
+  // The user/room key remounts this callback; refs always hold the latest requests.
+  const [loseAccess] = useState(() => () => {
+    accessLost.current = true;
+    pollAbort.current?.abort();
+    mutationAbort.current?.abort();
+    historyRef.current = emptyHistory(roomId);
+    setHistory(historyRef.current);
+    setPermissionDenied(true);
+    setPollError("접근 권한을 확인해 주세요.");
+  });
+
   const snapshot = history.snapshot;
   const bindings = snapshot?.bindings ?? [];
   const origin = bindings.find((binding) => binding.agentId === originId);
@@ -198,7 +210,13 @@ function RoomInvestigation({ userId, roomId, role }: Props) {
     : undefined;
 
   async function mutate(action: HumanAction, fields: Body, retryBody?: Body) {
-    if (!snapshot || !writable || mutationPending.current || (pendingDirect && !retryBody))
+    if (
+      !snapshot ||
+      !writable ||
+      accessLost.current ||
+      mutationPending.current ||
+      (pendingDirect && !retryBody)
+    )
       return false;
     mutationPending.current = true;
     pollAbort.current?.abort();
@@ -476,6 +494,7 @@ function RoomInvestigation({ userId, roomId, role }: Props) {
         historicalRuns={history.runs}
         bindings={bindings}
         labels={labels}
+        onAccessLost={loseAccess}
         scrollRef={scrollRef}
         unread={unread}
         onLatest={() => {

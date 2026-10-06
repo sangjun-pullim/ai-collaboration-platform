@@ -410,18 +410,18 @@ test("should preserve conservative reservations for invalid file calls", async (
     }
     const invalidSizes: unknown[] = [-1, 0.5, 65537, NaN, Infinity, undefined, "38"];
     for (const [index, size] of invalidSizes.entries()) {
-      // This scoped memory fault is introduced only after ACK and is never persisted.
-      const snapshot = probe.record.settings!.files[0];
-      const originalSize = snapshot.size;
+      // Inject into a work copy after ACK; never mutate or persist the owned frozen record.
+      const originalRecord = probe.record;
       try {
-        Object.assign(snapshot, { size });
+        probe.record = structuredClone(originalRecord);
+        Object.assign(probe.record.settings!.files[0], { size });
         await assert.rejects(
           authority.tool(fileCallback(authority, turnId, `invalid-size-${index}`)),
           { code: "RUNTIME_CAPACITY" },
         );
         assert.equal(toolReservations.at(-1), 397312);
       } finally {
-        snapshot.size = originalSize;
+        probe.record = originalRecord;
       }
       assert.equal(probe.record.settings!.files[0].size, 38);
       await scenario.assertHeld();

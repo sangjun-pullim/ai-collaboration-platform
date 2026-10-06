@@ -159,3 +159,26 @@ test("should retain distinct answer runs and answers without a complete identity
     unknownLater,
   ]);
 });
+
+test("should never treat an agent question origin as its saved recipient", () => {
+  const question = { ...page.events[0], senderKind: "AGENT" as const };
+  assert.equal(eventTarget(question, page.runs, page.bindings), null);
+});
+
+test("should use the source-read PEER snapshot rather than the agent question origin", () => {
+  const question = { ...page.events[0], senderKind: "AGENT" as const };
+  const snapshot = {
+    requestId: "00000000-0000-4000-8000-000000000098",
+    agentId: "00000000-0000-4000-8000-000000000099",
+    bindingEpoch: 9,
+    ownerAlias: "수신 사람",
+    sessionAlias: "수신 세션",
+    repositoryAlias: "수신 저장소",
+    runtime: "claude" as const,
+    reservedAt: "2026-10-06T00:00:00.000Z",
+  };
+  const target = eventTarget(question, page.runs, page.bindings, [], snapshot);
+  assert.equal(target?.agentId, snapshot.agentId);
+  assert.equal(target?.savedAlias, "수신 사람 · 수신 세션");
+  assert.equal(target?.current, undefined);
+});

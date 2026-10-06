@@ -38,6 +38,9 @@ export class WorkflowClient {
       throw new WorkflowError("UNAVAILABLE");
     const reader = response.body?.getReader();
     if (!reader) throw new WorkflowError("UNAVAILABLE");
+    const responseLimit = ["source-support", "source-upload", "source-confirm"].includes(action)
+      ? 16384
+      : 65536;
     let size = 0;
     const parts: Uint8Array[] = [];
     try {
@@ -45,7 +48,7 @@ export class WorkflowClient {
         const { done, value } = await reader.read();
         if (done) break;
         size += value.length;
-        if (size > 65536) {
+        if (size > responseLimit) {
           await reader.cancel();
           throw new WorkflowError("UNAVAILABLE");
         }

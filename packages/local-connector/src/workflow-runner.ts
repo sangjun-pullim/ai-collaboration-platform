@@ -1,3 +1,8 @@
+import { projectSourceManifest } from "./workflow/source-manifest.ts";
+import { publishSource } from "./workflow/source-publisher.ts";
+import { ownRuntimeRecord } from "./workflow/record-snapshot.ts";
+import { sourcePublicationGuard } from "./workflow/source-publication-guard.ts";
+import type { SourceSupport, SourceIdentity } from "./workflow/source-contracts.ts";
 import { repositoryMode } from "./workspace/repository-access.ts";
 import {
   RepositoryTools,
@@ -172,6 +177,7 @@ export class WorkflowRunner {
   private archivedLast: AttemptJournal | undefined;
   private readonly capacityReservations = new Map<string, number>();
   private readonly ordinaryReadiness = new Set<string>();
+  private supportedSourceScope: string | undefined;
   private mutations: Promise<unknown> = Promise.resolve();
   private readonly interruptionWrites = new Set<Promise<void>>();
   private retired = false;
@@ -220,12 +226,13 @@ export class WorkflowRunner {
       const next = structuredClone(this.record);
       update(next);
       guard();
-      if (this.ordinaryMutation(kind)) this.assertOrdinaryCapacity(next, 0, 0, reservation);
+      const snapshot = ownRuntimeRecord(next);
+      if (this.ordinaryMutation(kind)) this.assertOrdinaryCapacity(snapshot, 0, 0, reservation);
       try {
-        await this.store.write(next, guard);
+        await this.store.write(snapshot, guard);
         guard();
-        this.record = next;
-        this.commitCapacityReservation(next, reservation);
+        this.record = snapshot;
+        this.commitCapacityReservation(snapshot, reservation);
       } catch (error) {
         // A monitor can close after rename/fsync. Re-adopt the owned committed journal before
         // queued terminal/outbox mutations; never submit the pre-commit in-memory snapshot again.
@@ -233,8 +240,8 @@ export class WorkflowRunner {
         const committed = await this.store.read();
         this.storageCheck();
         if (committed) {
-          this.record = committed;
-          this.commitCapacityReservation(committed, reservation);
+          this.record = ownRuntimeRecord(committed);
+          this.commitCapacityReservation(this.record, reservation);
         }
         throw error;
       }
@@ -356,7 +363,7 @@ export class WorkflowRunner {
         this.record.attempts.length > 128 ||
         Buffer.byteLength(JSON.stringify(this.record)) > 256 * 1024;
       if (!needsCompaction) return;
-      this.record = await this.store.compact(this.record, this.check);
+      this.record = ownRuntimeRecord(await this.store.compact(this.record, this.check));
       this.check();
       this.archivedLast = await this.store.lastAttempt(this.record);
       this.check();
@@ -857,14 +864,14 @@ export class WorkflowRunner {
         const saved = await this.store.read();
         this.check();
         if (saved) {
-          this.record = saved;
+          this.record = ownRuntimeRecord(saved);
           this.archivedLast = await this.store.lastAttempt(saved);
           this.check();
         }
         const state = await this.profileState();
         this.check();
         const scope = scopeOf(state, this.store.agentId, this.client.origin);
-        this.record = saved ?? runtimeRecord(scope);
+        this.record = ownRuntimeRecord(saved ?? runtimeRecord(scope));
         // A replacement receipt can have advanced the profile while its local preparation is unfinished.
         if (
           !same(this.record.scope, scope) &&
@@ -1102,7 +1109,7 @@ export class WorkflowRunner {
   }
   private publicStatus() {
     const last = this.record.lastArchive ? this.archivedLast : this.record.attempts.at(-1);
-    return {
+    return structuredClone({
       state: this.record.preparation
         ? "PREPARING"
         : (last?.state ?? (this.record.context ? "PREPARED" : "UNPREPARED")),
@@ -1118,12 +1125,12 @@ export class WorkflowRunner {
       textProof: last?.terminal?.textProof ?? null,
       adoption: last?.receipt?.adoption ?? null,
       error: last?.reason ?? null,
-    };
+    });
   }
   async status() {
     const record = await this.store.read();
     if (!record) return { state: "UNPREPARED", ready: false };
-    this.record = record;
+    this.record = ownRuntimeRecord(record);
     this.archivedLast = await this.store.lastAttempt(record);
     return this.publicStatus();
   }
@@ -1150,6 +1157,8 @@ export class WorkflowRunner {
           await this.recover();
           this.check();
           if (unresolvedRuntime(this.record)) return this.publicStatus();
+          await this.ensureSourceSupport();
+          this.check();
           await this.admission.wait(() =>
             this.adapter.validate(this.record.context!, this.record.settings!, this.check),
           );
@@ -2200,6 +2209,32 @@ export class WorkflowRunner {
     );
     guard();
   }
+  private async ensureSourceSupport() {
+    this.check();
+    const scope = structuredClone(this.record.scope),
+      key = stableJson(scope);
+    if (this.supportedSourceScope === key) return;
+    const support = projectResponse(
+      "source-support",
+      await this.workflow(
+        "source-support",
+        {
+          protocol: 1,
+          agentId: scope.agentId,
+          bindingEpoch: scope.bindingEpoch,
+        },
+        scope,
+      ),
+    ) as SourceSupport;
+    this.check();
+    if (
+      stableJson(this.record.scope) !== key ||
+      support.agentId !== scope.agentId ||
+      support.bindingEpoch !== scope.bindingEpoch
+    )
+      throw new RuntimeError("AUTHORITY_LOST");
+    this.supportedSourceScope = key;
+  }
   private async publish(requestId: string, action: "complete" | "observe", received?: () => void) {
     const a = this.journal(requestId);
     if (!a.terminal) throw new RuntimeError("UNKNOWN");
@@ -2210,6 +2245,33 @@ export class WorkflowRunner {
         o.body.attemptId === a.snapshot?.attemptId &&
         o.body.fence === a.snapshot?.fence,
     );
+    if (!prior && a.state !== "UPLOADED") {
+      const source = projectSourceManifest(this.record, a);
+      if (source) {
+        const scope = structuredClone(a.scope),
+          identity: SourceIdentity = {
+            agentId: a.scope.agentId,
+            bindingEpoch: a.scope.bindingEpoch,
+            requestId: a.requestId,
+            attemptId: a.snapshot!.attemptId,
+            fence: a.snapshot!.fence,
+          };
+        const check = sourcePublicationGuard(
+          { record: this.record, journal: a },
+          source,
+          this.check,
+          () => ({ record: this.record, journal: this.journal(requestId) }),
+        );
+        await publishSource(
+          identity,
+          source.bytes,
+          source.manifestHash,
+          (sourceAction, body) => this.workflow(sourceAction, body, scope, check),
+          check,
+        );
+        check();
+      }
+    }
     const op =
       prior ??
       (await this.operation(action, {
@@ -2533,7 +2595,7 @@ export class WorkflowRunner {
     this.storageCheck();
     const disk = await this.store.read();
     this.storageCheck();
-    if (disk) this.record = disk;
+    if (disk) this.record = ownRuntimeRecord(disk);
     if (
       !this.record.attempts.some(
         (a) => !["TERMINAL", "UPLOADED", "UNKNOWN", "NOT_STARTED"].includes(a.state),
@@ -2548,9 +2610,10 @@ export class WorkflowRunner {
         a.reason = reason;
       }
     if (this.admission.closed) {
-      await this.store.write(next, this.storageCheck);
+      const snapshot = ownRuntimeRecord(next);
+      await this.store.write(snapshot, this.storageCheck);
       this.storageCheck();
-      this.record = next;
+      this.record = snapshot;
     } else
       await this.mutate(
         "unknown",
@@ -2684,9 +2747,10 @@ export class WorkflowRunner {
       await this.markUnresolvedUnknown(drained ? "UNKNOWN" : "CLEANUP_INCOMPLETE");
       const next = structuredClone(this.record);
       next.ready = false;
-      await this.store.write(next, this.storageCheck);
+      const snapshot = ownRuntimeRecord(next);
+      await this.store.write(snapshot, this.storageCheck);
       this.storageCheck();
-      this.record = next;
+      this.record = snapshot;
     }
   }
   async assertReplaceable() {
