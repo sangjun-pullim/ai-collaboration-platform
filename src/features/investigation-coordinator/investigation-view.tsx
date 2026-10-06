@@ -18,6 +18,7 @@ import {
   type DirectIntent,
 } from "./direct-intents";
 
+import { OwnInputControls } from "./own-input-controls";
 import { ChatTimeline } from "./chat-timeline";
 import { ChatComposer } from "./chat-composer";
 import { AdvancedControls } from "./advanced-controls";
@@ -322,7 +323,7 @@ function RoomInvestigation({ userId, roomId, role }: Props) {
       className="flex min-h-0 min-w-0 flex-1 flex-col [overflow-wrap:anywhere]"
     >
       <div className="flex shrink-0 flex-wrap items-center justify-between gap-2 border-b px-5 py-2">
-        <p role="status" className="text-xs text-neutral-500">
+        <p role="status" aria-label="방 상태" className="text-xs text-neutral-500">
           방: {snapshot ? labels[snapshot.roomMode] : "조회 중"}
           {cycle ? ` · 조사: ${labels[cycle.state]}` : ""}
         </p>
@@ -450,6 +451,9 @@ function RoomInvestigation({ userId, roomId, role }: Props) {
           </AdvancedControls>
         )}
       </div>
+      {writable && bindings.some((binding) => binding.owned) && (
+        <OwnInputControls userId={userId} roomId={roomId} bindings={bindings} />
+      )}
       {error && (
         <p
           ref={errorRef}

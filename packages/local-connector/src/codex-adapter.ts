@@ -23,7 +23,14 @@ import {
   type ProviderEvent,
   type ProviderTransport,
 } from "./codex-transport.ts";
+import { repositoryMode } from "./workspace/repository-access.ts";
+import {
+  isOriginRoleRequestKind,
+  repositoryTools,
+  validateToolArguments,
+} from "./workspace/tool-contracts.ts";
 import { RuntimeFilePolicy } from "./runtime-file-policy.ts";
+import { selectRuntimeSettings } from "./runtime-settings-policy.ts";
 import type { RequestPayload, Terminal } from "./workflow-contracts.ts";
 
 const taskCeiling = {
@@ -347,65 +354,19 @@ export function selectSettings(
   capability: Capabilities,
   choice: RequestedSettings | "default",
 ): RequestedSettings {
-  const selected = choice === "default" ? capability.defaultSettings : choice;
-  if (
-    !selected ||
-    !capability.models.some(
-      (model) => model.model === selected.model && model.efforts.includes(selected.effort),
-    )
-  )
-    throw new RuntimeError("UNSUPPORTED_SETTINGS");
-  return { model: selected.model, effort: selected.effort };
+  return selectRuntimeSettings(capability, choice, "codex");
 }
-export function scopedTools(files: readonly { path: string }[]) {
-  const path = { type: "string", enum: files.map((f) => f.path) };
+export function scopedTools(
+  files: readonly { path: string }[],
+  mode: "SELECTED" | "AUTO_CODE" = "SELECTED",
+  peer = true,
+) {
   return [
     {
       type: "namespace",
       name: scopedNamespace,
       description: "Use only user-confirmed public evidence and the server-authorized cycle peer.",
-      tools: [
-        {
-          type: "function",
-          name: "read_workspace_file",
-          description: "Read one selected unchanged public text file.",
-          inputSchema: {
-            type: "object",
-            properties: { path },
-            required: ["path"],
-            additionalProperties: false,
-          },
-        },
-        {
-          type: "function",
-          name: "ask_peer",
-          description:
-            "Submit a public question to the authorized cycle peer. Returns accepted/pending immediately.",
-          inputSchema: {
-            type: "object",
-            properties: {
-              question: { type: "string", minLength: 1, maxLength: 2000 },
-              evidence: {
-                type: "array",
-                minItems: 1,
-                maxItems: 4,
-                items: {
-                  type: "object",
-                  properties: {
-                    path,
-                    startLine: { type: "integer", minimum: 1 },
-                    endLine: { type: "integer", minimum: 1 },
-                  },
-                  required: ["path", "startLine", "endLine"],
-                  additionalProperties: false,
-                },
-              },
-            },
-            required: ["question", "evidence"],
-            additionalProperties: false,
-          },
-        },
-      ],
+      tools: repositoryTools(mode, files, peer).map((tool) => ({ type: "function", ...tool })),
     },
   ];
 }
@@ -845,6 +806,7 @@ export class CodexAdapter implements RuntimeAdapter {
       if (this.closed) throw new RuntimeError("RUNTIME_CLOSED");
     };
     live();
+    const mode = repositoryMode(settings, { generation, root });
     const client = await this.connect(root.path, live);
     live();
     selectSettings(await this.capabilities(root.path, live), settings.requested);
@@ -865,7 +827,7 @@ export class CodexAdapter implements RuntimeAdapter {
         approvalPolicy: "never",
         sandbox: "read-only",
         approvalsReviewer: "user",
-        dynamicTools: scopedTools(settings.files),
+        dynamicTools: scopedTools(settings.files, mode, settings.autoQuestionsConfirmed),
         environments: [],
         selectedCapabilityRoots: [],
       }),
@@ -937,6 +899,7 @@ export class CodexAdapter implements RuntimeAdapter {
       if (this.closed) throw new RuntimeError("RUNTIME_CLOSED");
     };
     check();
+    repositoryMode(settings, context);
     if (context.ownership !== "CONNECTOR_CREATED") throw new RuntimeError("CONTEXT_UNCONFIRMED");
     const client = await this.connect(context.root.path, check);
     check();
@@ -1035,6 +998,15 @@ export class CodexAdapter implements RuntimeAdapter {
         tool: p.tool,
         arguments: p.arguments,
       };
+      validateToolArguments(
+        repositoryMode(settings, authority.context),
+        settings.files,
+        settings.autoQuestionsConfirmed &&
+          authority.peerTools === true &&
+          isOriginRoleRequestKind(payload.requestKind),
+        call.tool,
+        call.arguments,
+      );
       const result = await authority.tool(call);
       transportLive();
       check();
@@ -1047,7 +1019,10 @@ export class CodexAdapter implements RuntimeAdapter {
       check();
       const prompt = [
         settings.handoff,
-        `Selected files: ${settings.files.map((f) => f.path).join(", ")}.`,
+        repositoryMode(settings, authority.context) === "AUTO_CODE"
+          ? "Owner-approved automatic repository tools: list_workspace_files, search_workspace, read_workspace_file. Only returned matches/excerpts are read evidence; use their relative paths and whole-file hashes. Native tools and personal layers do not enlarge this repository scope."
+          : `Selected files: ${settings.files.map((f) => f.path).join(", ")}.`,
+        `Peer tool permission for this input: ${isOriginRoleRequestKind(payload.requestKind) && authority.peerTools === true && settings.autoQuestionsConfirmed ? "allowed once" : "denied; do not call ask_peer"}.`,
         `Run kind: ${payload.requestKind}.`,
         payload.publicText,
         payload.replyText ?? "",

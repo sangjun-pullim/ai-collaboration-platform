@@ -133,7 +133,10 @@ export class SyntheticAdapter implements RuntimeAdapter {
     this.closed = true;
   }
 }
-export async function runnerFixture(options: RunnerOptions = {}) {
+export async function runnerFixture(
+  options: RunnerOptions = {},
+  configure?: (record: import("../src/runtime-contracts.ts").RuntimeRecord) => void,
+) {
   const f = await runtimeFixture();
   let currentCredential = randomBytes(32).toString("hex");
   let currentHash = digest(currentCredential);
@@ -146,6 +149,20 @@ export async function runnerFixture(options: RunnerOptions = {}) {
     control: Control | null = null,
     roomMode: "ACTIVE" | "PAUSING" | "PAUSED" = "ACTIVE",
     epoch = 1;
+  let inputRevision = 1,
+    inputPaused = false;
+  let applied: { revision: number; epoch: number; at: string } | null = null;
+  const inputState = () => ({
+    agentId: f.scope.agentId,
+    bindingEpoch: epoch,
+    revision: inputRevision,
+    paused: inputPaused,
+    appliedRevision:
+      applied?.revision === inputRevision && applied.epoch === epoch ? applied.revision : null,
+    appliedEpoch:
+      applied?.revision === inputRevision && applied.epoch === epoch ? applied.epoch : null,
+    appliedAt: applied?.revision === inputRevision && applied.epoch === epoch ? applied.at : null,
+  });
   const attempts = new Map<string, AttemptSnapshot>();
   let fence = 0;
   let questionCount = 0;
@@ -270,14 +287,22 @@ export async function runnerFixture(options: RunnerOptions = {}) {
         }
         const key = stableJson({ action, body });
         const prior = receipts.get(String(body.operationId));
-        if (prior && action !== "poll") {
+        const ephemeral = ["poll", "admission", "admission-ack"].includes(action);
+        if (prior && !ephemeral) {
           if (prior.key !== key) throw new RuntimeError("INVALID_RUNTIME");
           result =
-            action === "claim"
+            action === "claim" && !(prior.result as Record<string, unknown>).claimDenied
               ? structuredClone(attempts.get((prior.result as AttemptSnapshot).attemptId))
               : prior.result;
         } else {
-          if (action === "poll") result = poll();
+          if (action === "admission") result = inputState();
+          else if (action === "admission-ack") {
+            if (body.revision !== inputRevision || body.paused !== inputPaused)
+              return fail(409, "CONFLICT");
+            if (!applied || applied.revision !== inputRevision || applied.epoch !== epoch)
+              applied = { revision: inputRevision, epoch, at: new Date().toISOString() };
+            result = inputState();
+          } else if (action === "poll") result = poll();
           else if (action === "ready")
             result = {
               agentId: f.scope.agentId,
@@ -286,7 +311,9 @@ export async function runnerFixture(options: RunnerOptions = {}) {
               validUntil: body.reportedReady ? new Date(Date.now() + 60000).toISOString() : null,
               verification: "reported",
             };
-          else if (action === "claim") {
+          else if (action === "claim" && inputPaused) {
+            result = { claimDenied: "INPUT_PAUSED" };
+          } else if (action === "claim") {
             if (
               !queued ||
               body.requestId !== queued.requestId ||
@@ -351,12 +378,19 @@ export async function runnerFixture(options: RunnerOptions = {}) {
               result = structuredClone(control);
             } else throw new RuntimeError("INVALID_RUNTIME");
           }
-          if (action !== "poll")
+          if (!ephemeral)
             receipts.set(String(body.operationId), { key, result: structuredClone(result) });
         }
       }
       await faults.after?.(action, input, result, response);
       if (destroyed) return Response.error();
+      if (
+        result &&
+        typeof result === "object" &&
+        Object.keys(result).length === 1 &&
+        (result as Record<string, unknown>).claimDenied === "INPUT_PAUSED"
+      )
+        return fail(409, "INPUT_PAUSED");
       return new Response(JSON.stringify({ ok: true, data: result }), {
         status: 200,
         headers: { "Content-Type": "application/json" },
@@ -392,6 +426,17 @@ export async function runnerFixture(options: RunnerOptions = {}) {
       },
     ],
   });
+  configure?.(f.record);
+  if (f.record.version === 2) {
+    const state = (await profile.read())!;
+    Object.assign(state.mappings[0], {
+      formatVersion: 2,
+      runtime: f.record.settings!.provider,
+      generation: f.record.context!.generation,
+      materialization: f.record.context!.materialization?.state ?? "MATERIALIZED",
+    });
+    await profile.write(state);
+  }
   await f.store.write(f.record);
   const central = new CentralClient(origin, fetcher),
     connector = new Connector(profile, central);
@@ -441,6 +486,14 @@ export async function runnerFixture(options: RunnerOptions = {}) {
       return queued;
     },
     poll,
+    inputState,
+    pauseInput: (paused: boolean) => {
+      if (inputPaused !== paused) {
+        inputPaused = paused;
+        inputRevision++;
+        applied = null;
+      }
+    },
     questionCount: () => questionCount,
     expireUnstarted: () => {
       if (!attempt || attempt.state !== "LEASED" || attempt.startIntentAt !== null)

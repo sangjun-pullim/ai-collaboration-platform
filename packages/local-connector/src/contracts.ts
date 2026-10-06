@@ -86,7 +86,7 @@ export type WorkspaceMetadata = {
   commit: string;
   dirty: "unknown";
 };
-export type AgentMetadata = { sessionAlias: string; runtime: "codex" };
+export type AgentMetadata = { sessionAlias: string; runtime: "codex" | "claude" };
 export type Body = Record<string, string | number | boolean>;
 const schemas: Record<
   HumanAction | ConnectorAction,
@@ -128,7 +128,7 @@ const schemas: Record<
     operationId: isId,
     workspaceId: isId,
     sessionAlias: isAlias,
-    runtime: (value) => value === "codex",
+    runtime: (value) => value === "codex" || value === "claude",
   },
   replace: {
     operationId: isId,
@@ -140,7 +140,7 @@ const schemas: Record<
       value === "unknown" || (typeof value === "string" && /^[a-f0-9]{40}$/.test(value)),
     dirty: (value) => value === "unknown",
     sessionAlias: isAlias,
-    runtime: (value) => value === "codex",
+    runtime: (value) => value === "codex" || value === "claude",
   },
 };
 export function validateBody(action: HumanAction | ConnectorAction, input: unknown): Body {
@@ -177,7 +177,7 @@ export type PublicBinding = {
   commit: string;
   dirty: "unknown";
   sessionAlias: string;
-  runtime: "codex";
+  runtime: "codex" | "claude";
   bindingEpoch: number;
   state: "registered";
   verification: "unverified";
@@ -213,7 +213,7 @@ const bindingSchema = {
   commit: (v: unknown) => v === "unknown" || (typeof v === "string" && /^[a-f0-9]{40}$/.test(v)),
   dirty: (v: unknown) => v === "unknown",
   sessionAlias: isAlias,
-  runtime: (v: unknown) => v === "codex",
+  runtime: (v: unknown) => v === "codex" || v === "claude",
   bindingEpoch: (v: unknown) => Number.isSafeInteger(v) && Number(v) > 0,
   state: (v: unknown) => v === "registered",
   verification: (v: unknown) => v === "unverified",

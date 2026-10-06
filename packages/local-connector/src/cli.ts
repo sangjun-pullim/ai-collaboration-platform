@@ -15,13 +15,19 @@ import {
 import { canonicalRoot, gitMetadata, workspaceBody, agentBody } from "./workspace-registration.ts";
 import { RuntimeStore } from "./runtime-store.ts";
 import { RuntimeError } from "./runtime-contracts.ts";
-import { RuntimeFilePolicy } from "./runtime-file-policy.ts";
 import { WorkflowRunner } from "./workflow-runner.ts";
 import { WorkflowClient } from "./workflow-client.ts";
-import { CodexAdapter } from "./codex-adapter.ts";
 import type { PublicBinding } from "./contracts.ts";
 import { parseCliOptions } from "./cli/parse-options.ts";
-import { revokeLocalProfile } from "./cli/remove-local-profile.ts";
+import { revokeLocalProfile, revokeConfiguredProfile } from "./cli/remove-local-profile.ts";
+import { SettingsStore } from "./settings/store.ts";
+import { SettingsClient } from "./settings/client.ts";
+import { SettingsError } from "./settings/contracts.ts";
+import { SettingsManager } from "./settings/manager.ts";
+import { withSettingsDeviceLock, RetiredProfileError } from "./cli/settings-lock.ts";
+import { currentRunner, configuredRunner } from "./cli/runtime-context.ts";
+import { runRuntimeCommand, untilStopped } from "./cli/runtime-command.ts";
+import { createProviderAdapter } from "./provider-adapter.ts";
 export const hash = (value: string) => createHash("sha256").update(value).digest("hex");
 export class Connector {
   constructor(
@@ -405,118 +411,72 @@ export async function main(args: string[]) {
   );
   const origin =
     options.server ??
-    (command === "revoke-local"
+    (["revoke-local", "manage"].includes(command)
       ? ((await store.read())?.server ?? "http://127.0.0.1")
       : required("server"));
   const client = new CentralClient(origin),
     connector = new Connector(store, client);
-  const runner = (agentId: string) =>
+  const runnerOptions = {
+    rotate: (check: () => void) => connector.rotate(check),
+    bindings: async (credential: string) =>
+      (await client.call("bindings", {}, credential)).bindings as PublicBinding[],
+    replace: (input: Parameters<Connector["replace"]>[0]) => connector.replace(input),
+  };
+  const legacyRunner = (agentId: string) =>
     new WorkflowRunner(
       store,
       new RuntimeStore(store.dir, store.profile, agentId),
       new WorkflowClient(client.origin),
-      new CodexAdapter(),
-      {
-        rotate: (check) => connector.rotate(check),
-        bindings: async (credential) =>
-          (await client.call("bindings", {}, credential)).bindings as PublicBinding[],
-        replace: (input) => connector.replace(input),
-      },
+      createProviderAdapter("codex", { profile: store }),
+      runnerOptions,
     );
-  let result: unknown;
-  if (command?.startsWith("runtime-")) {
-    if (command === "runtime-capabilities") {
-      const adapter = new CodexAdapter();
-      try {
-        const policy = await RuntimeFilePolicy.select(required("root"), []);
-        const capabilities = await adapter.capabilities(policy.root.path, () => {});
-        result = {
-          provider: "codex",
-          version: capabilities.version,
-          models: capabilities.models,
-          defaultSettings: capabilities.defaultSettings,
-          policy: capabilities.policy,
-          accountEligibility: "UNVERIFIED",
-          finalInputIsolation: "UNVERIFIED",
-        };
-      } finally {
-        await adapter.close();
-      }
-    } else {
-      const runtime = runner(required("agent-id"));
-      if (command === "runtime-status") result = await runtime.status();
-      else if (command === "runtime-prepare") {
-        if (options["confirm-new-context"] !== "yes" || options["confirm-public"] !== "yes")
-          throw new ConnectionError("INVALID_BODY");
-        if (options["runtime-default"] === "yes" && (options.model || options.effort))
-          throw new ConnectionError("INVALID_BODY");
-        const choice =
-          options["runtime-default"] === "yes"
-            ? ("default" as const)
-            : { model: required("model"), effort: required("effort") };
-        let files: unknown;
-        try {
-          files = JSON.parse(options.files ?? "[]");
-        } catch {
-          throw new ConnectionError("INVALID_BODY");
-        }
-        if (!Array.isArray(files) || !files.every((p) => typeof p === "string"))
-          throw new ConnectionError("INVALID_BODY");
-        result = await runtime.prepare({
-          root: options.root,
-          choice,
-          files,
-          handoff: options.handoff ?? "",
-          confirmed: true,
-          autoQuestionsConfirmed: options["confirm-auto-questions"] === "yes",
+  const result =
+    command === "manage"
+      ? await untilStopped((signal) =>
+          new SettingsManager(store, new SettingsStore(store), new SettingsClient(client.origin), {
+            runner: (pointer, runtime) =>
+              configuredRunner(store, client.origin, runnerOptions, pointer, runtime),
+          }).run({ once: options.once === "yes", signal }),
+        )
+      : await withSettingsDeviceLock(store, command, async (settings) => {
+          const runtime = () =>
+            currentRunner(store, client.origin, runnerOptions, settings, required("agent-id"));
+          if (command?.startsWith("runtime-"))
+            return runRuntimeCommand(command, options, required, runtime, { profile: store });
+          if (command === "revoke-local")
+            return (await settings.read())
+              ? revokeConfiguredProfile(store, settings)
+              : revokeLocalProfile(store, legacyRunner);
+          if (command === "replace")
+            return (await runtime()).guardMutation(() =>
+              store.transaction(() =>
+                connector.replace({
+                  agentId: required("agent-id"),
+                  root: required("root"),
+                  nativeSessionId: required("native-session"),
+                  repositoryAlias: required("repository-alias"),
+                  sessionAlias: required("session-alias"),
+                  confirmed: options["confirm-public"] === "yes",
+                }),
+              ),
+            );
+          return store.transaction(async () => {
+            if (command === "pair") return connector.pair(required("device-alias"));
+            if (command === "status") return connector.status();
+            if (command === "exchange") return connector.exchange(required("confirm-scope"));
+            if (command === "rotate") return connector.rotate();
+            if (command === "heartbeat") return connector.heartbeat();
+            if (command === "register")
+              return connector.register({
+                root: required("root"),
+                nativeSessionId: required("native-session"),
+                repositoryAlias: required("repository-alias"),
+                sessionAlias: required("session-alias"),
+                confirmed: options["confirm-public"] === "yes",
+              });
+            throw new ConnectionError("INVALID_BODY");
+          });
         });
-      } else if (command === "runtime-run") {
-        const cancellation = new AbortController();
-        const stop = () => cancellation.abort();
-        process.on("SIGINT", stop);
-        process.on("SIGTERM", stop);
-        try {
-          result = await runtime.run({ once: options.once === "yes", signal: cancellation.signal });
-        } finally {
-          process.off("SIGINT", stop);
-          process.off("SIGTERM", stop);
-        }
-      } else if (command === "runtime-observe") result = await runtime.observe();
-      else throw new ConnectionError("INVALID_BODY");
-    }
-  } else if (command === "revoke-local") {
-    result = await revokeLocalProfile(store, runner);
-  } else if (command === "replace") {
-    const agentId = required("agent-id");
-    result = await runner(agentId).guardMutation(() =>
-      store.transaction(() =>
-        connector.replace({
-          agentId,
-          root: required("root"),
-          nativeSessionId: required("native-session"),
-          repositoryAlias: required("repository-alias"),
-          sessionAlias: required("session-alias"),
-          confirmed: options["confirm-public"] === "yes",
-        }),
-      ),
-    );
-  } else
-    result = await store.transaction(async () => {
-      if (command === "pair") return connector.pair(required("device-alias"));
-      if (command === "status") return connector.status();
-      if (command === "exchange") return connector.exchange(required("confirm-scope"));
-      if (command === "rotate") return connector.rotate();
-      if (command === "heartbeat") return connector.heartbeat();
-      if (command === "register")
-        return connector.register({
-          root: required("root"),
-          nativeSessionId: required("native-session"),
-          repositoryAlias: required("repository-alias"),
-          sessionAlias: required("session-alias"),
-          confirmed: options["confirm-public"] === "yes",
-        });
-      throw new ConnectionError("INVALID_BODY");
-    });
   process.stdout.write(JSON.stringify(result) + "\n");
 }
 if (process.argv[1] && pathToFileURL(resolve(process.argv[1])).href === import.meta.url)
@@ -524,8 +484,15 @@ if (process.argv[1] && pathToFileURL(resolve(process.argv[1])).href === import.m
     process.stderr.write(
       JSON.stringify({
         state: "disconnected",
+        ...(error instanceof RetiredProfileError
+          ? {
+              hint: "이전 AI 기록을 보존한 프로필입니다. 새 --profile 이름으로 기기를 다시 연결하세요.",
+            }
+          : {}),
         error:
-          error instanceof ConnectionError || error instanceof RuntimeError
+          error instanceof ConnectionError ||
+          error instanceof RuntimeError ||
+          error instanceof SettingsError
             ? error.code
             : "UNAVAILABLE",
       }) + "\n",

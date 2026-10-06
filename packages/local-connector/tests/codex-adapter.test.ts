@@ -2064,3 +2064,211 @@ test("should refuse materialized boolean drift before preparation or resume and 
     await f.close();
   }
 });
+
+import { createRepositoryAccess } from "../src/workspace/repository-access.ts";
+import { repositoryTools } from "../src/workspace/tool-contracts.ts";
+test("should advertise generation automatic tools and deliver unselected list search and read arguments", async () => {
+  const f = await runtimeFixture(),
+    p = new FakeProvider(),
+    a = new CodexAdapter({ transportFactory: (_root, overrides) => p.launch(overrides) });
+  const generation = uuid();
+  const settings = {
+    ...f.settings,
+    files: [],
+    autoQuestionsConfirmed: false,
+    repositoryAccess: createRepositoryAccess(generation, f.policy.root, uuid(), uuid()),
+  };
+  try {
+    const context = await a.prepare(f.policy.root, settings, generation, 1, () => {});
+    const dynamic = p.calls.find((call) => call.method === "thread/start")!.params.dynamicTools as {
+      tools: unknown[];
+    }[];
+    assert.deepEqual(
+      dynamic[0].tools,
+      repositoryTools("AUTO_CODE", [], false).map((tool) => ({ type: "function", ...tool })),
+    );
+    const turnId = "auto-owned";
+    const payload = {
+      requestId: uuid(),
+      cycleId: uuid(),
+      agentId: f.scope.agentId,
+      bindingEpoch: 1,
+      roomRevision: 1,
+      requestKind: "ORIGIN" as const,
+      questionId: uuid(),
+      publicText: "Question",
+      replyText: null,
+      deadline: new Date(Date.now() + 60000).toISOString(),
+    };
+    let delivered = 0;
+    const acknowledged = deferred<void>();
+    const authority: AttemptAuthority = {
+      scope: f.scope,
+      context,
+      attempt: {
+        requestId: payload.requestId,
+        attemptId: uuid(),
+        agentId: f.scope.agentId,
+        bindingEpoch: 1,
+        fence: 1,
+        state: "EXECUTING",
+        leaseExpiresAt: payload.deadline,
+        startIntentAt: new Date().toISOString(),
+        payload,
+      },
+      signal: new AbortController().signal,
+      assertLive() {},
+      peerTools: false,
+      ack: async () => {
+        acknowledged.resolve();
+      },
+      tool: async () => {
+        delivered++;
+        return { success: true, contentItems: [{ type: "inputText", text: "Evidence" }] };
+      },
+    };
+    p.response = (method) => (method === "turn/start" ? { turn: { id: turnId } } : undefined);
+    const execution = a.execute(authority, settings, payload, async () => {});
+    await acknowledged.promise;
+    await new Promise<void>((resolve) => setImmediate(resolve));
+    for (const [tool, args] of [
+      ["list_workspace_files", {}],
+      ["search_workspace", { query: "function" }],
+      [
+        "read_workspace_file",
+        { path: "src/unselected.ts", offset: 0, expectedHash: "a".repeat(64) },
+      ],
+    ] as const)
+      await p.handler!(
+        {
+          threadId: context.threadId,
+          turnId,
+          callId: `auto-${tool}`,
+          namespace: "ai_collaboration_scoped",
+          tool,
+          arguments: args,
+        },
+        () => {},
+      );
+    await assert.rejects(
+      p.handler!(
+        {
+          threadId: context.threadId,
+          turnId,
+          callId: "forbidden-peer",
+          namespace: "ai_collaboration_scoped",
+          tool: "ask_peer",
+          arguments: {
+            question: "Question",
+            evidence: [{ path: "src/unselected.ts", startLine: 1, endLine: 1 }],
+          },
+        },
+        () => {},
+      ),
+      { code: "TOOL_REJECTED" },
+    );
+    p.emit("turn/completed", {
+      threadId: context.threadId,
+      turn: { id: turnId, status: "completed", itemsView: "full", items: [] },
+    });
+    await execution;
+    assert.equal(delivered, 3);
+  } finally {
+    await a.close();
+    await f.close();
+  }
+});
+
+for (const scenario of [
+  { kind: "CONTINUATION", peer: true, consent: true },
+  { kind: "RESUME", peer: true, consent: true },
+  { kind: "PEER", peer: true, consent: true },
+  { kind: "CONTINUATION", peer: false, consent: true },
+  { kind: "RESUME", peer: undefined, consent: true },
+  { kind: "CONTINUATION", peer: true, consent: false },
+] as const)
+  test(`should ${scenario.kind !== "PEER" && scenario.peer && scenario.consent ? "deliver" : "reject"} ${scenario.kind} peer callback with authority ${scenario.peer} and consent ${scenario.consent}`, async () => {
+    const { kind } = scenario;
+    const allowed = kind !== "PEER" && scenario.peer === true && scenario.consent;
+    const f = await runtimeFixture(),
+      p = new FakeProvider(),
+      a = new CodexAdapter({ transportFactory: (_root, overrides) => p.launch(overrides) });
+    try {
+      f.settings.autoQuestionsConfirmed = scenario.consent;
+      const context = await a.prepare(f.policy.root, f.settings, uuid(), 1, () => {});
+      const payload = {
+        requestId: uuid(),
+        cycleId: uuid(),
+        agentId: f.scope.agentId,
+        bindingEpoch: 1,
+        roomRevision: 1,
+        requestKind: kind,
+        questionId: kind === "CONTINUATION" || kind === "PEER" ? uuid() : null,
+        publicText: "Follow-up",
+        replyText: kind === "CONTINUATION" ? "Verified answer" : null,
+        deadline: new Date(Date.now() + 60000).toISOString(),
+      };
+      let delivered = 0;
+      const ack = deferred<void>();
+      const authority: AttemptAuthority = {
+        scope: f.scope,
+        context,
+        attempt: {
+          requestId: payload.requestId,
+          attemptId: uuid(),
+          agentId: f.scope.agentId,
+          bindingEpoch: 1,
+          fence: 1,
+          state: "EXECUTING",
+          leaseExpiresAt: payload.deadline,
+          startIntentAt: new Date().toISOString(),
+          payload,
+        },
+        signal: new AbortController().signal,
+        assertLive() {},
+        peerTools: scenario.peer,
+        ack: async () => {
+          ack.resolve();
+        },
+        tool: async () => {
+          delivered++;
+          return { success: true, contentItems: [{ type: "inputText", text: "accepted/pending" }] };
+        },
+      };
+      p.response = (method) =>
+        method === "turn/start" ? { turn: { id: "role-turn" } } : undefined;
+      const job = a.execute(authority, f.settings, payload, async () => {});
+      void job.catch(() => {});
+      await ack.promise;
+      await new Promise<void>((resolve) => setImmediate(resolve));
+      try {
+        const invoke = () =>
+          p.handler!(
+            {
+              threadId: context.threadId,
+              turnId: "role-turn",
+              callId: "role-question",
+              namespace: "ai_collaboration_scoped",
+              tool: "ask_peer",
+              arguments: {
+                question: "Follow-up",
+                evidence: [{ path: "public.txt", startLine: 1, endLine: 1 }],
+              },
+            },
+            () => {},
+          );
+        if (allowed) assert.equal((await invoke()).success, true);
+        else await assert.rejects(invoke(), { code: "TOOL_REJECTED" });
+        assert.equal(delivered, allowed ? 1 : 0);
+      } finally {
+        p.emit("turn/completed", {
+          threadId: context.threadId,
+          turn: { id: "role-turn", status: "completed", itemsView: "full", items: [] },
+        });
+        await job;
+      }
+    } finally {
+      await a.close();
+      await f.close();
+    }
+  });

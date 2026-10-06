@@ -47,7 +47,7 @@
     "dev": "next dev",
     "build": "next build --webpack",
     "start": "next start",
-    "lint": "eslint src tests scripts/access-web-server.mjs next.config.ts playwright.config.ts playwright.auth.config.ts playwright.device.config.ts playwright.workflow.config.ts packages/local-connector/src packages/local-connector/tests eslint.config.mjs",
+    "lint": "eslint src tests scripts/access-web-server.mjs next.config.ts playwright.config.ts playwright.auth.config.ts playwright.device.config.ts playwright.workflow.config.ts playwright.settings.config.ts packages/local-connector/src packages/local-connector/tests eslint.config.mjs",
     "typecheck": "next typegen && tsc --noEmit -p tsconfig.json && tsc --noEmit -p tsconfig.test.json && tsc --noEmit -p tsconfig.e2e.json && tsc --noEmit -p tsconfig.integration.json",
     "test": "tsc -p tsconfig.test.json && node --test .test-build/tests/unit/*.test.js",
     "test:e2e": "playwright test",
@@ -57,6 +57,8 @@
     "test:e2e:devices": "npm --prefix packages/local-connector run build && tsc -p tsconfig.integration.json && node .integration-build/tests/helpers/local-access-stack.js --device-e2e-runner",
     "test:integration:workflow": "npm --prefix packages/local-connector run build && tsc -p tsconfig.integration.json && node --test --test-concurrency=1 .integration-build/tests/integration/investigation-coordinator.test.js",
     "test:e2e:workflow": "npm --prefix packages/local-connector run build && tsc -p tsconfig.integration.json && node .integration-build/tests/helpers/workflow-fixture.js --workflow-e2e-runner",
-    "test:integration:runtime": "npm --prefix packages/local-connector run build && tsc -p tsconfig.integration.json && node --test --test-concurrency=1 .integration-build/tests/integration/owned-codex-workflow.test.js"
+    "test:integration:runtime": "npm --prefix packages/local-connector run build && tsc -p tsconfig.integration.json && node --test --test-concurrency=1 .integration-build/tests/integration/owned-codex-workflow.test.js",
+    "test:integration:settings": "npm --prefix packages/local-connector run build && tsc -p tsconfig.integration.json && node --test --test-concurrency=1 .integration-build/tests/integration/owner-local-ai-setup.test.js .integration-build/tests/integration/claude-product-runtime.test.js",
+    "test:e2e:settings": "npm --prefix packages/local-connector run build && tsc -p tsconfig.integration.json && node .integration-build/tests/helpers/settings-browser-fixture.js --settings-e2e-runner"
   }
 }

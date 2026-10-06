@@ -14,7 +14,8 @@
     "playwright.config.ts",
     "playwright.auth.config.ts",
     "playwright.device.config.ts",
-    "playwright.workflow.config.ts"
+    "playwright.workflow.config.ts",
+    "playwright.settings.config.ts"
   ],
   "exclude": ["experiments", "node_modules"]
 }

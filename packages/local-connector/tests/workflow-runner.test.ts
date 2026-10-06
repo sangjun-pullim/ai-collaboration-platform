@@ -4053,3 +4053,231 @@ test("should keep monitoring through a maximum continuation lease receipt and pu
     await f.close();
   }
 });
+
+test("should report paused readiness on restart without claiming or submitting new native input", async () => {
+  const f = await runnerFixture();
+  try {
+    f.pauseInput(true);
+    f.queue();
+    await f.runner().run({ once: true });
+    assert.equal(f.adapter.starts, 0);
+    assert.equal(
+      f.requests.some((r) => r.action === "claim"),
+      false,
+    );
+    assert.equal(f.requests.find((r) => r.action === "ready")?.body.reportedReady, false);
+    assert.equal(f.inputState().appliedRevision, 2);
+    assert.equal(
+      (await f.store.read())!.operations.some((op) =>
+        ["admission", "admission-ack"].includes(op.action),
+      ),
+      false,
+    );
+  } finally {
+    await f.close();
+  }
+});
+test("should seal only a transmitted claim explicitly denied by input pause", async () => {
+  const f = await runnerFixture();
+  try {
+    f.queue();
+    f.faults.before = async (action) => {
+      if (action === "claim") f.pauseInput(true);
+    };
+    await f.runner().run({ once: true });
+    const record = (await f.store.read())!,
+      a = record.attempts[0];
+    assert.equal(f.adapter.starts, 0);
+    assert.equal(a.state, "NOT_STARTED");
+    assert.deepEqual(a.unstartedClosure, {
+      kind: "SERVER_INPUT_PAUSED",
+      claimOperationId: a.claimOperationId,
+    });
+    assert.equal(
+      record.operations.find((op) => op.operationId === a.claimOperationId)?.state,
+      "CLOSED",
+    );
+    assert.equal(a.snapshot, null);
+  } finally {
+    await f.close();
+  }
+});
+test("should recover exact lost denial after resume and never replay its sealed operation", async () => {
+  const f = await runnerFixture();
+  try {
+    f.queue();
+    f.faults.before = async (action) => {
+      if (action === "claim") f.pauseInput(true);
+    };
+    f.faults.after = async (action, _body, _result, response) => {
+      if (action === "claim") response.destroy();
+    };
+    await f.runner().run({ once: true });
+    const uncertain = (await f.store.read())!,
+      claim = uncertain.operations.find((op) => op.action === "claim")!;
+    assert.equal(uncertain.attempts[0].state, "UNKNOWN");
+    assert.equal(claim.state, "TRANSMITTED");
+    f.faults.before = undefined;
+    f.faults.after = undefined;
+    f.pauseInput(false);
+    await f.runner(new SyntheticAdapter()).run({ once: true });
+    const recovered = (await f.store.read())!;
+    assert.equal(recovered.attempts[0].unstartedClosure?.kind, "SERVER_INPUT_PAUSED");
+    assert.equal(recovered.attempts[1].state, "UPLOADED");
+    assert.notEqual(recovered.attempts[1].claimOperationId, claim.operationId);
+    const exact = f.requests.filter(
+      (r) => r.action === "claim" && r.body.operationId === claim.operationId,
+    );
+    assert.equal(exact.length, 2);
+    assert.deepEqual(exact[0].body, exact[1].body);
+    await f.runner(new SyntheticAdapter()).run({ once: true });
+    assert.equal(f.requests.filter((r) => r.body.operationId === claim.operationId).length, 2);
+  } finally {
+    await f.close();
+  }
+});
+test("should preserve admitted native tools and terminal publication when input pause or ACK lookup fails", async () => {
+  for (const failure of ["pause", "offline", "stale-ack"]) {
+    const f = await runnerFixture({ pollIntervalMs: 5, leaseIntervalMs: 10 });
+    try {
+      f.queue();
+      f.adapter.executeHook = async (authority) => {
+        const reads = f.requests.filter((r) => r.action === "admission").length;
+        if (failure === "pause") f.pauseInput(true);
+        else if (failure === "stale-ack") {
+          f.pauseInput(true);
+          f.faults.before = async (action) => {
+            if (action === "admission-ack") f.pauseInput(false);
+          };
+        } else
+          f.faults.before = async (action) => {
+            if (action === "admission" || action === "admission-ack") throw new Error(failure);
+          };
+        await waitForSynthetic(
+          () => f.requests.filter((r) => r.action === "admission").length > reads,
+          "active input read did not run",
+        );
+        const turn = (await f.store.read())!.attempts[0].native!.turnId;
+        const result = await authority.tool(
+          callback(
+            authority,
+            turn,
+            "read_workspace_file",
+            { path: "public.txt" },
+            "paused-file-read",
+          ),
+        );
+        assert.equal(result.success, true);
+      };
+      await f.runner().run({ once: true });
+      assert.equal(f.adapter.starts, 1);
+      assert.equal((await f.store.read())!.attempts[0].state, "UPLOADED");
+      assert.equal(
+        f.requests.some((r) => r.action === "complete"),
+        true,
+      );
+    } finally {
+      await f.close();
+    }
+  }
+});
+test("should keep prior successful claim recovery while paused without submitting a new native input", async () => {
+  const f = await runnerFixture();
+  try {
+    f.queue();
+    f.faults.after = async (action, _body, _result, response) => {
+      if (action === "claim") response.destroy();
+    };
+    await f.runner().run({ once: true });
+    const original = (await f.store.read())!.operations.find((op) => op.action === "claim")!;
+    f.faults.after = undefined;
+    f.pauseInput(true);
+    const adapter = new SyntheticAdapter();
+    await f.runner(adapter).run({ once: true });
+    const next = (await f.store.read())!;
+    assert.equal(next.attempts[0].state, "UNKNOWN");
+    assert.equal(next.attempts[0].unstartedClosure, undefined);
+    assert.equal(adapter.starts, 0);
+    assert.deepEqual(
+      f.requests.filter((r) => r.action === "claim").map((r) => r.body),
+      [original.body, original.body],
+    );
+  } finally {
+    await f.close();
+  }
+});
+
+test("should retain UNKNOWN before denial proof commit and adopt immutable closure after committed write failure", async () => {
+  for (const boundary of ["before", "after"]) {
+    const f = await runnerFixture();
+    try {
+      f.queue();
+      f.faults.before = async (action) => {
+        if (action === "claim") f.pauseInput(true);
+      };
+      const originalWrite = f.store.write.bind(f.store);
+      let injected = false;
+      if (boundary === "after")
+        f.store.write = async (value, guard) => {
+          await originalWrite(value, guard);
+          if (
+            !injected &&
+            value.attempts.at(-1)?.unstartedClosure?.kind === "SERVER_INPUT_PAUSED"
+          ) {
+            injected = true;
+            throw new RuntimeError("UNKNOWN");
+          }
+        };
+      await f
+        .runner(f.adapter, {
+          beforeMutation: async (kind) => {
+            if (boundary === "before" && kind === "unstarted-closure")
+              throw new RuntimeError("UNKNOWN");
+          },
+        })
+        .run({ once: true });
+      const saved = (await f.store.read())!;
+      assert.equal(f.adapter.starts, 0);
+      assert.equal(saved.attempts[0].state, boundary === "before" ? "UNKNOWN" : "NOT_STARTED");
+      assert.equal(
+        saved.operations.find((o) => o.action === "claim")!.state,
+        boundary === "before" ? "TRANSMITTED" : "CLOSED",
+      );
+      f.store.write = originalWrite;
+      f.faults.before = undefined;
+      await f.runner(new SyntheticAdapter()).run({ once: true });
+      assert.equal(
+        (await f.store.read())!.attempts[0].unstartedClosure?.kind,
+        "SERVER_INPUT_PAUSED",
+      );
+    } finally {
+      await f.close();
+    }
+  }
+});
+test("should never seal denial proof for a different action or malformed claim envelope", async () => {
+  for (const failure of ["other-action", "malformed-envelope"]) {
+    const f = await runnerFixture();
+    try {
+      f.queue();
+      const runtime = f.runner();
+      if (failure === "other-action") {
+        const original = runtime.client.call.bind(runtime.client);
+        runtime.client.call = async (action, ...args) => {
+          if (action === "start-intent") throw new WorkflowError("INPUT_PAUSED");
+          return original(action, ...args);
+        };
+      } else
+        f.faults.after = async (action, _body, result) => {
+          if (action === "claim") Object.assign(result as object, { claimDenied: "INPUT_PAUSED" });
+        };
+      await runtime.run({ once: true });
+      const saved = (await f.store.read())!;
+      assert.equal(saved.attempts[0].state, "UNKNOWN");
+      assert.equal(saved.attempts[0].unstartedClosure, undefined);
+      assert.equal(f.adapter.starts, 0);
+    } finally {
+      await f.close();
+    }
+  }
+});

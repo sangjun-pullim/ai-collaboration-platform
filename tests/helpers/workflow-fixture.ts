@@ -1,7 +1,7 @@
 import { randomUUID, timingSafeEqual } from "node:crypto";
-import { open, rename, rm, lstat } from "node:fs/promises";
+import { open, rename, rm, lstat, readFile } from "node:fs/promises";
 import { constants } from "node:fs";
-import { join } from "node:path";
+import { join, resolve } from "node:path";
 import { createServer } from "node:http";
 import type { AddressInfo } from "node:net";
 import { spawn } from "node:child_process";
@@ -283,10 +283,14 @@ export class WorkflowFixture {
     this.actorKinds.set(person.id, "human");
     const body = validateBody(action, {
       protocol: 1,
-      ...(action === "ask" || action === "cancel" ? { expectedUserId: person.id } : {}),
+      ...(action === "ask" || action === "cancel" || action === "input-control"
+        ? { expectedUserId: person.id }
+        : {}),
       ...fields,
     });
-    if (action !== "read")
+    if (action === "input-control")
+      ensure(body.expectedUserId === person.id, "Workflow input actor mismatch");
+    if (!["read", "input-state"].includes(action))
       this.operations.push({
         roomId: String(body.roomId),
         actorId: person.id,
@@ -303,6 +307,34 @@ export class WorkflowFixture {
       await this.save();
     }
     return { status: response.status, headers: response.headers, text, data };
+  }
+  async recordOwnedInputControl(person: FixturePerson, fields: Body) {
+    const body = validateBody("input-control", {
+      protocol: 1,
+      expectedUserId: person.id,
+      ...fields,
+    });
+    ensure(
+      this.stack.users.has(person.id) &&
+        this.rooms.has(String(body.roomId)) &&
+        body.expectedUserId === person.id &&
+        [...this.devices.profiles.values()].some(
+          (profile) =>
+            profile.ownerUserId === person.id &&
+            profile.agentId === body.agentId &&
+            profile.roomId === body.roomId,
+        ),
+      "Exact owned input-control actor and binding required",
+    );
+    this.actorKinds.set(person.id, "human");
+    this.operations.push({
+      roomId: String(body.roomId),
+      actorId: person.id,
+      action: "input-control",
+      operationId: String(body.operationId),
+    });
+    await this.save();
+    return body;
   }
   async device(
     p: DeviceProfile,
@@ -321,7 +353,7 @@ export class WorkflowFixture {
       bindingEpoch: await this.epoch(p),
       ...fields,
     });
-    if (action !== "poll")
+    if (!["poll", "admission", "admission-ack"].includes(action))
       this.operations.push({
         roomId: p.roomId,
         actorId: p.deviceId!,
@@ -512,9 +544,16 @@ export class WorkflowFixture {
         organizationId && this.stack.organizations.has(organizationId),
         "Unowned operation recovery scope",
       );
-      const human = ["speak", "start", "interrupt", "pause", "resume", "ask", "cancel"].includes(
-        op.action,
-      );
+      const human = [
+        "speak",
+        "start",
+        "interrupt",
+        "pause",
+        "resume",
+        "ask",
+        "cancel",
+        "input-control",
+      ].includes(op.action);
       ensure(
         this.actorKinds.get(op.actorId) === (human ? "human" : "device"),
         "Unowned operation recovery actor",
@@ -605,7 +644,7 @@ export async function runWorkflowBrowserParent() {
       if (req.url === "/setup") {
         ensure(
           Object.keys(input).length === 1 &&
-            /^(?:desktop|mobile)-(?:history|control|direct-single|direct-multiple|direct-actor|direct-cookie|direct-history)$/.test(
+            /^(?:desktop|mobile)-(?:history|control|input-pause|direct-single|direct-multiple|direct-actor|direct-cookie|direct-history)$/.test(
               input.scene,
             ) &&
             !scenes.has(input.scene),
@@ -664,6 +703,32 @@ export async function runWorkflowBrowserParent() {
         ensure(Object.keys(input).length === 1 && people.has(input.id), "Unowned broker person");
         const p = people.get(input.id)!;
         data = fixture.stack.entryForBrowser(p);
+      } else if (req.url === "/input-drive") {
+        ensure(
+          Object.keys(input).length === 2 &&
+            /^(?:desktop|mobile)-input-pause$/.test(input.scene) &&
+            scenes.has(input.scene) &&
+            ["ack-pause", "ack-resume"].includes(input.step),
+          "Invalid owned input driver",
+        );
+        const scene = scenes.get(input.scene)!;
+        ensure(!("requester" in scene), "Not an owned paired scene");
+        const seen = steps.get(input.scene)!;
+        ensure(!seen.has(input.step), "Repeated input driver step");
+        const response = await fixture.device(scene.origin, "admission");
+        ensure(response.status === 200, "Input driver state unavailable");
+        const state = response.data.data as { revision: number; paused: boolean };
+        ensure(
+          state.paused === (input.step === "ack-pause"),
+          "Input driver desired state mismatch",
+        );
+        const ack = await fixture.device(scene.origin, "admission-ack", {
+          revision: state.revision,
+          paused: state.paused,
+        });
+        ensure(ack.status === 200, "Input driver ACK failed");
+        seen.add(input.step);
+        data = { applied: true };
       } else if (req.url === "/direct-drive") {
         ensure(
           Object.keys(input).length === 2 &&
@@ -1010,3 +1075,206 @@ if (process.argv.includes("--workflow-e2e-runner"))
     process.stderr.write("Owned workflow browser setup failed; private diagnostics withheld\n");
     process.exitCode = 1;
   });
+
+export type OwnInputUpgradeEvidence = {
+  backendPid: number;
+  paired: WorkflowScene;
+  direct: HumanDirectScene;
+  claimBody: Body;
+  claimReceipt: unknown;
+  terminalBody: Body;
+  terminalReceipt: unknown;
+  pairedHistory: HistoryPage;
+  directHistory: HistoryPage;
+  deviceHash: string;
+  restoreHash: string;
+};
+export async function assertOwnInputUpgradePreconditions(f: WorkflowFixture) {
+  await assertOwnedStack(f.stack.config);
+  const schema = await f.stack.db.query(`select
+    to_regnamespace('own_input_private') is null
+      and to_regprocedure('public.workflow_device_admission(jsonb,text)') is null
+      and to_regprocedure('public.workflow_device_admission_ack(jsonb,text)') is null
+      and to_regprocedure('public.workflow_human_input_control(jsonb)') is null
+      and to_regprocedure('public.workflow_human_input_state(jsonb)') is null
+      and to_regprocedure('workflow_private.restore_011_original(text,jsonb)') is null absent,
+    to_regclass('public.rooms') is not null
+      and to_regprocedure('room_access_private.actor()') is not null
+      and to_regprocedure('device_binding_private.connector(text,jsonb,text)') is not null
+      and (select count(*) from pg_catalog.pg_constraint c join (values
+        ('device_binding_private.workspaces', 'workspaces_device_id_registration_credential_hash_fkey'),
+        ('device_binding_private.agents', 'agents_device_id_registration_credential_hash_fkey'),
+        ('device_binding_private.agents', 'agents_device_id_replacement_credential_hash_fkey')
+      ) receipt(table_name, constraint_name)
+        on c.conrelid=to_regclass(receipt.table_name) and c.conname=receipt.constraint_name
+        where c.contype='f' and c.convalidated and c.condeferrable and c.condeferred
+          and c.confrelid=to_regclass('device_binding_private.credentials'))=3
+      and to_regclass('workflow_private.attempts') is not null
+      and to_regprocedure('workflow_private.device(text,jsonb,text)') is not null
+      and to_regprocedure('workflow_private.restore(text,jsonb)') is not null
+      and to_regprocedure('public.workflow_human_ask(jsonb)') is not null
+      and to_regprocedure('workflow_private.human_actor(text,jsonb)') is not null
+      and to_regprocedure('public.team_entry_status()') is not null
+      and to_regclass('runtime_settings_private.configurations') is not null
+      and to_regprocedure('public.runtime_settings_device(text,jsonb,text)') is not null original`);
+  ensure(
+    schema.rows[0].absent,
+    "SQL011 already exists; refusing reset, downgrade or reapplication",
+  );
+  ensure(schema.rows[0].original, "Upgrade requires the existing owned 001–010 schema");
+}
+/** Capture on an owned 001–010 stack and warm the same backend's original core/restore. */
+export async function captureOwnInputUpgradeEvidence(
+  f: WorkflowFixture,
+): Promise<OwnInputUpgradeEvidence> {
+  await assertOwnInputUpgradePreconditions(f);
+  const backendPid = Number((await f.stack.db.query("select pg_backend_pid() pid")).rows[0].pid);
+  const paired = await f.scene("own-input-upgrade-paired"),
+    admission = await f.start(paired);
+  const claimBody = {
+    protocol: 1,
+    agentId: paired.origin.agentId!,
+    bindingEpoch: await f.epoch(paired.origin),
+    operationId: randomUUID(),
+    requestId: admission.requestId!,
+  };
+  const claim = await f.device(paired.origin, "claim", claimBody);
+  ensure(claim.status === 200, "Upgrade original claim failed");
+  const leased = claim.data.data as AttemptSnapshot;
+  await f.intent(paired.origin, leased);
+  await f.expire("lease", leased.attemptId);
+  await f.poll(paired.origin);
+  const replay = await f.device(paired.origin, "claim", claimBody);
+  ensure(
+    replay.status === 200 && (replay.data.data as AttemptSnapshot).state === "UNKNOWN",
+    "Upgrade original UNKNOWN evidence missing",
+  );
+  const direct = await f.directScene("own-input-upgrade-direct");
+  const asked = await f.ask(direct);
+  ensure(typeof asked.requestId === "string", "Upgrade direct admission missing");
+  const started = await f.intent(
+    direct.responder,
+    await f.claim(direct.responder, asked.requestId),
+  );
+  const terminalBody = {
+    protocol: 1,
+    agentId: direct.responder.agentId!,
+    bindingEpoch: started.bindingEpoch,
+    ...f.identity(started),
+    terminal: "COMPLETED",
+    publicText: "합성 직접 질문 결론",
+  };
+  const terminal = await f.device(direct.responder, "complete", terminalBody);
+  ensure(terminal.status === 200, "Upgrade direct terminal failed");
+  const definitions = await f.stack.db.query(
+    "select md5((select prosrc from pg_proc where oid='workflow_private.device(text,jsonb,text)'::regprocedure)) device_hash,md5((select prosrc from pg_proc where oid='workflow_private.restore(text,jsonb)'::regprocedure)) restore_hash",
+  );
+  const warmClaim = await f.stack.db.query(
+    "select workflow_private.device('claim',$1::jsonb,$2::text) result",
+    [JSON.stringify(claimBody), paired.origin.credential],
+  );
+  const warmRestore = await f.stack.db.query(
+    "select workflow_private.restore('complete',$1::jsonb) result",
+    [JSON.stringify(terminal.data.data)],
+  );
+  ensure(
+    JSON.stringify(warmClaim.rows[0].result) === JSON.stringify(replay.data.data) &&
+      JSON.stringify(warmRestore.rows[0].result) === JSON.stringify(terminal.data.data),
+    "Upgrade warm original behavior differs",
+  );
+  return {
+    backendPid,
+    paired,
+    direct,
+    claimBody,
+    claimReceipt: replay.data.data,
+    terminalBody,
+    terminalReceipt: terminal.data.data,
+    pairedHistory: await f.history(paired),
+    directHistory: await f.history(direct, direct.requester),
+    deviceHash: definitions.rows[0].device_hash,
+    restoreHash: definitions.rows[0].restore_hash,
+  };
+}
+export async function verifyOwnInputUpgradeEvidence(
+  f: WorkflowFixture,
+  evidence: OwnInputUpgradeEvidence,
+) {
+  await assertOwnedStack(f.stack.config);
+  ensure(
+    Number((await f.stack.db.query("select pg_backend_pid() pid")).rows[0].pid) ===
+      evidence.backendPid,
+    "Upgrade verification requires the same warmed backend",
+  );
+  ensure(
+    f.rooms.get(evidence.paired.scope.roomId) === evidence.paired.scope.organizationId &&
+      f.rooms.get(evidence.direct.scope.roomId) === evidence.direct.scope.organizationId,
+    "Exact owned upgrade rooms required",
+  );
+  const schema = await f.stack.db.query(
+    "select to_regprocedure('public.workflow_device_admission(jsonb,text)') is not null installed,md5((select prosrc from pg_proc where oid='workflow_private.device(text,jsonb,text)'::regprocedure)) device_hash,md5((select prosrc from pg_proc where oid='workflow_private.restore_011_original(text,jsonb)'::regprocedure)) restore_hash",
+  );
+  ensure(
+    schema.rows[0].installed &&
+      schema.rows[0].device_hash === evidence.deviceHash &&
+      schema.rows[0].restore_hash === evidence.restoreHash,
+    "Additive upgrade must preserve the exact original core and restore bodies",
+  );
+  const warmClaim = await f.stack.db.query(
+    "select workflow_private.device('claim',$1::jsonb,$2::text) result",
+    [JSON.stringify(evidence.claimBody), evidence.paired.origin.credential],
+  );
+  const warmRestore = await f.stack.db.query(
+    "select workflow_private.restore('complete',$1::jsonb) result",
+    [JSON.stringify(evidence.terminalReceipt)],
+  );
+  const claim = await f.device(evidence.paired.origin, "claim", evidence.claimBody),
+    terminal = await f.device(evidence.direct.responder, "complete", evidence.terminalBody);
+  ensure(
+    claim.status === 200 &&
+      terminal.status === 200 &&
+      JSON.stringify(claim.data.data) === JSON.stringify(evidence.claimReceipt) &&
+      JSON.stringify(warmClaim.rows[0].result) === JSON.stringify(evidence.claimReceipt) &&
+      JSON.stringify(terminal.data.data) === JSON.stringify(evidence.terminalReceipt) &&
+      JSON.stringify(warmRestore.rows[0].result) === JSON.stringify(evidence.terminalReceipt),
+    "Warm core and public receipt replays must preserve UNKNOWN and DIRECT terminal adoption",
+  );
+  for (const [scene, previous, person] of [
+    [evidence.paired, evidence.pairedHistory, evidence.paired.owner],
+    [evidence.direct, evidence.directHistory, evidence.direct.requester],
+  ] as const) {
+    const current = await f.history(scene, person);
+    for (const field of ["events", "runs", "cycle", "roomRevision"] as const)
+      ensure(
+        JSON.stringify(current[field]) === JSON.stringify(previous[field]),
+        "Upgrade must preserve shared history and revision",
+      );
+  }
+  await f.recoverOperations();
+}
+/** Run explicitly on an existing owned 001–010 stack; never bootstrap or reset a stack. */
+export async function runOwnInputUpgradeDriver(f: WorkflowFixture) {
+  const evidence = await captureOwnInputUpgradeEvidence(f);
+  const sql = await readFile(
+    resolve("supabase/migrations/20261006001100-own-ai-input-pause.sql"),
+    "utf8",
+  );
+  await assertOwnInputUpgradePreconditions(f);
+  ensure(
+    Number((await f.stack.db.query("select pg_backend_pid() pid")).rows[0].pid) ===
+      evidence.backendPid,
+    "Additive installation requires the same warmed backend",
+  );
+  try {
+    await f.stack.db.query("begin");
+    await f.stack.db.query("select device_binding_private.guard()");
+    await assertOwnInputUpgradePreconditions(f);
+    // Execute only the exact repository SQL011 inside this connection's installation transaction.
+    await f.stack.db.query(sql);
+    await f.stack.db.query("commit");
+  } catch {
+    await f.stack.db.query("rollback");
+    throw new Error("Owned additive SQL011 installation failed; private diagnostics withheld");
+  }
+  await verifyOwnInputUpgradeEvidence(f, evidence);
+}

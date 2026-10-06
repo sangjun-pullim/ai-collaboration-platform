@@ -1,4 +1,5 @@
 import "server-only";
+import { projectRpcResponse } from "./rpc-response-policy";
 import { retryableAuthFailure } from "../room-access/team-entry-policy";
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { deviceClient } from "../device-binding/device-client";
@@ -6,7 +7,6 @@ import { serverConfig } from "../../lib/supabase/server";
 import {
   WorkflowError,
   errorStatus,
-  projectResponse,
   type Body,
   type HumanAction,
   type DeviceAction,
@@ -28,11 +28,20 @@ export async function humanWorkflow(client: SupabaseClient, action: HumanAction,
   } = await client.auth.getUser();
   if (error || !user)
     throw new WorkflowError(retryableAuthFailure(error) ? "UNAVAILABLE" : "UNAUTHENTICATED");
-  return projectResponse(action, await rpc(client, `workflow_human_${action}`, { p_body: body }));
+  if (
+    action === "input-control" &&
+    (typeof body.expectedUserId !== "string" ||
+      body.expectedUserId.toLowerCase() !== user.id.toLowerCase())
+  )
+    throw new WorkflowError("FORBIDDEN");
+  return projectRpcResponse(
+    action,
+    await rpc(client, `workflow_human_${action.replaceAll("-", "_")}`, { p_body: body }),
+  );
 }
 export async function deviceWorkflow(action: DeviceAction, body: Body, secret: string) {
   const { url, key } = serverConfig();
-  return projectResponse(
+  return projectRpcResponse(
     action,
     await rpc(deviceClient(url, key), `workflow_device_${action.replaceAll("-", "_")}`, {
       p_body: body,

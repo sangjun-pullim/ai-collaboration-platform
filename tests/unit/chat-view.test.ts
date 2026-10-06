@@ -87,6 +87,7 @@ function harness(role: "owner" | "participant" | "observer" = "participant") {
         };
       if (name === "./chat-composer") return { ChatComposer: "composer" };
       if (name === "./chat-timeline") return { ChatTimeline: "timeline" };
+      if (name === "./own-input-controls") return { OwnInputControls: "own-input-controls" };
       if (name === "./advanced-controls") return { AdvancedControls: "advanced" };
       if (name === "../../components/ui/button") return { Button: "button" };
       throw new Error(`Unexpected UI dependency ${name}`);

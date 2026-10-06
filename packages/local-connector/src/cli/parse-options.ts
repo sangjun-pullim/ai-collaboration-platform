@@ -14,6 +14,7 @@ export function parseCliOptions(rest: string[]): Record<string, string> {
     "session-alias",
     "agent-id",
     "confirm-public",
+    "runtime",
     "model",
     "effort",
     "runtime-default",
