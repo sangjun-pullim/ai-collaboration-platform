@@ -1,5 +1,5 @@
 ---
-verified-against: 128c45f103776f5275d362e5859f1e991edbb58f
+verified-against: 3e84d8cd2f3754a33154083a23869ca0f5c8cfe8
 sources:
   - src/app/**
   - src/features/**
@@ -9,7 +9,7 @@ sources:
 ---
 # 프런트엔드 구조
 
-2026-10-05의 Git 기준 소스와 작업트리를 확인했다. 웹은 Next.js 16.3.7 App Router·React 19.3.0·TypeScript와 Tailwind 4.3.3·shadcn/ui 구성 요소를 사용한다. 모의 체험과 실제 사람 인증·방 접근·기기 관리·공동 기록 polling 화면이 있다. 진행 상태·검증 수치·남은 통합은 [개발 순서와 검증 계획](planning/delivery-and-validation.md#현재-진행-상태)에 유지한다.
+검증 기준 커밋의 화면 소스를 설명한다. 웹은 Next.js 16.3.7 App Router·React 19.3.0·TypeScript와 Tailwind 4.3.3·shadcn/ui 구성 요소를 사용한다. 모의 체험과 실제 사람 인증·방 접근·기기 관리·공동 기록 polling 화면이 있다. 진행 상태·검증 수치·남은 통합은 [개발 순서와 검증 계획](planning/delivery-and-validation.md#현재-진행-상태)에 유지한다.
 
 ## 화면과 모듈 경계
 
@@ -43,17 +43,21 @@ flowchart TD
 
 실제 방은 [InvestigationView](../src/features/investigation-coordinator/investigation-view.tsx)의 공개 이력을 함께 렌더링한다. [history-state](../src/features/investigation-coordinator/history-state.ts)는 eventId 중복 제거·sequence gap 복구와 typed 과거 run 재생을 담당한다. 방 전환·권한 거절 시 이력을 초기화하고 늦게 도착한 snapshot이 최신 상태를 되돌리지 않도록 처리한다. 이 상태는 prototype reducer와 분리한다.
 
-조사 화면의 내부 책임은 다음 모듈로 나눈다. 조회·요청 전송·저장/삭제·대상 선택과 React 상태의 소유자는 화면 하나로 유지한다.
+채팅 화면의 내부 책임은 다음 모듈로 나눈다. 공동 이력·직접 질문·대상 선택 상태는 InvestigationView가 소유하고, 본인 AI의 새 답변 상태와 제어 intent는 별도 OwnInputControls가 소유한다. 표시용 컴포넌트는 이 상태나 조회를 복제하지 않는다.
 
 | 모듈 | 책임 |
 |---|---|
 | [investigation-view.tsx](../src/features/investigation-coordinator/investigation-view.tsx) | 화면 수명, 조회와 mutation 취소, 미확정 요청 저장/삭제, 이력과 대상 선택 |
 | [investigation-client.ts](../src/features/investigation-coordinator/investigation-client.ts) | `callInvestigation` 함수 하나로 요청 검증·fetch·응답 읽기·오류 전달 |
 | [direct-intents.ts](../src/features/investigation-coordinator/direct-intents.ts) | 사용자·방 저장 키, 복원 검증, 새 요청과 동일 재시도 본문 생성 |
-| [chat-presentation.ts](../src/features/investigation-coordinator/chat-presentation.ts) | 연결 상태와 저장된 질문 대상의 현재 metadata 대조 |
-| [chat-timeline.tsx](../src/features/investigation-coordinator/chat-timeline.tsx) | 메시지·질문/답변 연결·당시 저장소 미확인·이전 이력 스크롤과 새 메시지 표시 |
+| [chat-presentation.ts](../src/features/investigation-coordinator/chat-presentation.ts) | 연결 상태와 질문 대상 표시. 공동 AI 질문의 발신 요청을 수신 대상으로 해석하지 않는다 |
+| [chat-timeline.tsx](../src/features/investigation-coordinator/chat-timeline.tsx) | 메시지·질문/답변 연결·자료 상세 진입·이전 이력 스크롤과 새 메시지 표시 |
+| [run-source-view.tsx](../src/features/investigation-coordinator/run-source-view.tsx) | 메시지별 저장소·자료 열기와 당시 대상·Git 관찰·파일 범위 표시 |
+| [source-view-controller.ts](../src/features/investigation-coordinator/source-view-controller.ts) | 고정 event 조회·다음 페이지·응답 일치 검사·요청 취소·접근 거절 전달 |
 | [chat-composer.tsx](../src/features/investigation-coordinator/chat-composer.tsx) | 질문 대상·입력·공개 안내·전송·한글 조합·포커스 표시 |
 | [advanced-controls.tsx](../src/features/investigation-coordinator/advanced-controls.tsx) | 명시적으로 펼친 공동 조사와 중단·재개 제어 |
+| [own-input-controls.tsx](../src/features/investigation-coordinator/own-input-controls.tsx) | 본인 AI의 새 답변 상태 조회·일시정지/재개·미확정 제어 intent 수명 |
+| [own-input-control-state.ts](../src/features/investigation-coordinator/own-input-control-state.ts) | 사용자·방별 intent 검증, 같은 요청의 receipt 확인, revision/epoch 상태 채택 |
 
 [ChatShell](../src/features/room-access/chat-shell.tsx)은 채팅방 탐색·모바일 Sheet·참가자 정보 배치만 맡는다. HTTP·저장·polling과 권한 상태를 복제하지 않는다. shadcn/ui의 기본 요소는 `src/components/ui/`에 둔다.
 
@@ -63,9 +67,19 @@ flowchart TD
 
 직접 질문 폼은 질문자의 AI 연결 없이 표시한다. 준비된 상대 연결이 하나면 기본 선택하고 여러 연결이면 명시적으로 선택한다. 선택 목록에는 저장소·세션·소유자 별칭과 runtime을 표시한다. 대상 epoch 교체나 offline 상태를 확인하면 재선택을 요구한다. 입력창의 명시적 전송으로 질문·공개 공유를 제출하고 같은 질문의 답변과 실제 종결 상태를 조회한다. 질문과 답변은 방 참가자에게 공유된다는 안내를 표시한다. 별도의 매 질문 checkbox는 없다. Enter는 전송, Shift+Enter는 줄바꿈이며 한글 조합 중 Enter는 전송하지 않는다. 성공 전송 후 입력이 다시 활성화된 시점에 포커스를 돌리고 polling으로 초안·선택 범위를 지우지 않는다.
 
-공동 조사의 내 AI·상대 AI 선택 목록도 개발자·runtime·공개 저장소 별칭·세션 별칭을 함께 표시한다. 선택 항목의 값은 기존 agent ID이며 같은 참가자의 다른 저장소를 표시할 때도 등록된 공개 정보를 사용한다. 모델·effort의 웹 선택과 적용 상태는 후속 설정 범위다.
+공동 조사의 내 AI·상대 AI 선택 목록도 개발자·runtime·공개 저장소 별칭·세션 별칭을 함께 표시한다. 선택 항목의 값은 기존 agent ID이며 같은 참가자의 다른 저장소를 표시할 때도 등록된 공개 정보를 사용한다. 모델·effort의 웹 선택과 적용 상태는 기기 관리의 별도 설정 폼이 담당한다. 질문 대상 선택은 저장된 agent ID와 epoch를 사용하며 설정 초안으로 대상을 바꾸지 않는다.
 
 응답이 유실된 직접 질문은 sessionStorage에 같은 operation·본문을 보관하고 사용자가 `같은 요청 확인`을 실행하면 그대로 재전달한다. 서버에서 인증한 사용자 ID와 방 ID를 저장 키에 포함하고 복원한 본문의 `expectedUserId`도 대조한다. 예전 방 ID만 있는 항목은 제거하며 새 계정에서 채택하지 않는다. 쿠키만 다른 계정으로 바뀐 이전 화면의 요청도 서버의 실제 Auth 대조에서 거절한다. 화면 종료나 늦은 응답이 다른 사용자의 미확정 기록을 지우지 않도록 처리한다. 새 질문으로 자동 재시도하지 않는다. 직접 질문의 중단 요청은 `canInterrupt`가 허용한 실행 하나만 대상으로 하며 ACK와 typed 종결을 구분한다. 실제 브라우저 검증 범위는 [진행 상태](planning/delivery-and-validation.md#현재-진행-상태)를 따른다.
+
+## 메시지의 당시 저장소와 자료
+
+각 메시지의 ‘저장소·자료’를 열면 해당 `roomId/eventId`의 자료를 처음 조회한다. 다음 파일 관찰도 같은 event·대상·자료 hash·요약에 묶인다. 새 결과 채택 이벤트는 새 event ID로 조회하고 run 요약 밖의 오래된 메시지도 읽을 수 있다. 전체 메시지의 자료를 polling마다 조회하지 않는다.
+
+SourceViewController는 실제 사람 RPC를 주입받으며 첫 조회·다음 페이지·닫기·화면 종료를 소유한다. 화면이 다시 렌더링되어도 controller와 열린 자료의 조회를 다시 만들지 않는다. 닫기·방 전환·종료 때 진행 중 요청을 취소하고 늦은 응답을 무시한다. 다음 페이지의 대상·hash·요약·index가 원래 자료와 다르면 채택하지 않는다. 접근 거절 `FORBIDDEN/UNAUTHENTICATED/NOT_FOUND`는 부모에 전달해 현재 조회·mutation을 중단하고 이력을 비우며 입력을 막는다. 일시적인 오류에는 자료 재조회만 제공한다.
+
+자료 상세는 예약 당시 사람·AI·저장소·세션 별칭과 현재 같은 연결의 정보를 구분한다. 당시 대상이나 자료가 없으면 그 상태를 표시하고 현재 정보를 대신 넣지 않는다. 입력 전 허용 파일·실제 도구 반환 발췌·질문 전 근거 확인을 구분하며 반복 파일의 다른 범위를 유지한다. 도구의 실제 반환 바이트와 질문 전에 확인한 바이트, 별도로 요청한 줄도 구분한다. Git 관찰 실패와 dirty는 미확인이다. 경로·ref의 제어문자와 짝이 없는 surrogate는 escape로 표시하고 개인 오류·절대 경로·native ID·파일 본문을 화면에 넣지 않는다. 실제 DB·브라우저 수용 여부는 [검증 정본](planning/delivery-and-validation.md#현재-진행-상태)을 따른다.
+
+## 모의 개인 입력과 방향 수정
 
 아래 `shared`·`draft`·`privateHistory`와 개인 설명·방향 수정은 `/demo`의 모의 체험 규칙이다. 실제 개인 설명의 제품 연결은 후속 범위다.
 
@@ -74,6 +88,24 @@ flowchart TD
 Composer의 미제출 초안은 컴포넌트 로컬 상태에서 `speak`·`explain`·`steer`별로 보관한다. 개인 설명/방향 수정 전환은 각 초안을 유지하고 제출은 해당 초안만 비운다. 개인 원문을 공개 입력으로 자동 복사하지 않는다. 개인 설명의 공개 전환은 명시적인 별도 action이다.
 
 자기 AI 정지는 A만 대상으로 하며 전체 pause는 A/B의 실제 모의 terminal을 모두 기다린다. requested·acknowledged·unknown·terminal을 구분하고 ACK를 완료로 표시하지 않는다. 예제 observer는 UI와 reducer에서 쓰기를 거절하지만 실제 인증·접근 제어 검증을 대신하지 않는다.
+
+## 내 AI의 새 답변 제어 상태
+
+실제 채팅방의 OwnInputControls는 본인 binding만 표시하고 질문자에게 AI 연결을 요구하지 않는다. 연결 프로그램의 현재 revision/epoch 보고가 없으면 “요청됨 · 연결 프로그램 대기”, 확인되면 “일시정지 적용 보고” 또는 “재개 적용 보고”로 표시한다. 조회 실패는 “상태 확인 불가”이며 “이미 실행 준비를 시작한 답변은 계속됩니다”를 함께 표시한다.
+
+각 버튼의 접근 가능한 이름에 공개 저장소 별칭·세션 별칭과 동작을 함께 넣는다. 해당 AI의 적용 상태를 버튼 설명과 연결하므로 본인 AI가 두 개여도 어떤 저장소의 답변을 제어하는지 구분할 수 있다.
+
+제어 intent는 현재 userId/roomId별 sessionStorage에 전송 전에 저장한다. 응답 유실 뒤 사용자는 같은 operation/body를 확인하며 읽기 projection만으로 pending을 지우거나 새 요청을 자동 생성하지 않는다. 오래된 epoch/revision의 receipt는 최신 상태를 덮어쓰지 않는다. 조회는 방별로 묶고 pending·적용 보고 대기, idle·hidden과 실패 backoff를 구분한다. 화면에 보이지 않는 추가 본인 상태는 유효한 서버 응답으로 인정하고 현재 표시 binding만 채택한다. 실제 브라우저 검증은 [검증 정본](planning/delivery-and-validation.md#현재-진행-상태)을 따른다.
+
+## 소유자 설정의 화면 상태
+
+`/app/connections`의 [RuntimeSettingsForm](../src/features/runtime-settings/runtime-settings-form.tsx)은 자기 기기마다 공급자·Mac 폴더 선택 요청·모델·effort·공개 세션 별칭·적용·취소를 제공한다. 브라우저는 실제 경로를 입력받지 않으며 폴더와 공유 파일 범위는 해당 Mac의 관리 프로그램에서 확인한다. 확인된 동일 capability snapshot만 선택 목록으로 사용하고 effort가 없는 모델의 `null`을 유지한다.
+
+[SettingsController](../src/features/runtime-settings/settings-controller.ts)가 조회·mutation·선택 초안·같은 operation 추적을 소유한다. 동시 조회를 제한하고 화면 종료 시 조회와 mutation을 중단하며 늦은 응답을 채택하지 않는다. 결과가 미확정이면 같은 요청을 조회하고 자동 재적용하지 않는다. 서버 확정 대기와 PC 적용 완료, 취소 요청과 PC 정리 완료를 별도로 표시한다. 적용 receipt의 configRevision·agent/workspace·bindingEpoch가 현재 연결과 일치할 때만 현재 적용값으로 보여 준다. 등록·heartbeat·웹 요청 성공을 AI 준비 완료로 표시하지 않는다. [설정 계약](API-SPEC.md#소유자의-로컬-ai-설정)·[검증 정본](planning/delivery-and-validation.md#현재-진행-상태)을 따른다.
+
+폴더 선택 안내는 필요한 코드의 자동 탐색과 파일 수정 제한을 설명한다. 실제 승인된 본인 receipt가 자동 모드를 포함할 때만 ‘필요한 코드 자동 탐색’을 표시한다. 과거 선택 파일 receipt에는 자동 탐색 표시를 붙이지 않는다. apply는 본인 receipt의 동일 모드를 전달하며, 화면의 임의 경로·모드 입력으로 PC의 범위를 넓히지 않는다.
+
+설정 폴더 요청이 서버에서 확정 거절되면 해당 요청의 화면 예약을 해제하고 최신 설정 버전을 다시 조회한다. 응답 유실 등 결과가 불명확한 오류에서는 동일 요청 ID를 유지해 다른 요청을 중복으로 만들지 않는다. 취소의 PC 정리 완료는 해당 요청의 취소 receipt를 정확 조회한 뒤 표시한다.
 
 ## 표시와 접근성
 
@@ -87,4 +119,4 @@ Composer의 미제출 초안은 컴포넌트 로컬 상태에서 `speak`·`expla
 
 실제 연동에서는 mock reducer를 서버 정본으로 승격하지 않는다. 모의·Auth·기기 browser는 각각 `playwright.config.ts`, `playwright.auth.config.ts`, `playwright.device.config.ts`로 분리한다. 기기 browser의 parent broker는 자기 합성 pairing·등록·heartbeat만 지원하고 제품/브라우저 child에 admin·DB·JWK를 전달하지 않는다. 민감 artifact 정제와 trace/screenshot/video 비활성 정책을 재사용한다. 각 단계의 진행 상태와 재검사 결과는 개발 순서 문서에서 관리한다.
 
-workflow browser는 `playwright.workflow.config.ts`로 분리하며 parent broker가 자기 fixture의 고정 fake-driver 동작만 제공한다. 실제 runtime 제어와 참가자별 모델/effort·Realtime·개인 설명은 [개발 순서](planning/delivery-and-validation.md#단계별-명세-범위)의 후속 범위다. 현재 등록은 `codex/unverified`이며 모델 선택 기능은 아직 없다. 현재 mock 역할과 상태는 실제 권한 검증의 증거가 아니다.
+workflow browser는 `playwright.workflow.config.ts`로 분리하며 parent broker가 자기 fixture의 고정 fake-driver 동작만 제공한다. 소유자 설정 browser는 `playwright.settings.config.ts`로 분리한다. 설정 화면과 검사 소스가 있다는 사실은 실제 Auth/DB·Mac·provider 동작 검증 완료를 뜻하지 않는다. 실제 runtime 수용·Realtime·개인 설명과 브라우저 실행 근거는 [개발 순서](planning/delivery-and-validation.md#현재-진행-상태)를 따른다. 현재 mock 역할과 상태는 실제 권한 검증의 증거가 아니다.

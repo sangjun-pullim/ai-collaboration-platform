@@ -65,6 +65,18 @@ Supabase의 신규 로컬 개발 흐름은 CLI·container runtime으로 시작�
 
 질문만 하는 참가자는 브라우저만 사용한다. 로컬 AI를 제공하는 참가자는 자기 Mac에 로컬 연결 프로그램과 지원하는 공식 AI CLI·로그인을 준비한다. 현재 제품 실행기는 Codex를 지원한다. Claude와 웹 폴더·모델·effort의 실제 적용은 [현재 진행 상태](../planning/delivery-and-validation.md#현재-진행-상태)에 있는 후속 구현·검증 항목이며 선택 화면만으로 완료를 표시하지 않는다.
 
+## 자료 이력 기능의 설치 순서
+
+아래 절차는 새 소스의 설정·자료 이력 기능을 준비하는 순서다. 앞의 001–009는 입장·방·직접 질문의 기본 준비 범위다. 자료 이력의 실제 SQL·HTTP·브라우저 수용 결과는 [진행 정본](../planning/delivery-and-validation.md#현재-진행-상태)에서 별도로 확인한다.
+
+공유 DB·운영 Auth에 적용하면 다른 사용자의 접근 정책과 실행 계약이 바뀐다. 운영자는 대상과 변경을 확인한 뒤 적용한다.
+
+1. 운영자는 해당 DB에 미적용 [소유자 설정](../../supabase/migrations/20261005001000-owner-local-ai-setup.sql)·[새 답변 제어](../../supabase/migrations/20261006001100-own-ai-input-pause.sql)·[자동 탐색 승인](../../supabase/migrations/20261006001200-owner-approved-repository-access.sql)·[자료 이력](../../supabase/migrations/20261006001300-shared-input-source-history.sql)을 010–013 순서로 적용한다. 기존 파일을 재적용하거나 DB를 reset하지 않는다.
+2. 운영자는 같은 DB의 PostgREST schema cache를 갱신한다. 고정 자료 RPC를 사용하는 중앙 API가 준비된다.
+3. AI를 제공하는 개발자는 중앙 API·DB 준비 뒤 자기 Mac의 연결 프로그램을 갱신한다. 연결 프로그램은 현재 연결의 자료 버전 지원을 확인한 뒤 새 입력을 허용한다.
+
+자료 전송 실패는 원래 실행 기록으로 복구한다. 새 AI 입력으로 자동 재시도하지 않는다. 새 자료 기능의 설치는 Claude 실행 정책·두 PC 왕복 검증의 통과를 대신하지 않는다.
+
 ## 현재 로컬 기기와 저장소 등록
 
 현재 CLI는 macOS·Node 24를 지원한다. 루트에서 아래처럼 준비한다.
@@ -75,9 +87,9 @@ npm --prefix packages/local-connector run build
 node packages/local-connector/dist/src/cli.js pair --server https://your-service.example --profile my-device --device-alias '내 개발 PC'
 ```
 
-출력한 일회용 코드를 `/app/connections`에서 자기 계정·조사방·공개 범위를 확인하고 승인한다. 같은 server/profile로 `status`를 실행해 승인된 소유자와 방을 확인한 뒤 `exchange --confirm-scope <room-uuid>`를 실행한다. 개발용 HTTP는 canonical loopback만 허용한다. proof·credential을 웹에 입력하지 않는다.
+출력한 일회용 코드를 `/app/connections`에서 자기 계정·AI 채팅방·공개 범위를 확인하고 승인한다. 같은 server/profile로 `status`를 실행해 승인된 소유자와 방을 확인한 뒤 `exchange --confirm-scope <room-uuid>`를 실행한다. 개발용 HTTP는 canonical loopback만 허용한다. proof·credential을 웹에 입력하지 않는다.
 
-`register`는 같은 server/profile에 `--root`, `--native-session`, `--repository-alias`, `--session-alias`, `--confirm-public yes`를 받는다. 실제 경로와 native 식별자는 로컬에 저장하고 공개 별칭·Git branch/commit만 전송한다. Git 변경 여부는 현재 `unknown`이며 등록의 native 식별자를 실제 실행 소유권으로 인정하지 않아 `codex/registered/unverified`로 표시한다. Codex 모델·effort는 별도의 로컬 실행 준비에서 선택하며 웹 선택 화면과 Claude는 후속 범위다.
+기존 `register`는 같은 server/profile에 `--root`, `--native-session`, `--repository-alias`, `--session-alias`, `--confirm-public yes`를 받는다. 실제 경로와 native 식별자는 로컬에 저장하고 공개 별칭·Git branch/commit만 전송한다. Git 변경 여부는 현재 `unknown`이며 등록의 native 식별자를 실제 실행 소유권으로 인정하지 않아 `codex/registered/unverified`로 표시한다. 기존 Codex 모델·effort는 별도의 로컬 실행 준비에서 선택한다. 웹의 공급자·모델·effort 설정은 아래 [내 Mac의 AI 설정](#웹에서-내-mac의-ai-설정)을 따른다. Claude의 실제 실행 허용과 수용 상태는 [진행 정본](../planning/delivery-and-validation.md#현재-진행-상태)에서 확인한다.
 
 private profile은 기본적으로 사용자의 `Library/Application Support/ai-collab/connector` 또는 명시한 state-dir에 둔다. 디렉터리 0700·파일 0600, 소유권·symlink·process lock과 atomic journal을 검사한다. broad root와 개인 인증/설정 경로 및 외부로 연결된 해당 symlink target은 등록할 수 없다.
 
@@ -96,6 +108,39 @@ private profile은 기본적으로 사용자의 `Library/Application Support/ai-
 `runtime-run --agent-id <agent-uuid>`은 해당 binding의 요청을 처리하며 SIGINT/SIGTERM으로 종료한다. `--once yes`는 현재 대기 요청 한 건 또는 준비 보고만 처리한다. `runtime-status`는 로컬 요청값·보고값·종결/채택 상태를 보여준다. Codex의 turn effort는 현재 프로토콜이 보고하지 않아 `UNVERIFIED`로 남긴다. UNKNOWN에서는 새 호출·맥락 교체·로컬 증거 삭제를 차단하고, `runtime-observe`로 같은 소유 turn의 저장된 종결 증거를 확인한다. 중단 ACK만으로 종결 처리하지 않는다.
 
 공급자 인증·절대 경로·native 식별자·private 결과는 PC에 둔다. 선택 파일의 변경이나 scope/lease 상실은 새 도구·입력을 차단한다. 위 명령 지원은 Claude·웹 설정·다른 PC의 계정·클라우드 배포까지 검증했다는 뜻이 아니다.
+
+## 웹에서 내 Mac의 AI 설정
+
+022의 설정 화면과 `manage` 명령은 소스 구현 중이다. SQL010의 실제 설치와 HTTP·브라우저 검증은 아직 남아 있다. 현재 제공 가능한 범위와 검증 결과는 [진행 정본](../planning/delivery-and-validation.md#현재-진행-상태)에서 확인한다.
+
+1. 자기 Mac에서 Node.js 24로 기존 pairing·웹 승인·`exchange`를 완료한다. 웹과 PC에 같은 사람·방의 기기가 연결되어야 한다.
+2. 자기 Mac에서 `node packages/local-connector/dist/src/cli.js manage --profile my-device`를 실행한다. 기존 프로필에 저장한 웹 주소로 설정 요청을 확인한다.
+3. 웹의 ‘내 AI 연결’에서 참가 방과 본인 기기를 선택한다. 다른 사람의 기기는 편집할 수 없다.
+4. 웹에서 Claude 또는 Codex를 고르고 ‘Mac에서 폴더 선택’을 누른다. 해당 Mac에서 폴더와 공유 별칭을 선택하고 필요한 코드의 자동 탐색 범위를 승인한다. 파일을 미리 고를 필요는 없다.
+5. PC가 보낸 모델 목록에서 모델과 지원되는 추론 강도를 선택한다. 추론 강도가 없는 Claude 모델은 별도 값을 만들지 않는다.
+6. 웹에서 적용을 요청한다. 기존 질문이 진행 중이면 완료를 기다리고, PC의 확정과 실행 준비 보고를 각각 확인한다.
+
+AI를 제공하는 Mac에는 선택한 공식 CLI와 기존 로그인이 필요하다. 질문만 하는 참가자는 로컬 경로·AI 연결을 생략하고 준비된 상대 AI에 질문한다. 동료들이 각자 Supabase Docker를 실행할 필요는 없다. Supabase 컨테이너는 이 프로젝트의 로컬 서버 개발·검증에 사용한다.
+
+개인 설정 파일을 바꾸거나 로그인 토큰을 웹으로 복사하지 않는다. 경로는 PC에 보관하고 웹에는 공유 별칭과 참조 ID를 전달한다. 취소 요청 후에는 PC의 정리 확인까지 기다린다. 결과가 미확정이면 같은 요청을 복구하며 새 AI 입력으로 자동 재시도하지 않는다.
+
+자동 탐색 승인은 해당 폴더와 새 연결 설정에만 적용한다. 비밀·인증·에이전트 설정 자료, 폴더 밖 접근과 파일 수정은 제한한다. 옛 선택 파일 연결은 새 폴더 확인 없이 자동 탐색으로 바뀌지 않는다. 당시 승인·설정·완료 이력은 보존하며 새 설정으로 과거 읽기 권한을 넓히지 않는다.
+
+현재 기본 Claude 실행은 검증된 policy가 없어 차단된다. 실제 연결 확인은009의 별도 native 검증과 제품 수용 절차를 통과해야 한다. 합성 검사에 사용하는 policy·transport 주입은 CLI 옵션이나 웹 입력으로 제공하지 않는다.
+
+`revoke-local`은 설정·실행·세션 잠금과 소유 기록을 확인한 뒤 로컬 인증을 제거한다. 022로 설정한 프로필의 이전 대화·설정 기록은 보존한다. 보존한 프로필을 다른 사람이나 새 기기 인증으로 덮어쓰지 않으며, 다시 연결할 때는 새 프로필 이름을 사용한다.
+
+## 내 AI의 새 답변 일시정지
+
+실제 채팅 경로에 본인 제어 소스를 추가하고 있다. 실제 DB·HTTP·브라우저 검증과 현재 제공 여부는 [진행 정본](../planning/delivery-and-validation.md#현재-진행-상태)을 따른다.
+
+1. 자기 AI가 연결된 참가자는 AI 채팅방에서 해당 AI 별칭을 확인한다. 질문만 하는 참가자는 자기 AI를 연결하지 않아도 된다.
+2. 새 답변을 받지 않으려면 ‘내 AI 새 답변 일시정지’를 선택한다. 서버 요청을 저장하며 이미 실행 준비를 시작한 답변은 계속된다.
+3. 연결 프로그램의 적용 보고를 확인한다. ‘요청됨 · 연결 프로그램 대기’는 PC 적용 완료를 뜻하지 않는다.
+4. 응답이 미확정이면 ‘같은 요청 확인’을 선택한다. 원래 요청을 확인하며 새 제어 요청을 자동으로 만들지 않는다.
+5. 새 답변을 다시 받으려면 ‘내 AI 새 답변 재개’를 선택한다. 방 전체가 정지된 경우 방은 계속 정지되어 있다.
+
+진행 중인 답변을 멈추려면 해당 실행의 중단 제어를 사용한다. 새 답변 제어의 적용 보고와 실제 실행 종결은 별도로 확인한다.
 
 ## 최초 접속 흐름
 
@@ -140,7 +185,7 @@ effort        선택한 지원 값 · 실제 적용 확인됨
 
 | 상태 | 화면에 설명할 내용 | 다음 행동 |
 |---|---|---|
-| 로그인/초대 필요 | 이 조사방에 접근할 계정이 필요함 | 로그인·초대 요청 |
+| 로그인/초대 필요 | 이 AI 채팅방에 접근할 계정이 필요함 | 로그인·초대 요청 |
 | 내 connector 없음 | 방 권한으로 관찰·상대 AI 질문 가능; 자기 AI 실행에는 연결 필요 | 상대 대상 선택 또는 선택 사항인 내 AI 연결 |
 | 기기 offline | PC/연결 프로그램의 마지막 확인 시각 | 실행·연결 확인; 대기 상태 유지 |
 | 저장소 미등록 | 이 AI가 조사할 저장소가 아직 선택되지 않음 | 로컬 폴더 등록 |
@@ -157,9 +202,10 @@ effort        선택한 지원 값 · 실제 적용 확인됨
 
 에러 문구는 원인과 복구 행동을 연결한다. raw 오류·토큰·절대 경로를 상대방의 화면에 표시하지 않는다. 실행 중인 기존 앱을 자동으로 종료하거나 승인 범위를 확대해 연결 문제를 해결하지 않는다.
 
-## 조사방에서 확인할 값
+<a id="조사방에서-확인할-값"></a>
+## AI 채팅방에서 확인할 값
 
-참가자 카드와 질문 작성란은 `사람 · AI · 프로젝트 표시명 · 작업 영역 별칭`으로 대상을 표시한다. 예: `민수 · Claude · 주문 관리자 · 백엔드`. 같은 레포의 서로 다른 연결도 별칭으로 구분하며 표시명만으로 라우팅하지 않는다. 상대 경로는 소유자가 공유를 확인한 경우만 추가하고 절대 경로·Git remote URL·개인 session 제목을 자동 공개하지 않는다. 메시지는 질문 당시의 공개 대상 정보와 binding/epoch 관계를 남겨 연결 교체 후에도 대상을 식별해야 한다. 이 표시는 후속 웹 설정·이력 구현 요구사항이다.
+참가자 카드와 질문 작성란은 `사람 · AI · 프로젝트 표시명 · 작업 영역 별칭`으로 대상을 표시한다. 예: `민수 · Claude · 주문 관리자 · 백엔드`. 같은 레포의 서로 다른 연결도 별칭으로 구분하며 표시명만으로 라우팅하지 않는다. 상대 경로는 소유자가 공유를 확인한 경우만 추가하고 절대 경로·Git remote URL·개인 session 제목을 자동 공개하지 않는다. 현재 질문 대상의 표시와 과거 메시지의 예약 당시 대상은 구분한다. 채팅 자료 기록은 당시 별칭·연결 버전과 저장한 파일 관찰을 사용하며 현재 설정으로 과거 정보를 채우지 않는다. 입력 전 허용 파일·도구 반환 발췌·질문 전 근거 확인을 실제 인용이나 검증 통과로 표시하지 않는다. 화면 연결과 실제 수용 상태는 [진행 정본](../planning/delivery-and-validation.md#현재-진행-상태)을 따른다.
 
 - 문제·기대 동작·대상 환경, 필요한 요청/상품/명령 ID.
 - 상대 AI의 저장소 별칭, branch/worktree, session 별칭, 연결 수준, 준비 상태. 내 AI 정보는 연결한 경우에만 표시.
@@ -174,7 +220,7 @@ effort        선택한 지원 값 · 실제 적용 확인됨
 
 사용자가 선택해야 하는 값: 실제 조사 폴더·session, 계정/과금 경로, 공개 범위, 조사 목표, 기존 기록과 다른 새 세션 사용 여부. 도구·branch를 자동 감지해도 실행 대상은 선택한 binding으로 고정한다.
 
-초기 권고: 현재 팀 OS 우선 지원, 공식 공급자 인증, 읽기/제안 범위, 명시적 초대, 한 조사방의 단방향 질문부터 검증한 뒤 두 AI 공동 조사로 확장. 확정하지 않은 값은 완료처럼 표시하지 않는다.
+초기 권고: 현재 팀 OS 우선 지원, 공식 공급자 인증, 읽기/제안 범위, 명시적 초대, 한 AI 채팅방의 단방향 질문부터 검증한 뒤 두 AI 공동 조사로 확장. 확정하지 않은 값은 완료처럼 표시하지 않는다.
 
 웹 URL은 중앙 서비스의 배포 주소다. 일반 사용자에게 Supabase·DB endpoint·관리자 key·저장소 원격 URL을 입력하게 하지 않는다. connector는 pairing으로 서비스 주소와 자기 scope를 전달받고 등록된 설정을 보관한다.
 
