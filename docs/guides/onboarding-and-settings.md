@@ -58,6 +58,12 @@ node scripts/dev-local-web.mjs
 
 운영자는 이전에 직접 실행한 웹 서버가 있으면 그 터미널에서 `Ctrl+C`로 종료한 뒤 새 명령을 실행한다. 새 명령은 다른 프로세스를 종료하지 않는다. `STARTING`은 설정 점검 완료와 실행 시작이며 실제 HTTP 준비 완료와 다르다. Next.js의 `Ready` 뒤 `http://127.0.0.1:4318/app/connections`를 연다. `BLOCKED`면 공개 진단 코드만 보존하고 원인을 확인한다. `LOCAL_STATUS_UNAVAILABLE`은 현재 로컬 CLI나 Docker 조회가 불가능한 상태다. 이 명령은 DB를 변경하거나 AI를 실행하지 않는다.
 
+CLI 상태 조회에 실패하면 아래 읽기 전용 점검으로 `diagnostic.tool`, 고정 분류인 `diagnostic.reason`, 숫자 종료 코드인 `diagnostic.exitCode`를 확인한다. CLI 출력 원문·키·개인 경로는 표시하지 않는다. 설치·캐시, 명령 인수, 설정, Docker, CLI 자체 상태의 실패를 구분하며 알 수 없는 실패는 `CLI_FAILED`로 보존한다. `CHECKED`는 설정 확인이고 실제 웹 접속 성공과 다르다. 이 점검은 Next 서버를 시작하지 않는다.
+
+```sh
+node scripts/dev-local-web.mjs --check
+```
+
 주소·공개 키가 없거나 관리자 키가 잘못 설정돼 있으면 웹은 ‘서비스를 준비 중입니다’라는503을 반환한다. 시간 경과로 해결되지 않는 실행 설정 오류이며 설정을 갖춰 서버를 다시 실행해야 한다. DB·웹·Claude의 실제 검증 상태는 [진행 정본](../planning/delivery-and-validation.md#현재-진행-상태)을 따른다.
 
 아래는 새로 만든 격리 로컬 Supabase의 준비 절차다. 공유 DB·운영 Auth에서는 운영자가 대상과 변경을 확인한 후 실행한다. 잘못된 DB에 적용하면 다른 사용자의 접근 정책과 인증 설정이 바뀐다.

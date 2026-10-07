@@ -151,6 +151,8 @@ Additional execution: compile `tsconfig.integration.json`, then explicitly run `
 
 ## Review Notes
 
+웹 실행 준비의 실패 보정 범위: CLI 조회 실패를 `LOCAL_STATUS_UNAVAILABLE`로만 합쳐 원인이 사라지는 문제를 고정 진단 분류와 숫자 종료 코드로 보완한다. 원문 오류·키·개인 경로는 출력하지 않는다. `--check`는 같은 읽기 전용 준비 검사를 수행하고 Next를 시작하지 않는다. 실제 차단 해소는 사용자 Mac의 진단 결과로 확인하며 기존 사전 검사·공개 키 검증·권한·DB·대기 연결은 변경하지 않는다.
+
 Round 1: C0/H4/M2/L0/INFO1. All six corrections ACCEPTED; native-input authorization INFO preserved. Round 2: C0/H1/M1/L0/INFO1. Both corrections ACCEPTED; native-input authorization INFO preserved. Round 3: PASS, C0/H0/M0/L0/INFO1. The final nonretired AI_PAIR resumption versus proof-closed terminal DIRECT distinction was confirmed against actual SQL. Native authorization INFO is retained. 기존 전체 목표 승인에 따라 구현 중이다. 실제 native/DB 검증은 별도 실행 조건을 유지한다.
 
 | Finding | Severity | Disposition | Rationale |
