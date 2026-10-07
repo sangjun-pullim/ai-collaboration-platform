@@ -78,6 +78,22 @@ interface AgentRuntime {
 
 009의 private 검증 드라이버는 같은 활성 입력의 `system/thinking_tokens`를 진행 상태 정보로만 읽고 개수와 마지막 값만 유지한다. 거절한 상태 정보는 제한된 private 원문에 남기며 ACK·도구 권한·완료 증거로 사용하지 않는다. `control_cancel_request`도 host가 이미 중단을 요청한 소유 파일 callback의 취소 정보만 해석한다. 그 정보로 tool response를 만들거나 종결을 확정하지 않으며 interrupt receipt와 native typed 종결을 별도로 요구한다. 합성 실행의 통과는 공식 Claude의 실제 실행·이력 재개나 제품 연동의 완료를 뜻하지 않는다.
 
+### 공식 Claude 설치·설정과 같은 대화 재개
+
+기본 제품 factory는 `NativeClaudePolicy`로 해당 Mac의 설치·설정을 발견한다. 초기 지원은 공식 native 설치 2.1.288, 기본 `~/.claude` 프로필과 개인 Pro/Max 구독 로그인이다. entry symlink와 canonical 실행 파일을 구분하고 고정 macOS 코드 서명 검사 뒤에만 `--version`·`auth status`를 읽는다. 호출은 시간·출력 크기를 제한하며 입력을 보내지 않는다. caller가 만든 객체나 합성 fixture 근거를 실제 설치 허가로 해석하지 않는다. [공식 CLI 참조](https://code.claude.com/docs/en/cli-reference)
+
+개인 user/project/local 설정과 CLAUDE 지침은 유지한다. native 정책은 전역·조상 지침, 규칙 파일·import, 선택 root와 worktree의 local 설정을 발견하고 권한에 영향을 주는 변경을 검출한다. 관리 설정은 작업 overlay보다 우선하므로 초기 개인 지원에서 managed 파일·MDM preference domain·remote cache가 있거나 확인되지 않으면 실행을 거절한다. 사용자 지정 config·command helper·추가 작업 디렉터리도 검증 전에는 지원하지 않는다. [설정](https://code.claude.com/docs/en/settings), [관리 설정](https://code.claude.com/docs/en/managed-settings), [서버 관리 설정](https://code.claude.com/docs/en/server-managed-settings)
+
+작업 실행에서는 hooks·확인하지 않은 configured/builtin plugin을 제한하고 내장 도구를 비운다. strict MCP와 정확한 제품 읽기 도구, `dontAsk`를 적용한다. CLAUDE 지침의 적용과 제품 읽기 도구가 공개하는 코드 범위를 구분한다. builtin AGENTS reader를 비활성화한 실행에는 Codex의 AGENTS 파일을 별도 Claude source로 요구하지 않는다. CLAUDE 지침에서 명시적으로 import한 파일은 계속 검사하며 설정 파일을 import해도 그 파일의 구조화된 권한 검사는 유지한다. [지침·메모리](https://code.claude.com/docs/en/memory)
+
+인증·조직·라우팅을 바꿀 수 있는 custom headers는 기존 로그인 확인의 범위를 벗어나므로 inherited/settings 양쪽에서 거절한다. 대화 기록을 끄는 `CLAUDE_CODE_SKIP_PROMPT_HISTORY`는 채팅 작업의 환경·overlay에서 `0`으로 고정한다. 개인 설정 파일은 유지하며 같은 UUID의 후속 질문에 필요한 이력을 남긴다. [공식 환경 변수](https://code.claude.com/docs/en/env-vars)
+
+native JSONL의 user/assistant 저장 행과 stdout의 init/result는 다른 증거다. live typed terminal과 소유 child 정리를 확인한 뒤 정확한 session의 저장 행을 실시간 메시지·입력·실제 host 도구 반환과 대조한다. prefix 길이·hash를 owned turn과 terminal에 불변 저장하고, 같은 UUID의 후속 질문 전에 전체 소유 입력과 이전 체크포인트를 검증한다. 저장 assistant 본문만으로 UNKNOWN을 정상 완료로 바꾸지 않는다. 저장 형식 가정과 제한의 실제 가용성은 별도 수용으로 확인한다. [세션 저장](https://code.claude.com/docs/en/agent-sdk/session-storage)
+
+live terminal 뒤 이력 누락·거절·대조 실패는 `nativeHistory: UNVERIFIED`로 남긴다. 확인한 답변의 저장·게시·동일 게시 재시도는 유지하고 다음 resume 입력만 차단한다. 새 session·새 질문으로 자동 우회하지 않는다. 구현·회귀 검사·실제 공급자 수용의 상태는 [진행 정본](../planning/delivery-and-validation.md#현재-진행-상태)에만 기록한다.
+
+기존 구독 로그인은 각 PC에 유지하며 토큰을 제품에 복사하지 않는다. 공식 지원 안내에서 Agent SDK와 `claude -p`의 구독 사용 변경 일정이 보류됐음을 확인했다. 이 안내를 모든 제3자 제품의 인증 제공 허가로 확대하지 않으며 제품 제공 방식과 계정 적격성은 구분한다. [공식 구독 사용 안내](https://support.claude.com/en/articles/15036540-use-the-claude-agent-sdk-with-your-claude-plan)
+
 ## 참가자별 도구·모델·effort 선택
 
 2026-10-01 사용자가 추가한 제품 요구사항이다. 각 PC의 소유자가 AI binding별로 `Codex` 또는 `Claude Code`, 모델, effort를 선택한다. A의 설정과 B의 설정은 독립적이며 웹 로그인·방 역할·기기 credential은 모델 사용 권한을 대신하지 않는다. 현재 Codex 실험과 기기 등록 작업은 두 공급자의 선택 UI·실제 실행 지원을 입증하지 않는다.

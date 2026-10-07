@@ -63,7 +63,7 @@ Supabase의 신규 로컬 개발 흐름은 CLI·container runtime으로 시작�
 
 ## CLI가 필요한 참가자
 
-질문만 하는 참가자는 브라우저만 사용한다. 로컬 AI를 제공하는 참가자는 자기 Mac에 로컬 연결 프로그램과 지원하는 공식 AI CLI·로그인을 준비한다. 현재 제품 실행기는 Codex를 지원한다. Claude와 웹 폴더·모델·effort의 실제 적용은 [현재 진행 상태](../planning/delivery-and-validation.md#현재-진행-상태)에 있는 후속 구현·검증 항목이며 선택 화면만으로 완료를 표시하지 않는다.
+질문만 하는 참가자는 브라우저만 사용한다. 로컬 AI를 제공하는 참가자는 자기 Mac에 로컬 연결 프로그램과 지원하는 공식 AI CLI·로그인을 준비한다. Codex 실행기와 Claude의 기본 native 연결 정책이 있으며 Claude의 초기 지원 조건은 아래 [연결 확인](#claude-연결-확인)을 따른다. 웹 폴더·모델·effort의 실제 적용과 공급자 수용은 [현재 진행 상태](../planning/delivery-and-validation.md#현재-진행-상태)에서 구분하며 선택 화면만으로 완료를 표시하지 않는다.
 
 ## 자료 이력 기능의 설치 순서
 
@@ -111,7 +111,7 @@ private profile은 기본적으로 사용자의 `Library/Application Support/ai-
 
 ## 웹에서 내 Mac의 AI 설정
 
-022의 설정 화면과 `manage` 명령은 소스 구현 중이다. SQL010의 실제 설치와 HTTP·브라우저 검증은 아직 남아 있다. 현재 제공 가능한 범위와 검증 결과는 [진행 정본](../planning/delivery-and-validation.md#현재-진행-상태)에서 확인한다.
+022의 설정 화면과 `manage` 명령은 소스에 구현돼 있다. SQL010의 실제 설치와 HTTP·브라우저 검증은 아직 남아 있다. 현재 제공 가능한 범위와 검증 결과는 [진행 정본](../planning/delivery-and-validation.md#현재-진행-상태)에서 확인한다.
 
 1. 자기 Mac에서 Node.js 24로 기존 pairing·웹 승인·`exchange`를 완료한다. 웹과 PC에 같은 사람·방의 기기가 연결되어야 한다.
 2. 자기 Mac에서 `node packages/local-connector/dist/src/cli.js manage --profile my-device`를 실행한다. 기존 프로필에 저장한 웹 주소로 설정 요청을 확인한다.
@@ -126,7 +126,32 @@ AI를 제공하는 Mac에는 선택한 공식 CLI와 기존 로그인이 필요�
 
 자동 탐색 승인은 해당 폴더와 새 연결 설정에만 적용한다. 비밀·인증·에이전트 설정 자료, 폴더 밖 접근과 파일 수정은 제한한다. 옛 선택 파일 연결은 새 폴더 확인 없이 자동 탐색으로 바뀌지 않는다. 당시 승인·설정·완료 이력은 보존하며 새 설정으로 과거 읽기 권한을 넓히지 않는다.
 
-현재 기본 Claude 실행은 검증된 policy가 없어 차단된다. 실제 연결 확인은009의 별도 native 검증과 제품 수용 절차를 통과해야 한다. 합성 검사에 사용하는 policy·transport 주입은 CLI 옵션이나 웹 입력으로 제공하지 않는다.
+기본 Claude 실행은 해당 Mac의 공식 설치·게시자·로그인·설정을 검증하는 native 정책을 사용한다. 검증 실패는 실행 허가로 바꾸지 않는다. 실제 연결 확인은009의 별도 native 검증과 제품 수용 절차를 통과해야 한다. 합성 검사에 사용하는 policy·transport 주입은 CLI 옵션이나 웹 입력으로 제공하지 않는다.
+
+### Claude 연결 확인
+
+초기 native 지원은 macOS, 공식 native 설치 2.1.288, 기존 Pro/Max 구독 로그인과 기본 `~/.claude` 프로필이다. 개인 설정·지침·인증 파일은 그대로 둔다. 다른 버전·설치 방식·사용자 지정 프로필과 managed 정책은 검증된 지원 범위에 추가하기 전까지 미지원이다. 파일을 새 프로필로 옮기는 방식으로 해결하지 않는다.
+
+다음 점검은 AI 질문을 보내지 않는다. 진단은 실패 단계만 출력하며 인증·설정 원문을 출력하지 않는다.
+
+1. 답변 제공자는 자기 Mac의 프로젝트 루트에서 Node.js 24로 `npm --prefix packages/local-connector run build`를 실행한다. 연결기만 컴파일된다.
+2. 같은 위치에서 아래 명령을 실행한다. `VERIFIED`는 입력 없는 설치·설정 점검 통과이고 실제 답변·재개·중단 통과와 구분한다. 실패하면 `INSTALLATION`, `PUBLISHER`, `VERSION`, `MANAGED_POLICY`, `LOGIN` 단계 또는 설정 오류를 확인한다.
+
+```sh
+node --input-type=module <<'JS'
+import { NativeClaudePolicy } from './packages/local-connector/dist/src/claude/native-policy.js';
+try {
+  const policy = new NativeClaudePolicy();
+  await policy.admit(process.cwd(), () => {});
+  console.log(JSON.stringify({ admission: 'VERIFIED', version: policy.version, modelInputs: 0 }));
+} catch (error) {
+  console.log(JSON.stringify({ admission: 'UNVERIFIED', code: error.code ?? 'UNKNOWN', stage: error.stage ?? null, modelInputs: 0 }));
+  process.exitCode = 1;
+}
+JS
+```
+
+게시자 검증 실패는 macOS의 공식 설치 서명·신뢰 확인이 필요하다는 뜻이다. 이 점검은 재로그인·CLI 업데이트·설정 변경·질문 재시도를 실행하지 않는다. 현재 검증 결과와 승인된 실제 입력의 남은 조건은 [진행 정본](../planning/delivery-and-validation.md#현재-진행-상태)을 따른다.
 
 `revoke-local`은 설정·실행·세션 잠금과 소유 기록을 확인한 뒤 로컬 인증을 제거한다. 022로 설정한 프로필의 이전 대화·설정 기록은 보존한다. 보존한 프로필을 다른 사람이나 새 기기 인증으로 덮어쓰지 않으며, 다시 연결할 때는 새 프로필 이름을 사용한다.
 

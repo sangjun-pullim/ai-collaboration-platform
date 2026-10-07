@@ -128,3 +128,11 @@
 실제 DB를 사용하는 채팅 검사에서 하나의 질문·하나의 실행에 답변 메시지 두 개가 나타났다. 서버의 PENDING→ACCEPTED 이벤트는 정상 감사 기록이지만 화면이 각각을 새 답변으로 렌더링했다.
 
 같은 방·request·question·agent·bindingEpoch를 가진 답변은 가장 큰 sequence의 상태로 한 번만 표시하도록 고쳤다. 원본 이력과 서로 다른 실행은 보존한다. 브라우저의 원래 실패와 수정 전 결과는 보존했으며 원본 불변·늦은 이벤트·다른 실행을 확인하는 단위 회귀를 추가했다. 최종 브라우저·독립 리뷰 결과는 [개발·검증 상태](planning/delivery-and-validation.md#현재-진행-상태)에 기록한다.
+
+## 2026-10-07 — 기본 Claude 연결과 같은 대화 후속 질문의 누락
+
+기본 Claude factory가 합성 Node fixture만 신뢰하는 정책을 사용해 공식 설치·기존 로그인에도 실제 admission을 만들지 못했다. [native 정책](../packages/local-connector/src/claude/native-policy.ts)을 기본 factory에 연결하고 공식 설치·로그인·설정을 확인하는 모듈을 분리했다. 비활성 builtin AGENTS reader가 읽지 않는 Codex 지침을 별도 source로 요구하던 경로도 실패 재현 뒤 보정했다.
+
+저장 native JSONL을 stdout init/result 형식으로 가정하면 정상 답변 뒤 대화 재개 검증이 실패한다. [native 이력 증명](../packages/local-connector/src/claude/native-history-proof.ts)은 정확한 소유 session의 저장 행을 실시간 입력·메시지·실제 host 도구 반환과 대조한다. 이력 확인 실패 뒤에도 검증한 typed terminal과 답변을 보존하며 다음 resume 입력만 차단한다. 도구 결과 위조를 먼저 실패시킨 뒤 실제 반환 receipt의 대조를 보완했다.
+
+구현 리뷰에서 설정 import 충돌·custom authentication headers·대화 기록 비활성화 상속·쓰기 가능한 설치 상위 경로를 재현하고 보정했다. 개인 설정 파일은 유지하고 채팅 작업의 기록을 켜며 같은 UUID resume를 사용한다. 격리 회귀와 독립 재리뷰를 마쳤고 현재 수치·기존 전체 검사 취소·실제 Claude 수용의 미완료 조건은 [검증 정본](planning/delivery-and-validation.md#현재-진행-상태)에 기록한다.

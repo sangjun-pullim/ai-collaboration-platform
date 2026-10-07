@@ -63,7 +63,7 @@ flowchart LR
 
 ‘AI를 로컬에서 실행’은 도구·저장소를 다루는 agent 프로세스가 PC에 있다는 뜻이다. 일반 Codex/Claude 연동의 모델 호출은 해당 공급자 서비스로 나가며 필요한 입력이 공급자에게 전달된다. 모든 추론과 코드 처리가 PC 안에서만 끝나는 구조로 표현하지 않는다.
 
-현재 구현은 Next.js/TypeScript 웹·제어 API, Node.js 24/TypeScript 로컬 연결 프로그램과 Supabase Auth/Postgres를 사용한다. 로컬 Codex 실행기는 같은 중앙 계약의 소유 맥락·저널·복구를 제공한다. Claude 제품 adapter 소스는 검토된 native 실행 정책을 요구하며 기본 생성 경로는 `POLICY_UNCONFIRMED`로 실행을 차단한다. Realtime·실제 Claude 수용·배포 상태는 개발 순서 문서를 따른다. 개인·비상업용 초기 배포는 Vercel Hobby + Supabase Free를 기준으로 한다. 조사 대상 저장소의 프레임워크·DB·업무 모델을 제품의 필수 의존성으로 삼지 않는다. 선택의 이유는 [ADR-002](ADR.md#adr-002--첫-구현의-언어와-중앙로컬-경계)에 기록한다.
+현재 구현은 Next.js/TypeScript 웹·제어 API, Node.js 24/TypeScript 로컬 연결 프로그램과 Supabase Auth/Postgres를 사용한다. 로컬 Codex 실행기는 같은 중앙 계약의 소유 맥락·저널·복구를 제공한다. Claude의 기본 생성 경로는 해당 Mac의 공식 native 설치·로그인·설정을 검증하는 정책을 사용한다. 지원 범위 밖이거나 검증되지 않은 조합은 `POLICY_UNCONFIRMED`로 실행을 차단한다. Realtime·실제 Claude 수용·배포 상태는 개발 순서 문서를 따른다. 개인·비상업용 초기 배포는 Vercel Hobby + Supabase Free를 기준으로 한다. 조사 대상 저장소의 프레임워크·DB·업무 모델을 제품의 필수 의존성으로 삼지 않는다. 선택의 이유는 [ADR-002](ADR.md#adr-002--첫-구현의-언어와-중앙로컬-경계)에 기록한다.
 
 방·질문·근거·AI binding은 업무 도메인과 독립된 협업 모델이다. API 연동 외에 변경 영향이나 다른 공동 문제도 목표와 근거를 입력해 조사한다. 특정 서비스의 업무 테이블·판매 채널 ID·전용 처리 흐름을 핵심 모듈에 내장하지 않는다.
 
@@ -136,11 +136,15 @@ Vercel은 화면과 짧은 제어 API를 제공하고 AI 실행·지속 연결�
 
 `manage --profile <profile>`는 기기별 설정 잠금을 잡고 같은 기기의 outbound 조회·설정과 runner 수명을 관리한다. 서버에는 공개 별칭·설정·불투명 root 참조만 저장하고 실제 root·선택 파일·native session은 PC에 둔다. `SettingsStore`는 후보와 현재 설정 generation, 적용 저널을 private state에 보관한다. 서버의 `COMMITTED` receipt를 확인한 뒤 generation 기록·profile mapping·현재 pointer를 영속 저장하고 `APPLIED`를 보고한다. 재시작 때 pointer 값이 같아도 최종 저장을 다시 수행해 이전 rename·디렉터리 동기화 실패 뒤 영속성을 확인한다. 이전 generation의 이력·outbox는 보존하고 새 root/provider로 옮겨 재개하지 않는다. 서버 예약, PC 준비, 서버 확정과 로컬 확정은 하나의 원자적 작업이 아니므로 같은 operation의 증거로 복구한다. [설정 규칙](BUSINESS-LOGIC.md#소유자의-로컬-ai-설정)·[설정 계약](API-SPEC.md#소유자의-로컬-ai-설정)·[검증 정본](planning/delivery-and-validation.md#현재-진행-상태)을 따른다.
 
-공통 `provider-adapter.ts`가 설정 관리·현재 설정 실행·단독 모델 목록 조회·기존 Codex 실행의 공급자 생성을 담당한다. Claude의 `configuration.ts`는 적용 설정의 안전한 읽기와 변경 확인을, `launch-policy.ts`는 정책 확인·실행 인자·환경·정확한 소유 이력 경로를 담당한다. 기본 운영은 검토된 설치 근거가 없어 개인 설정·이력 조회나 실행을 시작하지 않는다. Node 합성 fixture의 근거는 공식 Claude 실행 파일을 허용하지 않는다.
+공통 `provider-adapter.ts`가 설정 관리·현재 설정 실행·단독 모델 목록 조회·기존 Codex 실행의 공급자 생성을 담당한다. Claude의 `configuration.ts`는 적용 설정의 안전한 읽기와 변경 확인을 담당한다. 기본 `native-policy.ts`는 `native-installation.ts`의 공식 설치·게시자·로그인 검증과 `native-sources.ts`의 설정·지침 발견을 조합해 실행 인자·환경·정확한 소유 이력 경로를 제공한다. 기존 `launch-policy.ts`는 Node 합성 fixture 전용으로 유지하며 그 근거로 공식 Claude 실행 파일을 허용하지 않는다. 개인 설정 파일은 수정하지 않고 작업별로 읽기 전용 도구·훅·플러그인 제한을 적용한다. 초기 지원 범위와 입력 없는 점검 절차는 [Claude 연결 확인](guides/onboarding-and-settings.md#claude-연결-확인)을 따른다.
+
+공식 실행 파일의 hash는 고정 크기 descriptor 읽기로 계산하고 identity가 같으면 재사용한다. 지침의 import 목록도 변경 없는 source에서 재사용하되 파일 identity·새 source·실행 권한 변화는 계속 검사한다. native global 설정은 계정·조직과 실행 권한을 고정하고 Claude가 갱신하는 시작 횟수·캐시는 권한 변화와 구분한다.
 
 단독 모델 목록 조회의 `catalog-store.ts`는 기기 프로필에 소유 세션 예약을 먼저 내구 저장한다. 같은 프로필의 새 준비·목록 조회·실행과 Codex 전환은 미확인 정리가 남으면 차단한다. catalog 디렉터리 밖의 고정 identity 파일로 이력 파일이나 디렉터리의 이동·교체도 확인한다. 실제 소유 실행 프로세스의 종료 확인만 예약을 닫으며, 파일만 읽는 Claude의 소유 이력 관찰은 계속 허용한다. 설정 관리자의 기존 generation 예약 저널과 023 중단 증거 계약은 유지한다. 실제 검증 범위는 [진행 정본](planning/delivery-and-validation.md#현재-진행-상태)을 따른다.
 
-Claude 읽기 도구 중단은 입력·도구·control ID와 payload·취소 프레임 해시를 실행 권한 확인 아래 로컬 저널에 동기화한다. 종료 이력에는 같은 증거를 보존하며, 전체 native 이력의 입력·초기화·결과와 대조해 취소한 도구를 복원한다. 이 증거가 없거나 달라지면 UNKNOWN을 유지한다. 기본 Claude policy가 확인되기 전에는 공식 CLI를 실행하지 않는다.
+Claude 읽기 도구 중단은 입력·도구·control ID와 payload·취소 프레임 해시를 실행 권한 확인 아래 로컬 저널에 동기화한다. 종료 이력에는 같은 증거를 보존한다. 기존 stream 형식의 이력 증명은 입력·초기화·typed 결과를 재검증한다. 공식 CLI의 native JSONL은 init/result가 없는 별도 형식이며 `native-history-proof.ts`가 세션·cwd·입력·부모 연결과 실시간 메시지·실제 도구 반환을 대조한다. 저장 assistant 본문만으로 UNKNOWN을 종결하지 않는다.
+
+실시간 typed terminal과 소유 child 정리를 확인한 입력에만 native 이력 체크포인트를 만든다. 이력 대조에 실패해도 확인한 terminal을 버리지 않고 Claude 전용 `nativeHistory: UNVERIFIED`를 terminal과 owned turn에 함께 불변 저장한다. 답변 게시·동일 게시 재시도는 유지하며 다음 native 입력만 차단한다. VERIFIED는 이력 prefix 길이·hash를 보존하고 같은 UUID의 후속 질문과 보관 뒤 재접속에서 다시 검증한다. 기존 Codex/v1과 합성 Claude 기록의 형식은 유지한다.
 
 도구 없는 Claude 중단도 전체 입력 descriptor와 고정 중단 요청의 해시를 로컬 저널에 fsync한 뒤 native control을 전송한다. 현재 소유 입력의 정리 증거 저장은 종료 중에도 허용하지만 일반 입력·도구·control 권한은 다시 열지 않는다. 종결 수신은 그때 이미 시작한 증거 저장만 기다린다. 미래 중단 응답은 기다리지 않으며 닫힌 입력을 변경하지 않는다. UNKNOWN 관찰과 보관 후 전체 이력 검증은 같은 불변 증거를 사용하고, 정상 완료가 우선이며 중단 증거 없는 typed abort는 UNKNOWN이다.
 

@@ -50,6 +50,7 @@
 - [AI 입력 당시 저장소 관찰 구현 기록](impl-spec/archive/026-input-source-observation.md): 당시 commit·선택 파일 hash를 로컬 실행 기록에 보존한 단계. 중앙 채팅 이력과의 연결은 아래 질문 당시 대상·코드 이력 계획에서 다룬다.
 - [승인 폴더의 코드 탐색 구현 기록](impl-spec/archive/028-bounded-repository-reader.md): 파일 사전 선택을 없애기 위한 제한된 목록·검색·읽기 모듈. 소유자 승인과 실제 AI 연결은 후속 통합에 포함한다.
 - [폴더 승인과 실제 AI 도구 연결 계획](impl-spec/029-owner-approved-repository-tools.md): 새 세대의 로컬 승인·웹 설정과 Codex/Claude의 탐색 도구·내구 기록을 연결한다. 현재 구현 범위와 남은 검증은 개발·검증 상태 문서에서 확인한다.
+- [공식 Claude 연결과 후속 질문 계획](impl-spec/030-native-claude-chat-and-follow-up.md): 기본 factory의 실제 설치·설정 검증과 같은 소유 대화의 후속 질문을 보정한다. 자동 공동 조사의 방향 수정은 기본 채팅의 선행 조건이 아니다.
 - [질문 당시 대상·코드 이력 계획](impl-spec/027-shared-input-source-history.md): 중앙 채팅에 예약 당시 대상과 저장한 파일 관찰을 연결한다. 입력 전 허용 파일과 실제 도구 반환을 구분하며 메시지별 상세 조회를 제공하는 단계다.
 - [진행 중인 구현 계획](impl-spec): 실행할 코드 수준 계획.
 - [완료 계획 보관](impl-spec/archive): 당시 계획과 검증 기록. 현재 코드 상태는 구조 문서와 실행 결과로 확인한다.

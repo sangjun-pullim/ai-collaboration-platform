@@ -47,7 +47,7 @@ risk-surface: auth, permission, db-schema, public-api
 ## Implementation Steps
 
 ### [ ] Step 1: 공급자 공통 계약과 실제 Claude adapter
-> BLOCKED: 도구 없는 중단 복구 HIGH는023의 합성 검사와 독립 리뷰로 해소했다. 제품 CLI의 Claude 생성3곳은024의 공통 정책·정확한 소유 이력 공급에 연결했고 합성 검사와 독립 리뷰를 통과했다. 실제 설치의 검토 근거는 아직 없어 기본POLICY_UNCONFIRMED를 유지한다. 실제 Claude 수용도009의 선행 조건을 충족하지 않아 미실행이다.
+> 실제 수용 미완료: 도구 없는 중단 복구 HIGH는023의 합성 검사와 독립 리뷰로 해소했다. 제품 CLI의 Claude 생성3곳은024의 공통 정책·정확한 소유 이력 공급에 연결했다. 기본 factory의 공식 설치·설정 검증과 같은 대화 후속 질문은 [030 보정](030-native-claude-chat-and-follow-up.md)에서 진행한다. 추가 사용자 결정을 기본 채팅의 선행 조건으로 요구하지 않는다. 실제 Claude·DB·두 Mac의 실행 조건과 검증 결과는 [진행 정본](../planning/delivery-and-validation.md#현재-진행-상태)을 따른다.
 
 **File**: runtime 계약/검증/runner, claude 내부 모듈, contract mirror, migration runtime 부분
 
@@ -183,4 +183,4 @@ Round 1: C0/H4/M2/L0/INFO1. All six corrections ACCEPTED; native-input authoriza
 023 후속 보정: 원래 구현 리뷰3의 중단 복구 HIGH와 보정 중 드러난 종료 대기 회귀를 별도 국소 구현·검사·독립 리뷰로 해소했다. 원래022 전체 구현 리뷰3의 REVISE는 역사적 결과로 유지하며022의 실제 수용과 native 운영 공급 미완료는 계속 이 명세의 범위다.
 
 
-024 후속 연결: [Claude 정책·이력 연결 기록](archive/024-claude-native-policy-and-history.md)의 공통 생성 함수와 exact owned history 공급, 설정/환경 변경·effort 고정·profile catalog 실행 차단을 소스에 연결했다. 합성 전체443/443과 독립 구현 리뷰1 PASS C0/H0/M0/L0/INFO0을 확인했다. 실제 설치 근거를 공급하는 native 활성화는 아직 없으므로 기본POLICY_UNCONFIRMED와 실제 수용 미완료를 유지한다. 009의 추가 최대3회·합계 최대6회 사용자 승인은 재사용하며 현재 실행 조건은009와 검증 정본을 따른다.
+024 후속 연결 기록: [Claude 정책·이력 연결 기록](archive/024-claude-native-policy-and-history.md)의 공통 생성 함수와 exact owned history 공급, 설정/환경 변경·effort 고정·profile catalog 실행 차단을 소스에 연결했다. 당시 합성 전체443/443과 독립 구현 리뷰1 PASS C0/H0/M0/L0/INFO0을 확인했으며 공식 설치 admission은 없었다. 2026-10-07의 native 기본 정책·후속 질문 보정은030에서 진행한다. 009의 추가 최대3회·합계 최대6회 사용자 승인은 재사용하며 현재 실행 조건은009와 검증 정본을 따른다.

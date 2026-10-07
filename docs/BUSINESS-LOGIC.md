@@ -35,6 +35,8 @@ sources:
 
 대상 소유자가 답변용 연결을 준비해 두었다면 질문마다 소유자 입력을 요구하지 않는다. 확인한 범위를 확대하는 요청이나 오프라인·권한 상실·UNKNOWN에서는 새 실행을 차단한다. 기존의 중복 제거·lease·저널·실제 종결과 결과 채택 분리 규칙을 동일하게 적용한다.
 
+사람이 같은 대상에 추가 질문을 보내면 연결·저장소·설정이 유지되는 동안 대상 AI의 같은 소유 대화 맥락을 이어간다. 각 질문은 별도의 권한 있는 입력이며 자동 AI 왕복을 만들지 않는다. Claude는 앞선 정상 완료의 native 이력 체크포인트를 검증한 뒤 정확한 UUID로 resume한다. 이력 확인 실패는 기존 답변을 지우지 않으며 새 session으로 자동 우회하지 않는다. 자동 공동 조사의 방향 수정과 개인 설명은 이 기본 채팅의 선행 조건이 아니다.
+
 서버는 같은 답변의 도착과 채택 확정을 별도 ANSWER 이벤트로 남긴다. 채팅 화면은 같은 실행·질문·대상의 최신 상태를 한 답변에 표시하며 원본 이벤트를 삭제하지 않는다. 상태 갱신을 추가 답변이나 새 AI 실행으로 표시하지 않는다.
 
 006의 `start`는 origin과 peer 두 binding을 요구한다. [010](impl-spec/archive/010-human-direct-questions.md)의 `ask`는 별도 DIRECT cycle과 HUMAN 질문을 만들고 대상 PEER 실행만 사용한다. 구현 검증과 후속 연동은 [진행 상태](planning/delivery-and-validation.md#현재-진행-상태)에 기록한다. 아래 AI 간 질문 봉투의 `originRunId`를 사람 질문에 가짜로 채우지 않는다.
@@ -49,7 +51,7 @@ sources:
 
 `COMMITTED`는 서버가 binding·epoch·설정 receipt를 확정했다는 뜻이다. `APPLIED`는 PC가 후보 generation·profile mapping·현재 pointer를 영속 저장한 뒤 보고한 상태다. 두 단계를 동시에 성공한 것으로 처리하지 않는다. 서버 확정 전 허용된 상태에서만 취소하며 PC의 정리 확인까지 새 설정을 막는다. 확정 후 응답 유실이나 PC 장애는 같은 operation과 receipt로 복구하고 새 요청으로 자동 재실행하지 않는다. 일반 조회에서 종결 요청이 빠져도 자기 기기의 정확한 operation 조회로 종결을 확인한다. PC는 현재 pointer 값이 같다는 이유만으로 최종 영속 저장을 생략하지 않는다.
 
-root/provider 교체는 별도 후보 generation을 준비한다. 이전 generation의 저장소 신원·native context·실행 이력·outbox를 보존하고 옛 UNKNOWN을 새 root로 옮겨 해소하지 않는다. 기존 v1 Codex 기록은 소유권 검사를 유지하며 설정 관리와 raw CLI는 같은 기기 잠금으로 동시 변경을 막는다. Claude 제품 adapter는 소유 session과 입력 의도를 전송 전에 영속 저장하고 정확한 소유 이력으로 관찰하며, 기본 경로의 `POLICY_UNCONFIRMED`는 실제 실행을 허용하지 않는다. 합성 adapter 통과는 실제 Claude 지원 검증을 대신하지 않는다. [설정 API](API-SPEC.md#소유자의-로컬-ai-설정)·[설정 DB](DB-SCHEMA.md#소유자의-로컬-ai-설정)·[실제 검증 상태](planning/delivery-and-validation.md#현재-진행-상태)를 따른다.
+root/provider 교체는 별도 후보 generation을 준비한다. 이전 generation의 저장소 신원·native context·실행 이력·outbox를 보존하고 옛 UNKNOWN을 새 root로 옮겨 해소하지 않는다. 기존 v1 Codex 기록은 소유권 검사를 유지하며 설정 관리와 raw CLI는 같은 기기 잠금으로 동시 변경을 막는다. Claude 제품 adapter는 소유 session과 입력 의도를 전송 전에 영속 저장하고 정확한 소유 이력으로 관찰한다. 기본 native 정책이 공식 설치·게시자·지원 버전·개인 구독 로그인·설정을 검증한 경우에만 실행하며 미확인 조합은 `POLICY_UNCONFIRMED`로 거절한다. 합성 adapter 통과는 실제 Claude 지원 검증을 대신하지 않는다. [설정 API](API-SPEC.md#소유자의-로컬-ai-설정)·[설정 DB](DB-SCHEMA.md#소유자의-로컬-ai-설정)·[실제 검증 상태](planning/delivery-and-validation.md#현재-진행-상태)를 따른다.
 
 설치 버전·설정 우선순위·소유 이력 위치가 검증되지 않은 Claude는 모델 목록 조회나 실제 질문을 시작하지 않는다. 개인 로그인·지침 파일은 유지하고 선택한 effort는 실행 인자·자식 프로세스 환경·작업 설정에 같은 값으로 지정한다. 더 높은 관리 설정이나 실행 중 변경이 이 선택을 덮어쓸 가능성을 확인하지 못하면 실행을 거절한다. effort 미제공은 null로 유지한다.
 
@@ -152,7 +154,9 @@ AI runtime 호출과 중앙 DB commit을 원자적으로 묶을 수 없으므로
 
 007의 로컬 journal은 server start-intent 확인과 local provider intent의 fsync 이후에만 한 번 제출한다. 확인되지 않은 호출·ACK·저장 결과를 UNKNOWN으로 남기고, 같은 operation/action/body로 결과 업로드를 복구한다. 종결과 final-answer 근거를 먼저 보관하며 공개 문구가 거절되어도 종결 사실을 삭제하지 않는다. local UNKNOWN은 임의 재실행이나 맥락 교체·증거 삭제로 해소하지 않는다. 오래된 confirmed ready 갱신 receipt만 제한적으로 정리하고 pending/transmitted·질문·종결·관찰 증거는 유지한다.
 
-Claude 중단은 같은 소유 입력의 중단 의도를 먼저 내구 저장한 뒤 전달한다. 중단 요청과 전달 receipt는 종결이 아니며 정확한 native 이력의 typed 결과로 INTERRUPTED를 확인한다. 종결 저장 전 장애가 생겨도 같은 입력·의도의 불변 증거로 복구한다. 증거 없는 aborted_streaming/aborted_tools는 UNKNOWN이며, 취소되지 않은 도구를 중단 의도만으로 완료 처리하지 않는다. 정상 COMPLETED는 중단과의 경합에서 우선하며, 늦은 receipt는 이미 닫힌 답변·이력을 변경하지 않는다.
+Claude 중단은 같은 소유 입력의 중단 의도를 먼저 내구 저장한 뒤 전달한다. 중단 요청과 전달 receipt는 종결이 아니며 검증한 실시간 typed 결과로 INTERRUPTED를 확인한다. 기존 stream 이력은 같은 입력·중단 증거와 typed 결과를 재검증할 수 있다. 공식 native JSONL의 assistant 본문은 종결을 대신하지 않으며 로컬 typed terminal이 없는 UNKNOWN은 유지한다. 증거 없는 aborted_streaming/aborted_tools는 UNKNOWN이며, 취소되지 않은 도구를 중단 의도만으로 완료 처리하지 않는다. 정상 COMPLETED는 중단과의 경합에서 우선하며, 늦은 receipt는 이미 닫힌 답변·이력을 변경하지 않는다.
+
+정상 live terminal 뒤 native 이력 누락·읽기 거절·본문 불일치가 발생하면 terminal과 owned turn에 UNVERIFIED 이유를 보존한다. 그 답변의 저장·게시·동일 게시 재시도는 유지하며 다음 resume 입력은 차단한다. 저장 이력의 검증 실패를 실행 종결의 UNKNOWN으로 바꾸지 않는다. 소유 프로세스 정리 실패와 실행 권한 상실의 기존 처리 의미는 유지한다.
 
 runtime 기록으로 기존 turn을 찾으면 그 turn의 상태를 관찰해 복구한다. 찾을 수 없으면 사용자에게 실행 여부 확인과 복구 선택을 요구한다. lease 만료나 새 owner 지정이 이미 실행 중인 옛 프로세스를 멈추거나 side effect를 되돌린다는 뜻은 아니다.
 
