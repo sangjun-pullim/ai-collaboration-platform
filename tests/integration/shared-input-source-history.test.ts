@@ -1,7 +1,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import { randomUUID, createHash } from "node:crypto";
-import { WorkflowFixture, workflowCase } from "../helpers/workflow-fixture.js";
+import { workflowCase } from "../helpers/workflow-fixture.js";
 import { assertOwnedStack } from "../helpers/local-access-stack.js";
 import {
   sourceDevice,
@@ -10,7 +10,6 @@ import {
   sourceFixtureAutoManifest,
   fixtureSourcePackets,
   sourceAttemptIdentity,
-  upgradeSharedSourceHistory,
   uploadFixtureSource,
 } from "../helpers/shared-source-history-fixture.js";
 import {
@@ -18,19 +17,7 @@ import {
   type SourceFileRow,
 } from "../../src/features/investigation-coordinator/source-contracts.ts";
 const options = { timeout: 300000 };
-// Definitions only: run the warm-upgrade name on 001–012, then remaining names on fresh/updated 001–013.
-test(
-  "should preserve warmed 001–012 history and receipt bytes through additive SQL013",
-  options,
-  async () => {
-    const f = await WorkflowFixture.open("shared-source-warm-upgrade");
-    try {
-      await upgradeSharedSourceHistory(f);
-    } finally {
-      await f.close();
-    }
-  },
-);
+// Run on an owned fresh or upgraded 001–013 stack. SQL013 installation has a separate entry.
 test(
   "should preserve target reservation aliases and expose only already confirmed exact terminal sources",
   options,
