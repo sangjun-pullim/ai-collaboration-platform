@@ -60,6 +60,8 @@ node scripts/dev-local-web.mjs
 
 CLI 상태 조회에 실패하면 아래 읽기 전용 점검으로 `diagnostic.tool`, 고정 분류인 `diagnostic.reason`, 숫자 종료 코드인 `diagnostic.exitCode`를 확인한다. CLI 출력 원문·키·개인 경로는 표시하지 않는다. 설치·캐시, 명령 인수, 설정, Docker, CLI 자체 상태의 실패를 구분하며 알 수 없는 실패는 `CLI_FAILED`로 보존한다. `CHECKED`는 설정 확인이고 실제 웹 접속 성공과 다르다. 이 점검은 Next 서버를 시작하지 않는다.
 
+PATH에 Supabase CLI가 없으면 이미 설치된 `supabase@2.118.0`을 `npx --offline --no-install`로 사용한다. 버전 없는 `supabase` 요청은 다른 npm 캐시를 사용하므로 이 개발 Mac에 설치된 버전을 명시한다. 패키지를 새로 설치하거나 다운로드하지 않는다. 해당 버전이 없으면 `CLI_INSTALLATION_UNAVAILABLE`로 중단한다. 사용자는 원문 상태 조회 대신 아래 명령의 공개 JSON을 제공한다.
+
 ```sh
 node scripts/dev-local-web.mjs --check
 ```
