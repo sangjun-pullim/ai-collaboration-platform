@@ -155,6 +155,12 @@ Additional execution: compile `tsconfig.integration.json`, then explicitly run `
 
 후속 공개 진단은 `npx`·`CLI_FAILED`·종료 코드1이었다. 버전 없는 요청과 설치된 `supabase@2.118.0`이 다른 npm 캐시를 사용하는 결함, npm의 `npx canceled due to missing packages` 문구를 진단에서 놓치는 결함을 보정한다. 기존 오프라인·설치 금지 조건과 조회 범위는 유지한다. 실제 사용자 실패의 원문을 확인한 것은 아니므로 이 두 결함의 재현과 사용자 웹 차단 해소는 구분한다.
 
+이후 사용자 점검은 CLI의 `DOCKER_UNAVAILABLE`로 진행됐다. 현재 보정은 CLI 상태 조회를 검증한 실행 게이트웨이의 공개 키 조회로 대체한다. DB·프로젝트·고정 ID·포트·작업 위치 사전 검사 뒤 컨테이너 ID로 실행 설정을 메모리에서만 읽는다. 지정한 자격증명 필드에 있는 단일 `anon` JWT만 선택하고 설정 원문·관리자 키를 출력·저장·웹 전달하지 않는다. 설정 최대64KiB·공개 키 최대4096자·중복 키 거절을 유지하며 새 도구 설치·개인 설정·DB·AI 실행은 포함하지 않는다. 이전 CLI 진단과 캐시 보정은 이력이며 현재 웹 실행 준비 경로에서 제거한다. 실제 사용자 오류 원문과 웹 접속 성공은 후속 결과로 확인한다.
+
+게이트웨이 보정의 첫 독립 리뷰는 YAML의 여러 줄 설명을 자격증명으로 오인하는 HIGH 1건을 발견했다. 실패 검사3개로 설명 문자열·관련 없는 중첩 필드·키 앞뒤의 다른 문자열 채택을 재현한 뒤 구조를 읽도록 보정한다. 이미 설치된 `js-yaml`4.3.2를 직접 개발 의존성으로 명시하고 같은 버전의 기존 lock 항목을 재사용한다. 다운로드·추가 도구 설치는 하지 않는다. `anon` consumer와 활성 `request-transformer`의 공식 자격증명 경로만 검사하며 YAML 오류·중복 필드·다중 문서·24단계 초과 중첩은 원문 없이 거절한다. 변환 표현식을 실행하지 않고 공식 반환 형식의 전체 문자열만 확인한다. 사용자 `CHECKED`는 첫 게이트웨이 보정의 실행 준비 성공 보고이며 실제 웹 시작·접속 검증은 별도다.
+
+구조 보정의 독립 리뷰에서 `enabled:False/FALSE`를 비활성으로 처리하지 못하는 HIGH 1건을 확인했다. 새 실패 검사로 재현한 뒤 `enabled` 누락 또는 `true`·`True`·`TRUE`만 허용하도록 보정한다. 비활성·null·배열·객체·알 수 없는 값은 거절하며 나머지 공개 키 선택·실행 경계를 유지한다.
+
 Round 1: C0/H4/M2/L0/INFO1. All six corrections ACCEPTED; native-input authorization INFO preserved. Round 2: C0/H1/M1/L0/INFO1. Both corrections ACCEPTED; native-input authorization INFO preserved. Round 3: PASS, C0/H0/M0/L0/INFO1. The final nonretired AI_PAIR resumption versus proof-closed terminal DIRECT distinction was confirmed against actual SQL. Native authorization INFO is retained. 기존 전체 목표 승인에 따라 구현 중이다. 실제 native/DB 검증은 별도 실행 조건을 유지한다.
 
 | Finding | Severity | Disposition | Rationale |

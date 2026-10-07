@@ -48,7 +48,7 @@ Supabase의 신규 로컬 개발 흐름은 CLI·container runtime으로 시작�
 
 ### 이 개발 Mac의 웹 실행
 
-로컬 DB의010–013 적용 뒤에는 프로젝트 루트의 Node.js 24 터미널에서 아래 명령을 사용한다. 지정한 OrbStack DB의 설치 표식과 API 게이트웨이의 프로젝트·고정 ID·로컬 포트·같은 작업 위치를 확인한다. 그 작업 위치에서 공식 Supabase CLI의 읽기 전용 `status`로 설정을 조회하며, API 주소가 확인한 로컬 주소와 같을 때 공개 `anon` 키만 웹에 전달한다. CLI가 PATH에 없으면 기존 npm 설치·캐시를 `npx --offline --no-install`로 사용하며 새 패키지를 내려받지 않는다. Studio가 없는 개발 스택에서도 같은 상태 조회를 사용한다. 상태 응답의 관리자·서명·DB 값은 메모리에서만 처리하고 출력·파일 저장·웹 전달을 하지 않는다.
+로컬 DB의010–013 적용 뒤에는 프로젝트 루트의 Node.js 24 터미널에서 아래 명령을 사용한다. 지정한 OrbStack DB의 설치 표식과 API 게이트웨이의 프로젝트·고정 ID·로컬 포트·같은 작업 위치를 확인한다. 검증한 게이트웨이 ID로 실제 실행 설정을 읽고 공개 `anon` 키 하나만 웹에 전달한다. 설정은 Supabase가 컨테이너 안에 만드는 [Kong 설정](https://github.com/supabase/cli/blob/v2.54.11/internal/start/start.go)에 있으며 파일 내용은 메모리에서만 처리한다. 관리자 키와 설정 원문은 출력·파일 저장·웹 전달을 하지 않는다. 이 개발 스택의 웹 실행 준비는 Docker만 사용하며 Supabase CLI·npm 캐시·임시 `config.toml`에 의존하지 않는다.
 
 웹의 세 필수 설정을 채워 `127.0.0.1:4318`에서 현재 코드를 실행한다. 개인 설정 파일에 키를 쓰지 않으며, 상위 터미널의 관리자·DB·AI 키와 임의 서버 주소를 웹 프로세스에 전달하지 않는다. Next.js가 별도 설정을 자동 로딩하지 않도록 프로젝트 루트의 네 개발 환경 파일은 존재 여부만 확인한다. 파일이 있으면 원문을 읽거나 수정하지 않고 `ENVIRONMENT_FILES_PRESENT`로 시작을 거절한다.
 
@@ -56,11 +56,11 @@ Supabase의 신규 로컬 개발 흐름은 CLI·container runtime으로 시작�
 node scripts/dev-local-web.mjs
 ```
 
-운영자는 이전에 직접 실행한 웹 서버가 있으면 그 터미널에서 `Ctrl+C`로 종료한 뒤 새 명령을 실행한다. 새 명령은 다른 프로세스를 종료하지 않는다. `STARTING`은 설정 점검 완료와 실행 시작이며 실제 HTTP 준비 완료와 다르다. Next.js의 `Ready` 뒤 `http://127.0.0.1:4318/app/connections`를 연다. `BLOCKED`면 공개 진단 코드만 보존하고 원인을 확인한다. `LOCAL_STATUS_UNAVAILABLE`은 현재 로컬 CLI나 Docker 조회가 불가능한 상태다. 이 명령은 DB를 변경하거나 AI를 실행하지 않는다.
+운영자는 이전에 직접 실행한 웹 서버가 있으면 그 터미널에서 `Ctrl+C`로 종료한 뒤 새 명령을 실행한다. 새 명령은 다른 프로세스를 종료하지 않는다. `STARTING`은 설정 점검 완료와 실행 시작이며 실제 HTTP 준비 완료와 다르다. Next.js의 `Ready` 뒤 `http://127.0.0.1:4318/app/connections`를 연다. `BLOCKED`면 공개 진단 코드만 보존하고 원인을 확인한다. `GATEWAY_PUBLIC_KEY_UNAVAILABLE`은 검증한 게이트웨이의 설정을 읽을 수 없다는 뜻이다. `GATEWAY_PUBLIC_KEY_UNVERIFIED`는 공개 키 하나를 안전하게 확정하지 못한 상태다. 설정은 최대64KiB·중첩24단계로 제한한다. YAML 구조를 읽어 `anon` consumer의 `keyauth_credentials`와 활성 `request-transformer`의 지정된 header/querystring 경로만 검사한다. 공식 변환 표현식은 실행하지 않고 형식과 반환 문자열만 확인한다. 관리자 키·여러 줄 설명 속 예시 키·자격증명 앞뒤의 다른 문자열·서로 다른 여러 공개 키는 사용하지 않는다. 이 명령은 DB를 변경하거나 AI를 실행하지 않는다.
 
-CLI 상태 조회에 실패하면 아래 읽기 전용 점검으로 `diagnostic.tool`, 고정 분류인 `diagnostic.reason`, 숫자 종료 코드인 `diagnostic.exitCode`를 확인한다. CLI 출력 원문·키·개인 경로는 표시하지 않는다. 설치·캐시, 명령 인수, 설정, Docker, CLI 자체 상태의 실패를 구분하며 알 수 없는 실패는 `CLI_FAILED`로 보존한다. `CHECKED`는 설정 확인이고 실제 웹 접속 성공과 다르다. 이 점검은 Next 서버를 시작하지 않는다.
+플러그인은 `enabled` 누락 또는 YAML의 `true`·`True`·`TRUE` 값일 때만 사용한다. 비활성 표기와 확인할 수 없는 값은 사용하지 않는다.
 
-PATH에 Supabase CLI가 없으면 이미 설치된 `supabase@2.118.0`을 `npx --offline --no-install`로 사용한다. 버전 없는 `supabase` 요청은 다른 npm 캐시를 사용하므로 이 개발 Mac에 설치된 버전을 명시한다. 패키지를 새로 설치하거나 다운로드하지 않는다. 해당 버전이 없으면 `CLI_INSTALLATION_UNAVAILABLE`로 중단한다. 사용자는 원문 상태 조회 대신 아래 명령의 공개 JSON을 제공한다.
+아래 읽기 전용 점검은 같은 준비 검사를 수행하고 Next 서버를 시작하지 않는다. `CHECKED`는 설정 확인이고 실제 웹 접속 성공과 다르다. 문제가 있으면 공개 JSON만 제공한다. 게이트웨이 설정 원문·키·개인 경로는 표시하지 않는다. 이전 `LOCAL_STATUS_UNAVAILABLE`·`diagnostic` 출력은 Supabase CLI를 사용하던 실행 방식의 이력이며 현재 방식에서는 출력하지 않는다.
 
 ```sh
 node scripts/dev-local-web.mjs --check
