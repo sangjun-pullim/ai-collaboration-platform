@@ -147,6 +147,8 @@ Additional execution: compile `tsconfig.integration.json`, then explicitly run `
 
 실제 DB 준비의 후속 실행 범위: `scripts/apply-local-ai-settings.mjs`와 `tests/unit/local-settings-upgrade.test.ts`로 지정한 OrbStack 개발 DB에 미설치010–013을 한 transaction으로 적용하는 운영 명령과 격리 검사를 추가한다. 컨테이너 고정 ID·프로젝트·loopback port·소유 workdir와 SQL hash를 확인한다. 기존001–009의 필수 함수, SQL005의 receipt 외래키 3개의 shape·지연 검사 설정, SQL008의 actor·public wrapper 원문과 설정을 읽기 전용으로 확인하고 같은 transaction guard에서도 검사한다. 기존 필수 조건이 없거나 새 schema가 이미 존재하면 적용을 거절한다. 원본 SQL 파일은 변경하지 않으며010/013의 바깥 transaction만 묶음 실행 안에서 제거한다.011/012도 같은 transaction에 포함해 부분 적용을 방지한다. 응답 유실은 미확정으로 보존하고 자동 재적용하지 않는다. 이 준비·독립 검토는 실제 DB·upgrade·HTTP·브라우저 검증을 대신하지 않는다.
 
+웹 실행 준비의 후속 범위: `scripts/dev-local-web.mjs`와 `tests/unit/local-web-environment.test.ts`를 추가한다. 기존 DB 점검을 읽기 전용으로 재사용하고 같은 프로젝트·workdir·로컬 API 포트의 게이트웨이를 확인한다. 확인한 workdir에서 공식 Supabase `status`를 실행하고 API URL을 대조한 뒤 공개 anon 키만 웹에 전달한다. PATH의 CLI가 없으면 설치·캐시의 CLI를 offline·no-install로 사용한다. 상태 응답의 비공개 값은 출력·파일 저장·웹 전달하지 않는다. Next 개발 환경 파일은 metadata로만 검사하고 존재하면 시작을 거절한다. 세 필수 웹 설정을 채워 현재 웹 코드를 실행하며 inherited 관리자/DB/AI 키와 임의 서버 설정은 전달하지 않는다. 원본 DB·프로필·대기 연결과 사용자 소유 웹 프로세스를 변경하지 않는다. 독립 검토와 격리 검사 후 운영자가 기존 웹 터미널을 종료하고 새 명령으로 실행한다. 실제 HTTP·브라우저·native 수용은 그 결과로 별도 확인한다.
+
 ## Review Notes
 
 Round 1: C0/H4/M2/L0/INFO1. All six corrections ACCEPTED; native-input authorization INFO preserved. Round 2: C0/H1/M1/L0/INFO1. Both corrections ACCEPTED; native-input authorization INFO preserved. Round 3: PASS, C0/H0/M0/L0/INFO1. The final nonretired AI_PAIR resumption versus proof-closed terminal DIRECT distinction was confirmed against actual SQL. Native authorization INFO is retained. 기존 전체 목표 승인에 따라 구현 중이다. 실제 native/DB 검증은 별도 실행 조건을 유지한다.

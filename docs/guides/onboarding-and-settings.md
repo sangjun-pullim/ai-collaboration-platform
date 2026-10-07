@@ -46,6 +46,20 @@ Supabase의 신규 로컬 개발 흐름은 CLI·container runtime으로 시작�
 
 개발자는 Node 24에서 `npm ci` 후, [환경 변수 예시](../../.env.example)의 `SUPABASE_URL`, `SUPABASE_PUBLISHABLE_KEY`, `APP_ORIGIN`을 프로세스 환경에 전달해 `npm run dev`를 실행한다. `APP_ORIGIN`은 브라우저로 접속할 정확한 origin이어야 한다. 제품 웹 서버에는 admin/service-role key·DB password·AI 공급자 인증을 전달하지 않는다. 실제 설정을 파일로 만들 때는 개인 자격증명을 저장소에 포함하지 않는다.
 
+### 이 개발 Mac의 웹 실행
+
+로컬 DB의010–013 적용 뒤에는 프로젝트 루트의 Node.js 24 터미널에서 아래 명령을 사용한다. 지정한 OrbStack DB의 설치 표식과 API 게이트웨이의 프로젝트·고정 ID·로컬 포트·같은 작업 위치를 확인한다. 그 작업 위치에서 공식 Supabase CLI의 읽기 전용 `status`로 설정을 조회하며, API 주소가 확인한 로컬 주소와 같을 때 공개 `anon` 키만 웹에 전달한다. CLI가 PATH에 없으면 기존 npm 설치·캐시를 `npx --offline --no-install`로 사용하며 새 패키지를 내려받지 않는다. Studio가 없는 개발 스택에서도 같은 상태 조회를 사용한다. 상태 응답의 관리자·서명·DB 값은 메모리에서만 처리하고 출력·파일 저장·웹 전달을 하지 않는다.
+
+웹의 세 필수 설정을 채워 `127.0.0.1:4318`에서 현재 코드를 실행한다. 개인 설정 파일에 키를 쓰지 않으며, 상위 터미널의 관리자·DB·AI 키와 임의 서버 주소를 웹 프로세스에 전달하지 않는다. Next.js가 별도 설정을 자동 로딩하지 않도록 프로젝트 루트의 네 개발 환경 파일은 존재 여부만 확인한다. 파일이 있으면 원문을 읽거나 수정하지 않고 `ENVIRONMENT_FILES_PRESENT`로 시작을 거절한다.
+
+```sh
+node scripts/dev-local-web.mjs
+```
+
+운영자는 이전에 직접 실행한 웹 서버가 있으면 그 터미널에서 `Ctrl+C`로 종료한 뒤 새 명령을 실행한다. 새 명령은 다른 프로세스를 종료하지 않는다. `STARTING`은 설정 점검 완료와 실행 시작이며 실제 HTTP 준비 완료와 다르다. Next.js의 `Ready` 뒤 `http://127.0.0.1:4318/app/connections`를 연다. `BLOCKED`면 공개 진단 코드만 보존하고 원인을 확인한다. `LOCAL_STATUS_UNAVAILABLE`은 현재 로컬 CLI나 Docker 조회가 불가능한 상태다. 이 명령은 DB를 변경하거나 AI를 실행하지 않는다.
+
+주소·공개 키가 없거나 관리자 키가 잘못 설정돼 있으면 웹은 ‘서비스를 준비 중입니다’라는503을 반환한다. 시간 경과로 해결되지 않는 실행 설정 오류이며 설정을 갖춰 서버를 다시 실행해야 한다. DB·웹·Claude의 실제 검증 상태는 [진행 정본](../planning/delivery-and-validation.md#현재-진행-상태)을 따른다.
+
 아래는 새로 만든 격리 로컬 Supabase의 준비 절차다. 공유 DB·운영 Auth에서는 운영자가 대상과 변경을 확인한 후 실행한다. 잘못된 DB에 적용하면 다른 사용자의 접근 정책과 인증 설정이 바뀐다.
 
 1. 운영자는 해당 로컬 DB에 [첫 migration](../../supabase/migrations/20261001000100-web-auth-room-access.sql)부터 [회사 코드 입장](../../supabase/migrations/20261004000900-team-code-entry.sql)까지 001–009 아홉 파일을 이름 순서대로 적용한다. 직접 질문·발신자 검증·입장 권한이 함께 준비된다. 기존 DB에는 미적용 후속 파일만 적용하며 reset·기적용 파일 수정/재적용을 하지 않는다.
