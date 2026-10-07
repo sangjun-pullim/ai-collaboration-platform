@@ -60,7 +60,7 @@ risk-surface: auth, permission, db-schema, public-api
 - 009의 검증된 native policy/버전/설정 우선순위 근거가 있어야 실제 Claude admission을 열 수 있다. 일반 개인 설정 파일을 변경하거나 credentials를 복사하지 않는다. 시작 inventory·실행 중 설정 drift·읽기 전용 allowlist·소유 child 정리 실패를 기존 미확인 계약에 연결한다.
 
 ### [ ] Step 2: 소유자 전용 설정 명령과 영수증
-> BLOCKED: SQL010 설치와 기존 001–009에서의 upgrade, 실제 소유자 권한·HTTP 검사를 Docker socket 접근 제한으로 실행하지 못했다. 계약·타입·합성 검사 통과는 실제 DB 수용을 대신하지 않는다.
+> 실제 수용 대기: DB 적용 사용자 보고는 [진행 정본](../planning/delivery-and-validation.md#현재-진행-상태)을 따른다. Docker socket 접근 제한으로 에이전트의 기존 데이터·receipt 보존 upgrade 회귀와 실제 소유자 권한·HTTP 검사는 실행하지 못했다. 계약·타입·합성 검사 통과와 DB 적용 보고는 실제 DB 수용을 대신하지 않는다.
 
 **File**: 새 migration, runtime-settings web/connector contracts/client/service/store
 

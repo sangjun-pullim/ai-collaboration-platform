@@ -160,7 +160,7 @@ private profile은 기본적으로 사용자의 `Library/Application Support/ai-
 
 ## 웹에서 내 Mac의 AI 설정
 
-022의 설정 화면과 `manage` 명령은 소스에 구현돼 있다. SQL010의 실제 설치와 HTTP·브라우저 검증은 아직 남아 있다. 현재 제공 가능한 범위와 검증 결과는 [진행 정본](../planning/delivery-and-validation.md#현재-진행-상태)에서 확인한다.
+022의 설정 화면과 `manage` 명령은 소스에 구현돼 있다. DB 적용 상태와 HTTP·브라우저·실제 답변 검증 결과는 [진행 정본](../planning/delivery-and-validation.md#현재-진행-상태)에서 확인한다. DB 적용 보고와 PC의 AI 실행 준비 완료는 별도로 확인한다.
 
 1. 자기 Mac에서 Node.js 24로 기존 pairing·웹 승인·`exchange`를 완료한다. 웹과 PC에 같은 사람·방의 기기가 연결되어야 한다.
 2. 자기 Mac에서 `node packages/local-connector/dist/src/cli.js manage --profile my-device`를 실행한다. 기존 프로필에 저장한 웹 주소로 설정 요청을 확인한다.
