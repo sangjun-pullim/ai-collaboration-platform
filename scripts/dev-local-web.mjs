@@ -10,10 +10,64 @@ const host = `unix://${join(homedir(), ".orbstack/run/docker.sock")}`;
 const root = fileURLToPath(new URL("../", import.meta.url));
 
 class WebSetupError extends Error {
-  constructor(code) {
+  constructor(code, diagnostic) {
     super(code);
     this.code = code;
+    if (diagnostic) this.diagnostic = diagnostic;
   }
+}
+
+function statusFailure(tool, error, stdout, stderr) {
+  const text = `${stdout}\n${stderr}`.toLowerCase();
+  const has = (...markers) => markers.some((marker) => text.includes(marker));
+  let reason = "CLI_FAILED";
+  if (error.code === "ENOENT") reason = "CLI_NOT_INSTALLED";
+  else if (error.code === "ERR_CHILD_PROCESS_STDIO_MAXBUFFER") reason = "CLI_OUTPUT_TOO_LARGE";
+  else if (error.killed) reason = "CLI_TIMEOUT";
+  else if (has("telemetry.json")) reason = "CLI_STATE_UNAVAILABLE";
+  else if (has("unknown command", "unknown flag", "unrecognized option", "unrecognized argument"))
+    reason = "CLI_ARGUMENTS_UNSUPPORTED";
+  else if (
+    has(
+      "enotcached",
+      "npm err! canceled",
+      "npm error canceled",
+      "no matching supabase cli binary package",
+      "could not determine executable",
+    )
+  )
+    reason = "CLI_INSTALLATION_UNAVAILABLE";
+  else if (
+    has(
+      "cannot connect to the docker",
+      "no such container",
+      "statusdbinspecterror",
+      "statusdbnotreadyerror",
+      "statusdbnotrunningerror",
+      "permission denied while trying to connect to the docker",
+    )
+  )
+    reason = "DOCKER_UNAVAILABLE";
+  else if (
+    has(
+      "failed to read config",
+      "failed to load config",
+      "statusconfigloaderror",
+      "statusinvalidconfigerror",
+      "statusworkdirerror",
+      "invalid jwt",
+      "invalid config",
+      "invalid signing",
+    )
+  )
+    reason = "CONFIGURATION_UNAVAILABLE";
+  const failure = new WebSetupError("LOCAL_STATUS_UNAVAILABLE", {
+    tool,
+    reason,
+    exitCode: Number.isInteger(error.code) ? error.code : null,
+  });
+  failure.cliMissing = error.code === "ENOENT";
+  return failure;
 }
 
 function docker(args, input = "") {
@@ -82,18 +136,20 @@ async function localStatus(workdir) {
         command,
         commandArgs,
         { env, timeout: 30_000, killSignal: "SIGKILL", maxBuffer: 65_536 },
-        (error, stdout) => (error ? reject(error) : accept(stdout)),
+        (error, stdout, stderr) =>
+          error ? reject(statusFailure(command, error, stdout, stderr)) : accept(stdout),
       );
     });
   }
   try {
     return await read("supabase", args);
   } catch (error) {
-    if (error.code !== "ENOENT") throw new WebSetupError("LOCAL_STATUS_UNAVAILABLE");
+    if (!error.cliMissing) throw error;
   }
   try {
     return await read("npx", ["--offline", "--no-install", "supabase", ...args]);
-  } catch {
+  } catch (error) {
+    if (error instanceof WebSetupError) throw error;
     throw new WebSetupError("LOCAL_STATUS_UNAVAILABLE");
   }
 }
@@ -173,11 +229,13 @@ export async function localWebEnvironment(
 async function main() {
   if (process.platform !== "darwin" || Number(process.versions.node.split(".")[0]) !== 24)
     throw new WebSetupError("MACOS_NODE24_REQUIRED");
-  if (process.argv.length !== 2) throw new WebSetupError("INVALID_ARGUMENTS");
+  const checkOnly = process.argv.length === 3 && process.argv[2] === "--check";
+  if (process.argv.length !== 2 && !checkOnly) throw new WebSetupError("INVALID_ARGUMENTS");
   const env = await localWebEnvironment();
   process.stdout.write(
-    `${JSON.stringify({ status: "STARTING", origin: env.APP_ORIGIN, modelInputs: 0 })}\n`,
+    `${JSON.stringify({ status: checkOnly ? "CHECKED" : "STARTING", origin: env.APP_ORIGIN, modelInputs: 0 })}\n`,
   );
+  if (checkOnly) return;
   const child = spawn(
     process.execPath,
     ["node_modules/next/dist/bin/next", "dev", "--hostname", "127.0.0.1", "--port", "4318"],
@@ -196,7 +254,7 @@ async function main() {
 if (process.argv[1] && pathToFileURL(resolve(process.argv[1])).href === import.meta.url)
   main().catch((error) => {
     process.stderr.write(
-      `${JSON.stringify({ status: "BLOCKED", code: error instanceof WebSetupError ? error.code : "LOCAL_STACK_UNVERIFIED", modelInputs: 0 })}\n`,
+      `${JSON.stringify({ status: "BLOCKED", code: error instanceof WebSetupError ? error.code : "LOCAL_STACK_UNVERIFIED", diagnostic: error instanceof WebSetupError ? error.diagnostic : undefined, modelInputs: 0 })}\n`,
     );
     process.exitCode = 1;
   });
