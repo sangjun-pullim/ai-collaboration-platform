@@ -3,73 +3,18 @@ import { lstat, realpath } from "node:fs/promises";
 import { homedir } from "node:os";
 import { join, resolve } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
+import { FAILSAFE_SCHEMA, load } from "js-yaml";
 import { runLocalSettingsUpgrade } from "./apply-local-ai-settings.mjs";
 
 const project = "ai-collab-txxcvm61";
-const cachedCli = "supabase@2.118.0";
 const host = `unix://${join(homedir(), ".orbstack/run/docker.sock")}`;
 const root = fileURLToPath(new URL("../", import.meta.url));
 
 class WebSetupError extends Error {
-  constructor(code, diagnostic) {
+  constructor(code) {
     super(code);
     this.code = code;
-    if (diagnostic) this.diagnostic = diagnostic;
   }
-}
-
-function statusFailure(tool, error, stdout, stderr) {
-  const text = `${stdout}\n${stderr}`.toLowerCase();
-  const has = (...markers) => markers.some((marker) => text.includes(marker));
-  let reason = "CLI_FAILED";
-  if (error.code === "ENOENT") reason = "CLI_NOT_INSTALLED";
-  else if (error.code === "ERR_CHILD_PROCESS_STDIO_MAXBUFFER") reason = "CLI_OUTPUT_TOO_LARGE";
-  else if (error.killed) reason = "CLI_TIMEOUT";
-  else if (has("telemetry.json")) reason = "CLI_STATE_UNAVAILABLE";
-  else if (has("unknown command", "unknown flag", "unrecognized option", "unrecognized argument"))
-    reason = "CLI_ARGUMENTS_UNSUPPORTED";
-  else if (
-    has(
-      "enotcached",
-      "npm err! canceled",
-      "npm error canceled",
-      "npx canceled due to missing packages",
-      "no matching supabase cli binary package",
-      "could not determine executable",
-    )
-  )
-    reason = "CLI_INSTALLATION_UNAVAILABLE";
-  else if (
-    has(
-      "cannot connect to the docker",
-      "no such container",
-      "statusdbinspecterror",
-      "statusdbnotreadyerror",
-      "statusdbnotrunningerror",
-      "permission denied while trying to connect to the docker",
-    )
-  )
-    reason = "DOCKER_UNAVAILABLE";
-  else if (
-    has(
-      "failed to read config",
-      "failed to load config",
-      "statusconfigloaderror",
-      "statusinvalidconfigerror",
-      "statusworkdirerror",
-      "invalid jwt",
-      "invalid config",
-      "invalid signing",
-    )
-  )
-    reason = "CONFIGURATION_UNAVAILABLE";
-  const failure = new WebSetupError("LOCAL_STATUS_UNAVAILABLE", {
-    tool,
-    reason,
-    exitCode: Number.isInteger(error.code) ? error.code : null,
-  });
-  failure.cliMissing = error.code === "ENOENT";
-  return failure;
 }
 
 function docker(args, input = "") {
@@ -82,7 +27,7 @@ function docker(args, input = "") {
     const child = execFile(
       "docker",
       ["--host", host, ...args],
-      { env, timeout: 15_000, killSignal: "SIGKILL", maxBuffer: 16_384 },
+      { env, timeout: 15_000, killSignal: "SIGKILL", maxBuffer: 65_536 },
       (error, stdout) => {
         if (error) return reject(new WebSetupError("LOCAL_DOCKER_UNAVAILABLE"));
         accept(stdout);
@@ -119,48 +64,98 @@ async function rejectEnvironmentFiles(directory) {
   }
 }
 
-async function localStatus(workdir) {
-  const args = ["status", "--workdir", workdir, "--output", "json"];
-  const env = {
-    ...Object.fromEntries(
-      ["PATH", "HOME", "USER", "LANG", "LC_ALL", "TMPDIR"].flatMap((key) =>
-        process.env[key] ? [[key, process.env[key]]] : [],
-      ),
-    ),
-    DOCKER_HOST: host,
-    NPM_CONFIG_OFFLINE: "true",
-    NPM_CONFIG_UPDATE_NOTIFIER: "false",
-  };
-  function read(command, commandArgs) {
-    return new Promise((accept, reject) => {
-      // Status includes private fields. Capture it in memory and never print or persist it.
-      execFile(
-        command,
-        commandArgs,
-        { env, timeout: 30_000, killSignal: "SIGKILL", maxBuffer: 65_536 },
-        (error, stdout, stderr) =>
-          error ? reject(statusFailure(command, error, stdout, stderr)) : accept(stdout),
-      );
+function entries(value) {
+  return Array.isArray(value) ? value : [];
+}
+
+function transformedKeys(value, authorization) {
+  if (typeof value !== "string") return [];
+  const header = authorization ? /^Authorization:\s*(.*)$/i : /^apikey:\s*(.*)$/i;
+  const credential = header.exec(value)?.[1];
+  if (!credential) return [];
+  if (!credential.startsWith("$(")) {
+    return authorization
+      ? [credential.startsWith("Bearer ") ? credential.slice(7) : ""]
+      : [credential];
+  }
+  // Match the rendered Supabase branches without evaluating Lua or extracting substrings from literals.
+  const variable = authorization ? String.raw`headers\.apikey` : String.raw`query_params\.apikey`;
+  const bearer = authorization ? "Bearer " : "";
+  const forwarded = authorization
+    ? String.raw`(?:\(headers\.authorization ~= nil and headers\.authorization:sub\(1, 10\) ~= 'Bearer sb_' and headers\.authorization\) or )?`
+    : "";
+  const branch = String.raw`\(${variable} == '[^']*' and '${bearer}([^']*)'\)`;
+  const expression = new RegExp(
+    String.raw`^\$\(${forwarded}${branch} or ${branch} or ${variable}\)$`,
+  );
+  return expression.exec(credential)?.slice(1) ?? [];
+}
+
+function* configuredGatewayKeys(document) {
+  for (const consumer of entries(document.consumers)) {
+    if (consumer?.username !== "anon") continue;
+    for (const credential of entries(consumer.keyauth_credentials)) yield credential?.key;
+  }
+  for (const service of entries(document.services)) {
+    for (const plugin of entries(service?.plugins)) {
+      if (
+        plugin?.name !== "request-transformer" ||
+        (plugin.enabled !== undefined && !["true", "True", "TRUE"].includes(plugin.enabled))
+      )
+        continue;
+      for (const operation of ["add", "replace"]) {
+        for (const value of entries(plugin.config?.[operation]?.headers)) {
+          yield* transformedKeys(value, true);
+        }
+      }
+      for (const value of entries(plugin.config?.replace?.querystring)) {
+        yield* transformedKeys(value, false);
+      }
+    }
+  }
+}
+
+async function gatewayPublicKey(execute, gatewayId) {
+  let config;
+  try {
+    // The rendered config includes private fields. Keep it in memory and never print or persist it.
+    config = await execute(["exec", gatewayId, "cat", "/home/kong/kong.yml"]);
+  } catch {
+    throw new WebSetupError("GATEWAY_PUBLIC_KEY_UNAVAILABLE");
+  }
+  if (typeof config !== "string" || Buffer.byteLength(config) > 65_536)
+    throw new WebSetupError("GATEWAY_PUBLIC_KEY_UNVERIFIED");
+  let document;
+  try {
+    document = load(config, {
+      schema: FAILSAFE_SCHEMA,
+      maxDepth: 24,
+      maxTotalMergeKeys: 0,
+      onWarning() {
+        throw new WebSetupError("GATEWAY_PUBLIC_KEY_UNVERIFIED");
+      },
     });
+    if (!document || typeof document !== "object" || Array.isArray(document)) throw new Error();
+  } catch {
+    throw new WebSetupError("GATEWAY_PUBLIC_KEY_UNVERIFIED");
   }
-  try {
-    return await read("supabase", args);
-  } catch (error) {
-    if (!error.cliMissing) throw error;
+  const keys = new Set();
+  for (const credential of configuredGatewayKeys(document)) {
+    try {
+      keys.add(anonKey(credential));
+    } catch {
+      // Only an entire anon JWT in an active configured credential field can enter the web environment.
+    }
   }
-  try {
-    return await read("npx", ["--offline", "--no-install", cachedCli, ...args]);
-  } catch (error) {
-    if (error instanceof WebSetupError) throw error;
-    throw new WebSetupError("LOCAL_STATUS_UNAVAILABLE");
-  }
+  if (keys.size !== 1) throw new WebSetupError("GATEWAY_PUBLIC_KEY_UNVERIFIED");
+  return keys.values().next().value;
 }
 
 /** Resolve local public settings; private status fields never enter the web environment. */
 export async function localWebEnvironment(
   execute = docker,
   inherited = process.env,
-  readStatus = localStatus,
+  readStatus = undefined,
   directory = root,
 ) {
   await rejectEnvironmentFiles(directory);
@@ -206,7 +201,12 @@ export async function localWebEnvironment(
   }
   let key;
   try {
-    const status = JSON.parse(await readStatus(dbWorkdir));
+    const status = readStatus
+      ? JSON.parse(await readStatus(dbWorkdir))
+      : {
+          API_URL: "http://127.0.0.1:56321",
+          ANON_KEY: await gatewayPublicKey(execute, gateway.id),
+        };
     if (status?.API_URL !== "http://127.0.0.1:56321")
       throw new WebSetupError("LOCAL_STATUS_ENDPOINT_MISMATCH");
     key = anonKey(status.ANON_KEY);
@@ -256,7 +256,7 @@ async function main() {
 if (process.argv[1] && pathToFileURL(resolve(process.argv[1])).href === import.meta.url)
   main().catch((error) => {
     process.stderr.write(
-      `${JSON.stringify({ status: "BLOCKED", code: error instanceof WebSetupError ? error.code : "LOCAL_STACK_UNVERIFIED", diagnostic: error instanceof WebSetupError ? error.diagnostic : undefined, modelInputs: 0 })}\n`,
+      `${JSON.stringify({ status: "BLOCKED", code: error instanceof WebSetupError ? error.code : "LOCAL_STACK_UNVERIFIED", modelInputs: 0 })}\n`,
     );
     process.exitCode = 1;
   });
