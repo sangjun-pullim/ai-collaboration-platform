@@ -77,6 +77,40 @@ Supabase의 신규 로컬 개발 흐름은 CLI·container runtime으로 시작�
 
 자료 전송 실패는 원래 실행 기록으로 복구한다. 새 AI 입력으로 자동 재시도하지 않는다. 새 자료 기능의 설치는 Claude 실행 정책·두 PC 왕복 검증의 통과를 대신하지 않는다.
 
+### 로컬 DB의 설치 표식 확인
+
+운영자는 로컬 Docker를 실행하는 개발 Mac의 터미널에서 아래 명령으로 이 프로젝트 DB의 설치 표식을 확인한다. 읽기 전용 트랜잭션에서 함수의 존재와 자동 탐색 분기만 조회하며 사용자 데이터·인증정보를 출력하지 않는다. JSON의 네 값은 SQL010–013에 대응한다. 모두 `true`여도 전체 migration 적용·권한·HTTP·브라우저 동작의 통과를 뜻하지 않으며 실제 검증을 이어가야 한다.
+
+```sh
+docker exec -i supabase_db_ai-collab-txxcvm61 \
+  psql -X -U postgres -d postgres -Atq -v ON_ERROR_STOP=1 <<'SQL'
+BEGIN READ ONLY;
+SET LOCAL statement_timeout = '5s';
+SELECT json_build_object(
+  'aiSettings',
+    to_regprocedure('public.runtime_settings_human(text,jsonb)') IS NOT NULL
+    AND to_regprocedure('public.runtime_settings_device(text,jsonb,text)') IS NOT NULL,
+  'aiPause',
+    to_regprocedure('public.workflow_human_input_control(jsonb)') IS NOT NULL
+    AND to_regprocedure('public.workflow_device_admission(jsonb,text)') IS NOT NULL,
+  'folderAutoRead', EXISTS (
+    SELECT 1 FROM pg_catalog.pg_proc p
+    JOIN pg_catalog.pg_namespace n ON n.oid = p.pronamespace
+    WHERE n.nspname = 'runtime_settings_private'
+      AND p.proname = 'validate' AND p.pronargs = 2 AND p.prokind = 'f'
+      AND position('AUTO_CODE' IN pg_get_functiondef(p.oid)) > 0
+  ),
+  'answerSources',
+    to_regprocedure('public.workflow_device_source_support(jsonb,text)') IS NOT NULL
+    AND to_regprocedure('public.workflow_device_source_confirm(jsonb,text)') IS NOT NULL
+    AND to_regprocedure('public.workflow_human_source_read(jsonb)') IS NOT NULL
+);
+ROLLBACK;
+SQL
+```
+
+`false` 또는 오류가 있으면 해당 출력으로 설치 상태를 먼저 확인한다. 이 점검은 migration을 적용하거나 DB를 reset하지 않는다. Docker 접근이 거절되면 DB가 없다고 해석하지 않으며 같은 프로젝트를 운영하는 Mac에서 확인한다.
+
 ## 현재 로컬 기기와 저장소 등록
 
 현재 CLI는 macOS·Node 24를 지원한다. 루트에서 아래처럼 준비한다.
