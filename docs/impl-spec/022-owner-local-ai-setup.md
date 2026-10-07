@@ -145,6 +145,8 @@ risk-surface: auth, permission, db-schema, public-api
 
 Additional execution: compile `tsconfig.integration.json`, then explicitly run `node --test --test-concurrency=1 .integration-build/tests/integration/owner-local-ai-setup.test.js .integration-build/tests/integration/claude-product-runtime.test.js`. Add a bounded settings browser parent runner to execute `playwright --config playwright.settings.config.ts` with private DB/admin held only by its parent. New test file/config/script paths are part of the implementation inventory. Existing root integration scripts are not claimed to discover these new files automatically.
 
+실제 DB 준비의 후속 실행 범위: `scripts/apply-local-ai-settings.mjs`와 `tests/unit/local-settings-upgrade.test.ts`로 지정한 OrbStack 개발 DB에 미설치010–013을 한 transaction으로 적용하는 운영 명령과 격리 검사를 추가한다. 컨테이너 고정 ID·프로젝트·loopback port·소유 workdir와 SQL hash를 확인한다. 기존001–009의 필수 함수, SQL005의 receipt 외래키 3개의 shape·지연 검사 설정, SQL008의 actor·public wrapper 원문과 설정을 읽기 전용으로 확인하고 같은 transaction guard에서도 검사한다. 기존 필수 조건이 없거나 새 schema가 이미 존재하면 적용을 거절한다. 원본 SQL 파일은 변경하지 않으며010/013의 바깥 transaction만 묶음 실행 안에서 제거한다.011/012도 같은 transaction에 포함해 부분 적용을 방지한다. 응답 유실은 미확정으로 보존하고 자동 재적용하지 않는다. 이 준비·독립 검토는 실제 DB·upgrade·HTTP·브라우저 검증을 대신하지 않는다.
+
 ## Review Notes
 
 Round 1: C0/H4/M2/L0/INFO1. All six corrections ACCEPTED; native-input authorization INFO preserved. Round 2: C0/H1/M1/L0/INFO1. Both corrections ACCEPTED; native-input authorization INFO preserved. Round 3: PASS, C0/H0/M0/L0/INFO1. The final nonretired AI_PAIR resumption versus proof-closed terminal DIRECT distinction was confirmed against actual SQL. Native authorization INFO is retained. 기존 전체 목표 승인에 따라 구현 중이다. 실제 native/DB 검증은 별도 실행 조건을 유지한다.

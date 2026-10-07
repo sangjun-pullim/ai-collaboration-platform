@@ -25,6 +25,8 @@
 
 2026-10-07 기준이다. 실제 모델 호출, 가짜 provider, 브라우저 검사를 구분한다.
 
+사용자 Mac의 로컬 DB 점검에서 `aiSettings`, `aiPause`, `folderAutoRead`, `answerSources`가 모두 `false`로 보고됐다. 이는010–013의 설치 표식이 없다는 근거이며 전체 기존 schema의 상태를 증명하지 않는다. 지정한 개발 DB에 네 변경을 한 transaction으로 적용하는 [로컬 운영 명령](../guides/onboarding-and-settings.md#이-개발-mac의-ai-설정-db-적용)을 준비했다. 독립 리뷰 1회에서 SQL005·008의 기존 조건 검사 누락 HIGH 1건을 확인했고 거절 검사 2개로 먼저 재현한 뒤 읽기 전용 사전 검사와 같은 transaction의 재검사로 보정했다. 관련 격리 검사 15개를 포함한 웹 단위 검사275/275와 타입·lint·format 검사를 통과했다. 두 번째 독립 리뷰는 C0/H0/M0/L0/INFO0으로 통과했고 변경 없는 첫 리뷰 결론과 검사 결과를 재사용했다. 실제 DB 적용은 실행하지 않았으며 DB·HTTP·브라우저 수용은 아직 미완료다.
+
 | 범위 | 상태 | 검증 근거와 남은 작업 |
 |---|---|---|
 | Codex 연결 실험 [001](../impl-spec/archive/001-local-ai-runtime-spike.md) | 완료 | 당시 격리 검사와 독립 구현 리뷰, 합성 저장소의 실제 새 실행·동일 소유 thread/cwd 재개·대화 표식 일치·INTERRUPTED 종결을 확인했다. 이후 macOS·Claude Code 중심 참여, 기존 공식 로그인·개인 설정과 connector 소유 세션의 요구를 확정해 마지막 단계의 미완료 표시를 보정했다. 기존 기록과 현재 검사 정의를 대조한 독립 종료 리뷰를 통과해 명세를 보관했다. 실제 AI를 다시 실행하지 않았으며 Claude 호환성과 두 PC 검증은 별도 미완료 범위다. |

@@ -111,6 +111,21 @@ SQL
 
 `false` 또는 오류가 있으면 해당 출력으로 설치 상태를 먼저 확인한다. 이 점검은 migration을 적용하거나 DB를 reset하지 않는다. Docker 접근이 거절되면 DB가 없다고 해석하지 않으며 같은 프로젝트를 운영하는 Mac에서 확인한다.
 
+### 이 개발 Mac의 AI 설정 DB 적용
+
+**로컬 DB 스키마를 변경하는 명령이다.** 기존 입장·방·대화 데이터를 보존하면서 AI 설정 기능을 추가한다. 이 프로젝트의 지정한 OrbStack 개발 DB만 대상으로 하며 공유·운영 DB에는 사용하지 않는다.
+
+1. 운영자는 이 프로젝트 루트의 Node.js 24 터미널에서 아래 명령을 실행한다. 컨테이너의 프로젝트·고정 ID·로컬 DB 포트·소유한 임시 작업 위치와 SQL 파일 hash를 검사한다. 기존001–009의 필수 함수, SQL005의 기기 삭제 관련 외래키 3개의 지연 검사 설정, SQL008의 질문자 확인 함수·공개 호출 함수의 원문을 먼저 조회하고 적용 transaction에서도 같은 조건을 확인한다. 새 설정 schema가 이미 있으면 적용하지 않는다. 네 변경은 한 transaction으로 적용하며 SQL 오류는 전체 rollback한다. PostgREST cache 갱신 알림도 같은 commit에 포함한다.
+
+   ```sh
+   node scripts/apply-local-ai-settings.mjs --apply
+   ```
+
+2. 운영자는 출력의 `status`와 `features`를 확인한다. `APPLIED`와 네 값 `true`는 이 명령의 DB 적용·재조회 완료이며 실제 웹·Claude 답변 통과와 구분한다. `ALREADY_PRESENT`는 함수 설치 표식이 이미 있다는 뜻이며 파일을 재적용하지 않는다.
+3. `BLOCKED`나 `APPLY_NOT_CONFIRMED`이면 운영자는 출력을 보존한다. `--apply` 없이 같은 명령으로 설치 표식만 다시 조회하며 자동 재시도·DB reset·이미 적용한 SQL의 덮어쓰기는 하지 않는다. `BASELINE_NOT_READY`는 기존 필수 조건 누락으로 적용 전에 거절한 상태다. 부분 적용이나 다른 작업 위치는 별도 상태 확인이 필요하다.
+
+이 명령은 AI CLI·모델을 실행하거나 웹 서버를 재시작하지 않는다. 현재 실제 검증과 남은 적용 상태는 [진행 정본](../planning/delivery-and-validation.md#현재-진행-상태)을 따른다.
+
 ## 현재 로컬 기기와 저장소 등록
 
 현재 CLI는 macOS·Node 24를 지원한다. 루트에서 아래처럼 준비한다.
