@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { nativeToolNames } from "../src/workspace/tool-contracts.ts";
-import { ClaudeAdapter } from "../src/claude/adapter.ts";
+import { ClaudeAdapter, type ClaudeAdapterOptions } from "../src/claude/adapter.ts";
 import { OWNED_SERVER, NATIVE_TOOL_NAMES } from "../src/claude/input-proof.ts";
 import {
   RuntimeError,
@@ -155,7 +155,7 @@ export function claudeHarness(
       env: {},
     }),
   };
-  const createAdapter = () =>
+  const createAdapter = (overrides: Partial<ClaudeAdapterOptions> = {}) =>
     new ClaudeAdapter({
       policy,
       history: async () => structuredClone(history),
@@ -165,6 +165,7 @@ export function claudeHarness(
         starts++;
         return native;
       },
+      ...overrides,
     });
   const adapter = createAdapter();
   const init = () => ({
@@ -280,6 +281,26 @@ export const streamingAbort = {
   terminal_reason: "aborted_streaming",
   errors: ["Interrupted"],
 };
+export function nativeConversationHistory(history: OwnedHistory, version: string): OwnedHistory {
+  let parentUuid: string | null = null;
+  const records = history.records
+    .filter((frame) => ["user", "assistant"].includes(String(frame.type)))
+    .map((frame) => {
+      const record = {
+        type: frame.type,
+        uuid: frame.uuid,
+        message: structuredClone(frame.message),
+        parentUuid,
+        sessionId: history.sessionId,
+        cwd: history.root,
+        version,
+        isSidechain: false,
+      };
+      parentUuid = String(frame.uuid);
+      return record;
+    });
+  return { ...history, format: "claude-jsonl-v1", records };
+}
 export async function claudeFixture() {
   const f = await runtimeFixture();
   const h = claudeHarness(f);

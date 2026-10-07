@@ -178,6 +178,77 @@ function closeInterrupted(record: RuntimeRecord) {
   record.context!.level = "L2";
 }
 
+for (const state of ["VERIFIED", "UNVERIFIED"] as const) {
+  test(`should retain immutable ${state} native history evidence with its completed terminal`, async () => {
+    const f = await runtimeFixture();
+    try {
+      const record = interruptedRecord(f.record);
+      closeInterrupted(record);
+      const evidence: import("../src/runtime-contracts.ts").NativeHistoryEvidence =
+        state === "VERIFIED"
+          ? {
+              state,
+              format: "claude-jsonl-v1",
+              recordCount: 2,
+              prefixHash: digest("native-prefix"),
+            }
+          : { state, reason: "HISTORY_REJECTED" };
+      record.attempts[0].terminal!.terminal = "COMPLETED";
+      record.context!.ownedTurns[0].terminal = "COMPLETED";
+      record.attempts[0].terminal!.nativeHistory = structuredClone(evidence);
+      record.context!.ownedTurns[0].nativeHistory = structuredClone(evidence);
+      await f.store.write(record);
+      assert.deepEqual(await f.store.read(), record);
+      const replaced = structuredClone(record);
+      replaced.attempts[0].terminal!.nativeHistory = {
+        state: "UNVERIFIED",
+        reason: "MISSING_HISTORY",
+      };
+      replaced.context!.ownedTurns[0].nativeHistory = structuredClone(
+        replaced.attempts[0].terminal!.nativeHistory,
+      );
+      await assert.rejects(async () => f.store.write(replaced), { code: "UNSAFE_STORAGE" });
+      const mismatch = structuredClone(record);
+      delete mismatch.context!.ownedTurns[0].nativeHistory;
+      await assert.rejects(async () => f.store.write(mismatch), { code: "UNSAFE_STORAGE" });
+    } finally {
+      await f.close();
+    }
+  });
+}
+
+test("should reject native history evidence in legacy and Codex terminal locations", async () => {
+  for (const version of [1, 2] as const) {
+    const f = await runtimeFixture();
+    try {
+      appendFixtureCompletion(f.record);
+      if (version === 2) {
+        Object.assign(f.record, { version: 2 });
+        Object.assign(f.record.settings!.capabilities, { runtime: "codex" });
+        const { capabilityHash } = await import("../src/settings/contracts.ts");
+        const { snapshotHash: oldHash, ...contents } = f.record.settings!.capabilities;
+        void oldHash;
+        f.record.settings!.capabilities.snapshotHash = capabilityHash({
+          ...contents,
+          runtime: "codex",
+          policy: "verified",
+        });
+      }
+      await f.store.write(f.record);
+      assert.deepEqual(await f.store.read(), f.record);
+      for (const location of ["terminal", "closed"] as const) {
+        const forged = structuredClone(f.record);
+        const nativeHistory = { state: "UNVERIFIED" as const, reason: "MISSING_HISTORY" as const };
+        if (location === "terminal") forged.attempts[0].terminal!.nativeHistory = nativeHistory;
+        else forged.context!.ownedTurns[0].nativeHistory = nativeHistory;
+        await assert.rejects(async () => f.store.write(forged), { code: "UNSAFE_STORAGE" });
+      }
+    } finally {
+      await f.close();
+    }
+  }
+});
+
 test("should preserve v1 bytes and reject interruption fields in every legacy evidence location", async () => {
   const f = await runtimeFixture();
   try {

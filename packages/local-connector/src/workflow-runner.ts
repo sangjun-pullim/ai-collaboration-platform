@@ -2176,6 +2176,9 @@ export class WorkflowRunner {
                     : {}),
                   promptHash: a.nativeIntent!.promptHash,
                   resultHash: terminal.finalItems[0]?.hash,
+                  ...(terminal.nativeHistory
+                    ? { nativeHistory: structuredClone(terminal.nativeHistory) }
+                    : {}),
                   toolCancellations: structuredClone(a.toolCancellations ?? []),
                   ...(a.nativeInterruption
                     ? { nativeInterruption: structuredClone(a.nativeInterruption) }

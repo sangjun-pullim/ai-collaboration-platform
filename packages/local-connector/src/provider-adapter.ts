@@ -1,5 +1,6 @@
 import { ClaudeAdapter, type ClaudeAdapterOptions } from "./claude/adapter.ts";
 import { ClaudeLaunchPolicy, type SyntheticClaudeEvidence } from "./claude/launch-policy.ts";
+import { NativeClaudePolicy } from "./claude/native-policy.ts";
 import { ClaudeCatalogStore, type CatalogLease, type CatalogSync } from "./claude/catalog-store.ts";
 import { ClaudeTransport } from "./claude/transport.ts";
 import { CodexAdapter, type CodexAdapterOptions } from "./codex-adapter.ts";
@@ -44,7 +45,10 @@ export function createProviderAdapter(
   }
   if (provider !== "claude") throw new RuntimeError("INVALID_RUNTIME");
   let lease: CatalogLease | undefined;
-  const policy = new ClaudeLaunchPolicy(options.claude?.evidence, options.claude?.environment);
+  const policy =
+    options.claude?.evidence !== undefined
+      ? new ClaudeLaunchPolicy(options.claude.evidence, options.claude.environment)
+      : new NativeClaudePolicy(options.claude?.environment);
   return new ClaudeAdapter({
     policy,
     beforeContextCreation: () => catalog.assertStartup(),

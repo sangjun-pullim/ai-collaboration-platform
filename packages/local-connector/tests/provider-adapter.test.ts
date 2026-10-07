@@ -46,7 +46,7 @@ test("should preserve Codex construction through its existing transport factory"
     await f.close();
   }
 });
-test("should retain default policy rejection with zero catalog child personal IO and user inputs", async (t) => {
+test("should reject unbranded evidence with zero catalog child personal IO and user inputs", async (t) => {
   const f = await policyFixture();
   let catalog = 0,
     children = 0,
@@ -69,6 +69,7 @@ test("should retain default policy rejection with zero catalog child personal IO
       return f.context;
     },
     claude: {
+      evidence: structuredClone(f.evidence),
       environment,
       transport() {
         children++;

@@ -18,6 +18,9 @@ export type SourceKind = "user" | "project" | "local" | "managed" | "instruction
 export interface ConfigurationSource {
   path: string;
   kind: SourceKind;
+  projection?: "native-global";
+  projectionRoots?: readonly string[];
+  nativeReadOnly?: boolean;
 }
 export interface SourceSnapshot {
   path: string;
@@ -140,6 +143,107 @@ const authenticationKeys = new Set([
 function executionProjection(value: Record<string, unknown>) {
   return Object.fromEntries(Object.entries(value).filter(([key]) => !authenticationKeys.has(key)));
 }
+function nativeGlobalProjection(value: Record<string, unknown>, roots: readonly string[] = []) {
+  // These are CLI bookkeeping, not executable policy. Unknown keys remain pinned.
+  const bookkeeping = new Set([
+    "numStartups",
+    "installMethod",
+    "autoUpdates",
+    "autoUpdaterStatus",
+    "cachedStatsigGates",
+    "cachedDynamicConfigs",
+    "cachedGrowthBookFeatures",
+    "cachedClaudeAiOrg",
+    "cachedSubscriptionInfo",
+    "cachedExtraUsageEnabled",
+    "cachedAccountSubscriptionType",
+    "lastReleaseNotesSeen",
+    "lastOnboardingVersion",
+    "hasCompletedOnboarding",
+    "firstStartTime",
+    "lastCost",
+    "lastDuration",
+    "lastSessionId",
+    "changelogCache",
+    "claudeCodeFirstTokenDate",
+    "s1mAccessCache",
+    "groveConfigCache",
+    "migrationFlags",
+    "nativeBinaryLastUpdatedAt",
+    "tipsHistory",
+    "cachedUsageUtilization",
+    "cachedGrowthBookFeaturesAt",
+    "cachedExperimentData",
+    "cachedExperimentFeatures",
+    "cachedArtifactRoster",
+    "cachedChromeExtensionInstalled",
+    "cachedExtraUsageDisabledReason",
+    "additionalModelCostsCache",
+    "additionalModelOptionsCache",
+    "autoCompactWindowsCache",
+    "clientDataCacheSlots",
+    "orgModelDefaultCache",
+    "modelAccessCache",
+    "overageCreditGrantCache",
+    "promoStartupStatusCache",
+    "passesEligibilityCache",
+    "githubWebConnectionStatusCache",
+    "changelogLastFetched",
+    "agentLastUsed",
+    "skillUsage",
+    "toolUsage",
+    "pluginUsage",
+    "announcementImpressions",
+    "seenNotifications",
+    "tipsHistoryByCommand",
+    "tipLifetimeShownCounts",
+    "subscriptionNoticeCount",
+    "promptQueueUseCount",
+  ]);
+  const projection = Object.fromEntries(
+    Object.entries(executionProjection(value)).filter(([key]) => !bookkeeping.has(key)),
+  );
+  const account = value.oauthAccount;
+  delete projection.projects;
+  if (value.projects !== undefined) {
+    const projects = object(value.projects);
+    projection.projects = Object.fromEntries(
+      roots.flatMap((root) => {
+        if (!Object.hasOwn(projects, root)) return [];
+        const policy = Object.fromEntries(
+          Object.entries(object(projects[root])).filter(
+            ([key]) =>
+              !/^last[A-Z]/.test(key) &&
+              ![
+                "exampleFiles",
+                "exampleFilesGeneratedAt",
+                "reactVulnerabilityCache",
+                "hasUnseenTeamArtifacts",
+                "hasClaudeMdExternalIncludesWarningShown",
+              ].includes(key),
+          ),
+        );
+        return Object.keys(policy).length ? [[root, policy]] : [];
+      }),
+    );
+  }
+  if (account !== undefined) {
+    const metadata = object(account);
+    // Preserve account and organization transitions while allowing token/cache refreshes.
+    projection.account = Object.fromEntries(
+      Object.entries(metadata).filter(([key]) =>
+        [
+          "accountUuid",
+          "organizationUuid",
+          "organizationType",
+          "billingType",
+          "emailAddress",
+        ].includes(key),
+      ),
+    );
+  }
+  return projection;
+}
 function nonempty(value: unknown) {
   return (
     value !== undefined &&
@@ -177,8 +281,18 @@ export function snapshotSource(
       } catch {
         throw new RuntimeError("POLICY_UNCONFIRMED");
       }
-      const execution = executionProjection(value);
+      const execution =
+        source.projection === "native-global"
+          ? nativeGlobalProjection(value, source.projectionRoots)
+          : executionProjection(value);
       projected = execution;
+      if (
+        source.nativeReadOnly &&
+        (nonempty(value.additionalDirectories) ||
+          (value.permissions !== undefined &&
+            nonempty(object(value.permissions).additionalDirectories)))
+      )
+        throw new RuntimeError("POLICY_UNCONFIRMED");
       if (value.enabledPlugins !== undefined) {
         const enabled = object(value.enabledPlugins);
         plugins = Object.keys(enabled).sort();
@@ -196,6 +310,21 @@ export function snapshotSource(
       }
       if (value.env !== undefined) {
         const raw = object(value.env);
+        if (
+          source.nativeReadOnly &&
+          Object.entries(raw).some(
+            ([key, entry]) =>
+              entry &&
+              (/^(?:DYLD_|LD_PRELOAD$|NODE_OPTIONS$|BUN_OPTIONS$|BUN_INSPECT$)/.test(key) ||
+                /^(?:ANTHROPIC_API_KEY|ANTHROPIC_AUTH_TOKEN|ANTHROPIC_BASE_URL|ANTHROPIC_CUSTOM_HEADERS|CLAUDE_CODE_OAUTH_TOKEN)$/.test(
+                  key,
+                ) ||
+                /^(?:CLAUDE_CODE_USE_|CLAUDE_CODE_SETTINGS_|CLAUDE_CODE_ADDITIONAL_DIRECTORIES_)/.test(
+                  key,
+                )),
+          )
+        )
+          throw new RuntimeError("POLICY_UNCONFIRMED");
         if (
           Object.entries(raw).some(
             ([key, entry]) =>
@@ -249,15 +378,44 @@ export function snapshotSource(
 
 export function snapshotBinary(path: string, prior?: SourceSnapshot): SourceSnapshot {
   canonicalAncestors(path);
-  const identity = fileIdentity(lstatSync(path));
+  const before = lstatSync(path);
+  const identity = fileIdentity(before);
+  if (
+    !before.isFile() ||
+    before.uid !== process.getuid?.() ||
+    (before.mode & 0o022) !== 0 ||
+    before.size <= 0 ||
+    before.size > 256 * 1024 * 1024
+  )
+    throw new RuntimeError("UNSAFE_STORAGE");
   if (prior?.identity === identity) return prior;
-  const bytes = readConfigurationFile(path, 256 * 1024 * 1024, false);
-  if (!bytes) throw new RuntimeError("POLICY_UNCONFIRMED");
+  const fd = openSync(path, constants.O_RDONLY | constants.O_NOFOLLOW | constants.O_NONBLOCK);
+  const hash = createHash("sha256");
+  try {
+    if (fileIdentity(fstatSync(fd)) !== identity) throw new RuntimeError("SNAPSHOT_CHANGED");
+    const buffer = Buffer.alloc(64 * 1024);
+    let offset = 0;
+    for (;;) {
+      const count = readSync(fd, buffer, 0, buffer.length, offset);
+      if (!count) break;
+      offset += count;
+      if (offset > before.size) throw new RuntimeError("SNAPSHOT_CHANGED");
+      hash.update(buffer.subarray(0, count));
+    }
+    if (
+      offset !== before.size ||
+      fileIdentity(fstatSync(fd)) !== identity ||
+      fileIdentity(lstatSync(path)) !== identity
+    )
+      throw new RuntimeError("SNAPSHOT_CHANGED");
+  } finally {
+    closeSync(fd);
+  }
   return {
     path,
     kind: "binary",
     identity,
-    hash: createHash("sha256").update(bytes).digest("hex"),
+    hash: hash.digest("hex"),
     env: {},
     plugins: [],
     managedConflict: false,

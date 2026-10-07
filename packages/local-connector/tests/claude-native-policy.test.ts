@@ -1,0 +1,240 @@
+import assert from "node:assert/strict";
+import test from "node:test";
+import { readFile, symlink, unlink, writeFile } from "node:fs/promises";
+import { join } from "node:path";
+import { createProviderAdapter } from "../src/provider-adapter.ts";
+import { NativeClaudePolicy } from "../src/claude/native-policy.ts";
+import {
+  assertNativeInstallation,
+  verifyNativeInstallation,
+} from "../src/claude/native-installation.ts";
+import { digest, type OwnedContext, type RuntimeSettings } from "../src/runtime-contracts.ts";
+import { nativeToolNames } from "../src/workspace/tool-contracts.ts";
+import { FakeTransport } from "./claude-runtime-fixture.ts";
+import { claudeRecord } from "./provider-runtime-fixture.ts";
+import { nativeFixture } from "./claude-native-fixture.ts";
+import fs from "node:fs";
+import { syncBuiltinESMExports } from "node:module";
+
+test("should admit a verified native Claude installation through the default factory", async (t) => {
+  const f = await nativeFixture(t);
+  const native = new FakeTransport();
+  const launches: import("../src/claude/transport.ts").Launch[] = [];
+  const adapter = createProviderAdapter("claude", {
+    profile: f.profile,
+    claude: {
+      environment: {},
+      transport(launch) {
+        launches.push(launch);
+        return native;
+      },
+    },
+  });
+  try {
+    const before = await readFile(f.settingsPath);
+    const capability = await adapter.capabilities(f.root, () => {});
+    assert.equal(capability.policy, "CONFIRMED");
+    assert.equal(capability.version, "2.1.288");
+    assert.equal(launches[0].executable, f.executable);
+    assert.equal(launches[0].args[0], "--print");
+    assert.equal(native.writes.length, 0);
+    assert.equal(f.probes.filter((probe) => probe.executable === "/usr/bin/codesign").length, 1);
+    assert.deepEqual(await readFile(f.settingsPath), before);
+  } finally {
+    await adapter.close();
+  }
+});
+
+test("should ignore AGENTS sources while their builtin reader is disabled", async (t) => {
+  const f = await nativeFixture(t);
+  const target = join(f.home, "codex-only.md");
+  await writeFile(target, "Codex-only synthetic instructions\n", { mode: 0o600 });
+  await symlink(target, join(f.root, "AGENTS.md"));
+  const policy = new NativeClaudePolicy({});
+  await policy.admit(f.root, () => {});
+  assert.notEqual(policy.fingerprint, "0".repeat(64));
+});
+
+for (const failure of [
+  "publisher",
+  "version",
+  "managed domain",
+  "managed error",
+  "local policy",
+  "login",
+  "team",
+  "api",
+  "config",
+] as const) {
+  test(`should reject unverified ${failure} before catalog creation or model input`, async (t) => {
+    const f = await nativeFixture(t);
+    if (failure === "publisher") f.state.signature = false;
+    if (failure === "version") f.state.version = "2.1.289 (Claude Code)\n";
+    if (failure === "managed domain") f.state.managed = true;
+    if (failure === "managed error") f.state.defaultsError = true;
+    if (failure === "local policy")
+      f.state.managedPath = "/Library/Application Support/ClaudeCode/managed-settings.d";
+    if (failure === "login") f.state.auth.loggedIn = false;
+    if (failure === "team") f.state.auth.subscriptionType = "team";
+    if (failure === "api") f.state.auth.authMethod = "api-key";
+    if (failure === "config") f.state.auth.configDirectory = join(f.directory, "other-profile");
+    let children = 0,
+      reservations = 0;
+    const adapter = createProviderAdapter("claude", {
+      profile: f.profile,
+      reserveCatalog: async () => {
+        reservations++;
+        return f.record.context!;
+      },
+      claude: {
+        environment: {},
+        transport() {
+          children++;
+          return new FakeTransport();
+        },
+      },
+    });
+    try {
+      await assert.rejects(
+        adapter.capabilities(f.root, () => {}),
+        { code: "POLICY_UNCONFIRMED" },
+      );
+      assert.deepEqual({ children, reservations }, { children: 0, reservations: 0 });
+      if (failure === "publisher") assert.equal(f.probes.length, 1);
+    } finally {
+      await adapter.close();
+    }
+  });
+}
+
+async function admittedFixture(t: import("node:test").TestContext) {
+  const f = await nativeFixture(t);
+  const policy = new NativeClaudePolicy({
+    CLAUDE_CODE_EFFORT_LEVEL: "medium",
+    LOCAL_AUTH_TOKEN: "must-strip",
+  });
+  await policy.admit(f.root, () => {});
+  const record = claudeRecord(f.record);
+  const context: OwnedContext = record.context!;
+  context.materialization!.version = "2.1.288";
+  context.materialization!.policyFingerprint = policy.fingerprint;
+  const settings: RuntimeSettings = record.settings!;
+  return { ...f, policy, context, settings };
+}
+
+test("should preserve personal settings while applying only task read-only overrides", async (t) => {
+  const f = await admittedFixture(t);
+  const before = await readFile(f.settingsPath);
+  const tools = nativeToolNames("SELECTED", false);
+  const launch = f.policy.launch(f.context, f.settings, tools, false);
+  const overlay = JSON.parse(launch.args[launch.args.indexOf("--settings") + 1]);
+  assert.equal(launch.executable, f.executable);
+  assert.equal(launch.args[0], "--print");
+  assert.equal(launch.args[launch.args.indexOf("--setting-sources") + 1], "user,project,local");
+  assert.equal(launch.args[launch.args.indexOf("--permission-mode") + 1], "dontAsk");
+  assert.equal(launch.args[launch.args.indexOf("--tools") + 1], "");
+  assert.ok(launch.args.includes("--strict-mcp-config"));
+  assert.equal(overlay.disableAllHooks, true);
+  assert.equal(overlay.enabledPlugins["personal@catalog"], false);
+  assert.equal(overlay.enabledPlugins["cc-plugin-agents-md@builtin"], false);
+  assert.equal(overlay.enabledPlugins["cc-plugin-telemetry@builtin"], false);
+  assert.equal(launch.env.LOCAL_AUTH_TOKEN, undefined);
+  assert.ok(!launch.args.includes("--effort"));
+  assert.equal(launch.env.CLAUDE_CODE_EFFORT_LEVEL, "medium");
+  f.settings.requested.effort = "high";
+  const selected = f.policy.launch(f.context, f.settings, tools, true);
+  assert.equal(selected.args[selected.args.indexOf("--effort") + 1], "high");
+  assert.equal(selected.args[selected.args.indexOf("--resume") + 1], f.context.threadId);
+  assert.ok(!selected.args.includes("--session-id"));
+  assert.deepEqual(await readFile(f.settingsPath), before);
+});
+
+test("should ignore native bookkeeping refresh and retain account and execution drift detection", async (t) => {
+  const f = await admittedFixture(t);
+  const fingerprint = f.policy.fingerprint;
+  f.global.numStartups++;
+  f.global.cachedStatsigGates.example = false;
+  f.global.oauthAccount.profileFetchedAt++;
+  f.global.projects[f.root].lastCost++;
+  await f.json(f.globalPath, f.global);
+  f.policy.assertLive(f.root, () => {});
+  assert.equal(f.policy.fingerprint, fingerprint);
+  f.global.oauthAccount.organizationUuid = "other-org";
+  await f.json(f.globalPath, f.global);
+  assert.throws(() => f.policy.assertLive(f.root, () => {}), { code: "SNAPSHOT_CHANGED" });
+});
+
+test("should reject account status changes before a new catalog or input", async (t) => {
+  const f = await admittedFixture(t);
+  f.state.auth.email = "different@example.invalid";
+  await assert.rejects(
+    f.policy.admit(f.root, () => {}),
+    { code: "SNAPSHOT_CHANGED" },
+  );
+});
+
+test("should reject changed source files and installation identity during an active context", async (t) => {
+  const f = await admittedFixture(t);
+  await writeFile(f.executable, "different binary\n", { mode: 0o700 });
+  assert.throws(() => f.policy.assertLive(f.root, () => {}), { code: "SNAPSHOT_CHANGED" });
+});
+
+test("should reject cloned native evidence without reading files", async (t) => {
+  const f = await nativeFixture(t);
+  const installation = await verifyNativeInstallation(f.root, {}, () => {});
+  assert.throws(
+    () =>
+      assertNativeInstallation(structuredClone(installation), () => assert.fail("unbranded IO")),
+    { code: "POLICY_UNCONFIRMED" },
+  );
+});
+
+test("should reject command helpers and unsupported inherited authority before native probes", async (t) => {
+  const f = await nativeFixture(t);
+  await f.json(f.settingsPath, { ...f.personal, apiKeyHelper: "synthetic-command" });
+  await assert.rejects(
+    new NativeClaudePolicy({}).admit(f.root, () => {}),
+    { code: "POLICY_UNCONFIRMED" },
+  );
+  assert.equal(f.probes.length, 0);
+  await f.json(f.settingsPath, f.personal);
+  await assert.rejects(
+    new NativeClaudePolicy({ NODE_OPTIONS: "--require unsafe" }).admit(f.root, () => {}),
+    { code: "POLICY_UNCONFIRMED" },
+  );
+  assert.equal(f.probes.length, 0);
+});
+
+test("should read only the exact reserved native history without probing another session", async (t) => {
+  const f = await admittedFixture(t);
+  const history = await f.policy.history(f.context, () => {});
+  assert.equal(history.format, "claude-jsonl-v1");
+  assert.equal(history.materialized, false);
+  assert.equal(history.sessionId, f.context.threadId);
+  assert.equal(history.records.length, 0);
+  assert.equal(digest(history.root), digest(f.root));
+  await unlink(join(f.home, ".local", "bin", "claude"));
+  assert.throws(() => f.policy.assertLive(f.root, () => {}));
+});
+
+test("should reuse unchanged instruction imports and reject a changed imported file", async (t) => {
+  const f = await nativeFixture(t);
+  const imported = join(f.config, "preferences.md");
+  await writeFile(join(f.config, "CLAUDE.md"), "Personal instructions @preferences.md\n", {
+    mode: 0o600,
+  });
+  await writeFile(imported, "Original synthetic preference\n", { mode: 0o600 });
+  const policy = new NativeClaudePolicy({});
+  await policy.admit(f.root, () => {});
+  const read = fs.readSync;
+  let reads = 0;
+  t.mock.method(fs, "readSync", (...args: Parameters<typeof read>) => {
+    reads++;
+    return read(...args);
+  });
+  syncBuiltinESMExports();
+  policy.assertLive(f.root, () => {});
+  assert.equal(reads, 0);
+  await writeFile(imported, "Changed synthetic preference\n", { mode: 0o600 });
+  assert.throws(() => policy.assertLive(f.root, () => {}), { code: "SNAPSHOT_CHANGED" });
+});

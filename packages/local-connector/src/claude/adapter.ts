@@ -33,6 +33,7 @@ import { NativeInputProof, nativeIdentity, OWNED_SERVER } from "./input-proof.ts
 import { object, type OwnedHistory } from "./owned-history.ts";
 import { requireClaudePolicy, type ClaudePolicy } from "./policy.ts";
 import { proveOwnedHistory } from "./history-proof.ts";
+import { checkpointNativeHistory } from "./native-history-proof.ts";
 import { ClaudeTransport, type Launch, type TransportOptions } from "./transport.ts";
 
 type Transport = Pick<
@@ -96,6 +97,13 @@ type Active = {
   observedModel: string | null;
   initHash: string | null;
   tools: readonly string[];
+  liveFrames: Record<string, unknown>[];
+  liveBytes: number;
+  historyOverflow: boolean;
+  toolReceipts: Map<
+    string,
+    NonNullable<OwnedContext["ownedTurns"][number]["toolReceipts"]>[number]
+  >;
 };
 
 /** Product authority owns tools, input durability and publication; native CLI owns generation. */
@@ -110,6 +118,7 @@ export class ClaudeAdapter implements RuntimeAdapter {
   private transportCleanup: Promise<void> | undefined;
   private cleanup: Promise<void> | undefined;
   private drift: ReturnType<typeof setInterval> | undefined;
+  private historyFormat: OwnedHistory["format"];
   constructor(private readonly options: ClaudeAdapterOptions = {}) {}
 
   private policy() {
@@ -333,6 +342,7 @@ export class ClaudeAdapter implements RuntimeAdapter {
     if (context.materialization!.state === "MATERIALIZED") {
       if (!this.options.history) throw new RuntimeError("CONTEXT_UNCONFIRMED");
       const history = await this.options.history(context, check);
+      this.historyFormat = history.format;
       this.live(context.root.path, check);
       proveOwnedHistory(context, history, this.policy().version, undefined, settings);
     }
@@ -349,6 +359,7 @@ export class ClaudeAdapter implements RuntimeAdapter {
     if (this.active || this.transport) throw new RuntimeError("RUNTIME_BUSY");
     if (authority.context.materialization!.state === "RESERVED" && this.options.history) {
       const history = await this.options.history(authority.context, check);
+      this.historyFormat = history.format;
       if (history.materialized || history.records.length)
         throw new RuntimeError("CONTEXT_UNCONFIRMED");
     }
@@ -405,8 +416,13 @@ export class ClaudeAdapter implements RuntimeAdapter {
       done: deferred<TerminalEvidence>(),
       observedModel: null,
       initHash: null,
+      liveFrames: [],
+      liveBytes: 0,
+      historyOverflow: false,
+      toolReceipts: new Map(),
     };
     this.active = active;
+    let evidence: TerminalEvidence;
     try {
       const initialized = await this.connect(
         authority.context,
@@ -426,7 +442,7 @@ export class ClaudeAdapter implements RuntimeAdapter {
         parent_tool_use_id: null,
         message: { role: "user", content: prompt },
       });
-      return await active.done.promise;
+      evidence = await active.done.promise;
     } catch (error) {
       this.fail(error);
       throw this.failure;
@@ -434,6 +450,38 @@ export class ClaudeAdapter implements RuntimeAdapter {
       await this.closeTransport();
       this.active = undefined;
     }
+    if (this.historyFormat === "claude-jsonl-v1") {
+      this.live(authority.context.root.path, check);
+      try {
+        const history = await this.options.history!(authority.context, check);
+        evidence.nativeHistory = active.historyOverflow
+          ? { state: "UNVERIFIED", reason: "HISTORY_REJECTED" }
+          : checkpointNativeHistory(
+              authority.context,
+              history,
+              this.policy().version,
+              active.intent,
+              active.liveFrames,
+              [...active.toolReceipts.values()],
+            );
+      } catch {
+        // A confirmed live terminal remains publishable even when its resume file is unavailable.
+        evidence.nativeHistory = { state: "UNVERIFIED", reason: "HISTORY_REJECTED" };
+      }
+      this.live(authority.context.root.path, check);
+    }
+    return evidence;
+  }
+  private retainMessage(active: Active, frame: Record<string, unknown>) {
+    if (active.historyOverflow) return;
+    const bytes = Buffer.byteLength(stableJson(frame));
+    if (active.liveFrames.length >= 4096 || active.liveBytes + bytes > 16 * 1024 * 1024) {
+      active.historyOverflow = true;
+      active.liveFrames = [];
+      return;
+    }
+    active.liveBytes += bytes;
+    active.liveFrames.push(structuredClone(frame));
   }
   private async message(frame: Record<string, unknown>, _signal: AbortSignal): Promise<void> {
     const active = this.active,
@@ -468,6 +516,7 @@ export class ClaudeAdapter implements RuntimeAdapter {
         );
         void active.ack.catch((error) => this.fail(error));
       }
+      this.retainMessage(active, frame);
       return;
     }
     if (frame.type === "control_cancel_request") {
@@ -503,6 +552,7 @@ export class ClaudeAdapter implements RuntimeAdapter {
     this.live(context.root.path, check);
     if (frame.type === "assistant") {
       active.observedModel = active.proof.assistant(frame, active.initHash !== null);
+      this.retainMessage(active, frame);
       return;
     }
     if (frame.type !== "result") throw new RuntimeError("UNKNOWN");
@@ -608,6 +658,20 @@ export class ClaudeAdapter implements RuntimeAdapter {
         mcp_response: { jsonrpc: "2.0", id: mcp.id, result: response },
       });
       active.proof.responseWritten(frame.request_id);
+      active.toolReceipts.set(claim.toolId, {
+        callId: claim.toolId,
+        payloadHash: digest(
+          stableJson({
+            threadId: active.intent.sessionId,
+            turnId: active.intent.inputId,
+            callId: claim.toolId,
+            namespace: scopedNamespace,
+            tool: claim.name,
+            arguments: claim.args,
+          }),
+        ),
+        responseHash: digest(stableJson(response)),
+      });
       return;
     } else throw new RuntimeError("TOOL_REJECTED");
     await this.transport!.reply(frame.request_id, {

@@ -25,6 +25,7 @@ import {
 } from "../workspace/tool-contracts.ts";
 import { validToolPolicy, repositoryMode } from "../workspace/repository-access.ts";
 import { object, type OwnedHistory } from "./owned-history.ts";
+import { proveNativeHistory } from "./native-history-proof.ts";
 
 type Receipt = { callId: string; payloadHash: string; responseHash: string };
 type Input = {
@@ -156,6 +157,8 @@ export function proveOwnedHistory(
   candidate?: NativeObservation,
   settings?: RuntimeSettings,
 ): ObservedTerminal | null {
+  if (history.format === "claude-jsonl-v1")
+    return proveNativeHistory(context, history, version, candidate);
   if (
     history.sessionId !== context.threadId ||
     history.root !== context.root.path ||

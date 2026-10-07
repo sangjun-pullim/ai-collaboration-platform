@@ -15,6 +15,7 @@ export interface OwnedHistory {
   sessionId: string;
   root: string;
   records: Record<string, unknown>[];
+  format?: "claude-jsonl-v1";
 }
 
 function secureHistory(stat: Stats): boolean {

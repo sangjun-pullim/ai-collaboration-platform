@@ -409,6 +409,14 @@ const providerSettings = optionalExact(
   },
   { repositoryAccess: validRepositoryAccess },
 );
+const nativeHistoryEvidence: Check = (value) =>
+  exact({
+    state: one("VERIFIED"),
+    format: one("claude-jsonl-v1"),
+    recordCount: (v) => Number.isSafeInteger(v) && Number(v) >= 1 && Number(v) <= 4096,
+    prefixHash: isHash,
+  })(value) ||
+  exact({ state: one("UNVERIFIED"), reason: one("MISSING_HISTORY", "HISTORY_REJECTED") })(value);
 const providerContext = optionalExact(
   {
     ownership: one("CONNECTOR_CREATED"),
@@ -425,6 +433,7 @@ const providerContext = optionalExact(
           promptHash: isHash,
           resultHash: isHash,
           nativeInterruption,
+          nativeHistory: nativeHistoryEvidence,
           toolCancellations: list(nativeToolCancellation, 64),
           toolReceipts: list(
             exact({ callId: string, payloadHash: isHash, responseHash: isHash }),
@@ -471,6 +480,7 @@ const providerEvidence = optionalExact(
   {
     nativeInitHash: isHash,
     nativeInterruption,
+    nativeHistory: nativeHistoryEvidence,
     toolCancellations: list(nativeToolCancellation, 64),
   },
 );
@@ -723,6 +733,15 @@ function validate(value: unknown): asserts value is RuntimeRecord {
               (turn.toolPolicy.peerAllowed && !s.autoQuestionsConfirmed)))
         )
           unsafe();
+        const owningJournal = v.attempts.find(
+          (a) => a.generation === c.generation && a.nativeIntent?.inputId === turn.turnId,
+        );
+        if (
+          owningJournal?.terminal &&
+          stableJson(owningJournal.terminal.nativeHistory ?? null) !==
+            stableJson(turn.nativeHistory ?? null)
+        )
+          unsafe();
         const proof = turn.nativeInterruption;
         if (!proof) continue;
         const intent = proof.intent;
@@ -745,7 +764,7 @@ function validate(value: unknown): asserts value is RuntimeRecord {
     } else if (
       c.provider === "claude" ||
       c.materialization ||
-      c.ownedTurns.some((turn) => turn.nativeInterruption)
+      c.ownedTurns.some((turn) => turn.nativeInterruption || turn.nativeHistory)
     )
       unsafe();
   }
@@ -870,6 +889,8 @@ function validate(value: unknown): asserts value is RuntimeRecord {
       a.terminal &&
       stableJson(a.terminal.nativeInterruption ?? null) !== stableJson(a.nativeInterruption ?? null)
     )
+      unsafe();
+    if (a.terminal?.nativeHistory && (v.version !== 2 || a.nativeIntent?.provider !== "claude"))
       unsafe();
     if (
       v.settings?.provider === "claude" &&

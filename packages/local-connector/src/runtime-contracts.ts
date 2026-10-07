@@ -171,6 +171,14 @@ export interface NativeInterruption {
   requestHash: string;
   receipt?: NativeInterruptionReceipt;
 }
+export type NativeHistoryEvidence =
+  | {
+      state: "VERIFIED";
+      format: "claude-jsonl-v1";
+      recordCount: number;
+      prefixHash: string;
+    }
+  | { state: "UNVERIFIED"; reason: "MISSING_HISTORY" | "HISTORY_REJECTED" };
 export interface OwnedContext {
   ownership: "CONNECTOR_CREATED";
   generation: string;
@@ -187,6 +195,7 @@ export interface OwnedContext {
     toolCancellations?: NativeToolCancellation[];
     nativeInterruption?: NativeInterruption;
     toolPolicy?: RepositoryToolPolicy;
+    nativeHistory?: NativeHistoryEvidence;
   }[];
   provider?: RuntimeProvider;
   materialization?: {
@@ -230,6 +239,7 @@ export interface TerminalEvidence {
   nativeInitHash?: string;
   toolCancellations?: NativeToolCancellation[];
   nativeInterruption?: NativeInterruption;
+  nativeHistory?: NativeHistoryEvidence;
 }
 export interface RuntimeOperation {
   operationId: string;
