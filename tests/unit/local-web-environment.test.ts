@@ -144,6 +144,41 @@ test("should preserve an offline cache failure when the PATH CLI is missing", as
   );
 });
 
+test("should classify npm cancellation for a missing offline package without revealing its output", async (t) => {
+  const run = await failingCli(
+    t,
+    'npm error npx canceled due to missing packages and no YES option: ["private-package-value"]',
+  );
+  await assert.rejects(run(), (error: Error & { diagnostic?: unknown }) => {
+    assert.deepEqual(error.diagnostic, {
+      tool: "supabase",
+      reason: "CLI_INSTALLATION_UNAVAILABLE",
+      exitCode: 1,
+    });
+    assert.equal(JSON.stringify(error).includes("private-package-value"), false);
+    return true;
+  });
+});
+
+test("should reuse the installed pinned CLI cache without downloading another package", async (t) => {
+  const f = await fixture(t);
+  const originalPath = process.env.PATH;
+  t.after(() => {
+    process.env.PATH = originalPath;
+  });
+  await writeFile(
+    join(f.dir, "npx"),
+    `#!${process.execPath}\nconst expected=["--offline","--no-install","supabase@2.118.0","status","--workdir",${JSON.stringify(await realpath(f.dir))},"--output","json"];\nif(JSON.stringify(process.argv.slice(2))!==JSON.stringify(expected)){process.stderr.write('npm error npx canceled due to missing packages and no YES option');process.exit(1);}\nif(process.env.NPM_CONFIG_OFFLINE!=="true")process.exit(99);\nprocess.stdout.write(${JSON.stringify(JSON.stringify(f.status))});\n`,
+    { mode: 0o700 },
+  );
+  process.env.PATH = f.dir;
+  const driver = await import(pathToFileURL(resolve("scripts/dev-local-web.mjs")).href);
+  const environment = await driver.localWebEnvironment(f.execute, {}, undefined, f.dir);
+  assert.equal(environment.SUPABASE_PUBLISHABLE_KEY, anon);
+  assert.equal(environment.SUPABASE_URL, "http://127.0.0.1:56321");
+  assert.equal(environment.LOCAL_ACCESS_ADMIN_KEY, undefined);
+});
+
 async function checkCommand(t: TestContext, failure: boolean) {
   const f = await fixture(t);
   const webRoot = join(f.dir, "web");

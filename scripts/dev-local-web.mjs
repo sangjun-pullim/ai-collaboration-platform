@@ -6,6 +6,7 @@ import { fileURLToPath, pathToFileURL } from "node:url";
 import { runLocalSettingsUpgrade } from "./apply-local-ai-settings.mjs";
 
 const project = "ai-collab-txxcvm61";
+const cachedCli = "supabase@2.118.0";
 const host = `unix://${join(homedir(), ".orbstack/run/docker.sock")}`;
 const root = fileURLToPath(new URL("../", import.meta.url));
 
@@ -32,6 +33,7 @@ function statusFailure(tool, error, stdout, stderr) {
       "enotcached",
       "npm err! canceled",
       "npm error canceled",
+      "npx canceled due to missing packages",
       "no matching supabase cli binary package",
       "could not determine executable",
     )
@@ -147,7 +149,7 @@ async function localStatus(workdir) {
     if (!error.cliMissing) throw error;
   }
   try {
-    return await read("npx", ["--offline", "--no-install", "supabase", ...args]);
+    return await read("npx", ["--offline", "--no-install", cachedCli, ...args]);
   } catch (error) {
     if (error instanceof WebSetupError) throw error;
     throw new WebSetupError("LOCAL_STATUS_UNAVAILABLE");
