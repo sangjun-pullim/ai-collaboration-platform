@@ -281,6 +281,19 @@ cookie/bearer durable polling과 서버 내부 JWT를 사용하는 bounded SSE h
 
 [공식 정규화 관리 flag](https://github.com/openai/codex/blob/rust-v0.159.1/codex-rs/core/src/config/managed_features.rs)와 [최초 app-server 생성](https://github.com/openai/codex/blob/rust-v0.159.1/codex-rs/app-server/src/message_processor.rs)은 관리 pin과 검사 전 plugin 시작을 구분해야 한다는 근거다. [공식 features list 경로](https://github.com/openai/codex/blob/rust-v0.159.1/codex-rs/cli/src/main.rs#L1805)는 app-server·MCP·훅 런타임 없이 공식 auth·cloud 설정을 로드하고 정규화 flag를 출력한다. 모든 child 이전에 이 경로를 검사하는 보완 설계3는 독립 검토에서 차단 지적 없이 통과했다. 설치 CLI의 모델 없는 선행 검사에서 요구 실행 flag 13개가 지원되고 모두 false임을 확인했고 app-server·thread·모델은 생성하지 않았다. 이 두 공식 프로세스는 같은 원자 snapshot을 공유하지 않으므로 admission 중 안정된 설정을 기준으로 한다. 제품 구현·실제 native 공동 왕복·정식 구현 리뷰의 증거와 구분한다.
 
+## S28
+
+**별도 연결 프로그램 없는 기존 AI 접속 대안** — 2026-10-07 공식 문서 확인
+
+- [Claude Code MCP](https://code.claude.com/docs/en/mcp): 원격 HTTP 서버 등록, 도구 대기·유휴·실행 제한과 오래 실행되는 도구의 백그라운드 처리.
+- [Codex MCP](https://learn.chatgpt.com/docs/extend/mcp?surface=cli): HTTP 서버 URL 설정, 인증, 도구 실행 제한·승인과 도구별 허용·거절 설정.
+- [Claude Channels](https://code.claude.com/docs/en/channels)와 [Channels reference](https://code.claude.com/docs/en/channels-reference): 메시지 주입, 로컬 stdio 하위 프로세스, 연구 미리보기의 채널 허용 목록과 관리자 허용 조건.
+- [Claude Remote Control](https://code.claude.com/docs/en/remote-control): 실행 중인 로컬 AI 필요, 자기 계정에만 나타나는 자동 연결과 공식 웹·앱 사용.
+- [Codex app-server](https://learn.chatgpt.com/docs/app-server): WebSocket의 실험적·운영 미지원 상태와 별도 접속 인증 조건.
+- [MCP lifecycle](https://modelcontextprotocol.io/specification/2025-11-25/basic/lifecycle)과 [Progress](https://modelcontextprotocol.io/specification/2025-11-25/basic/utilities/progress): 요청 취소·제한, 선택적인 진행 알림과 최대 대기 제한.
+
+이 확인은 서버 연결 기능과 제약의 문서 근거다. 원격 MCP만으로 이 제품의 자동 질문·답변, 읽기 범위·취소·모델 설정을 구현하거나 실제 설치된 두 AI에서 검증한 증거가 아니다. 제품 대안과 남은 검증은 [설치 부담 조사](local-ai-connection-research.md#별도-연결-프로그램-설치를-없애는-대안)에 기록했다.
+
 ## 참고하되 첫 구현에 포함하지 않은 방향
 
 - [A2A specification](https://a2a-protocol.org/latest/specification/): 표준 agent 간 메시지·task·artifact·취소 모델. 공급자 세션 연결·로컬 권한·사내 UI를 대신하지 않으며 MVP의 필수 기술로 확정하지 않았다.
