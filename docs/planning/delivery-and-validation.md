@@ -81,13 +81,15 @@
 | `71fb72c` | Docker 오류 분류 보존 | 실패 재현과 관련32/32·웹333/333·독립 기능 검토, 포맷 지적 해소 |
 | `f3180d3` | 일시정지·자료 이력 통합 검사 실행 항목 | 설정 검사 독립 재검토 PASS |
 
-추가 실행 점검에서 일반 `git fetch origin`은 종료0으로 반환했고 PR1–3 조회도 성공했다. 그러나 `git ls-remote`는 `github.com` DNS 오류, PR 설명 갱신과 PR1 준비 완료 전환은 `api.github.com` 연결 오류로 실패했다. 원격 main 병합은0회이며 PR의 확인된 상태는 아래 브랜치 기록을 따른다. Docker 소켓 연결은 계속 `operation not permitted`,4318의 웹 조회는 HTTP000·연결 실패다. 기존 Claude 기록의 쓰기 권한은 변경하지 않았으며 추가 실제 입력을 소비하지 않았다. 부분 스테이징의 대화 입력·중단은 자동 승인 검사에서 `approval required`와 승인 정책 `Never` 때문에 거절됐다. 해당 실행 세션98854의 종료는 확인되지 않았고, 정상 Git 명령의 커밋 성공과 구분한다.
+추가 실행 점검에서 일반 `git fetch origin`은 종료0으로 반환했고 PR1–3 조회도 성공했다. 그러나 `git ls-remote`는 `github.com` DNS 오류, PR 설명 갱신과 PR1 준비 완료 전환은 `api.github.com` 연결 오류로 실패했다. REST 설명 갱신과 GraphQL 준비 완료 전환도 같은 연결 오류였다. 원격 main 병합은0회이며 PR의 확인된 상태는 아래 브랜치 기록을 따른다. Docker 소켓 연결은 계속 `operation not permitted`,4318의 웹 조회는 HTTP000·연결 실패다. 기존 Claude 기록의 쓰기 권한은 변경하지 않았으며 추가 실제 입력을 소비하지 않았다. 부분 스테이징의 대화 입력·중단은 자동 승인 검사에서 `approval required`와 승인 정책 `Never` 때문에 거절됐다. 해당 실행 세션98854의 종료는 확인되지 않았고, 정상 Git 명령의 커밋 성공과 구분한다.
+
+이후 문서 정리를 `2aa1c48`에 기록하고 `git push origin HEAD:refs/heads/feat/local-ai-chat-20261008`로 원격 보존했다. 기존 PR3의 고정 head를 유지하기 위해 별도 후속 작업 브랜치를 사용하고 같은 tip의 원격 추적 브랜치로 작업 위치를 전환했다. push 성공과 원격 추적 SHA 일치를 확인했다. 신규 draft PR 설명은 준비했지만 `gh pr create`도 API 연결 오류로 실패했다. 최종 PR 목록은 기존1–3만 OPEN이며 새 PR 생성·기존 PR 준비 완료·main 병합을 완료했다고 표시하지 않는다. GitHub 플러그인은 검색 결과 미설치 상태였고 실행 가능한 대체 연결은 확인하지 못했다. 최종 문서 기록 전 상대 링크536개·누락0, 설정 재검토 입력6개 hash 일치와 사용자 next-env hash 보존을 확인했다.
 
 ### 현재 브랜치 운영 점검
 
-2026-10-08 문서 기록 직전 HEAD는 `f3180d3`이며 현재 브랜치는 `feat/chat-first-experience`다. `origin/feat/chat-first-experience`보다24개 커밋 앞서 있고 `origin/main`에 포함되지 않은 커밋은66개다. 로컬 `main`과 원격 추적 `origin/main`은 초기 snapshot `1eac6ae`다. 기능·보정을 같은 브랜치에 누적한 상태를 짧은 브랜치·PR·main 동기화가 완료된 GitHub Flow로 표현하지 않는다. 위 수치는 문서 커밋 직전의 기록이며 이후 커밋 수를 자동 갱신하는 값이 아니다.
+2026-10-08 첫 정리 문서 커밋 직전 HEAD는 `f3180d3`이며 당시 브랜치는 `feat/chat-first-experience`였다. `origin/feat/chat-first-experience`보다24개 커밋 앞서 있고 `origin/main`에 포함되지 않은 커밋은66개였다. 이후 후속 작업은 `feat/local-ai-chat-20261008`로 원격 보존하고 해당 브랜치에서 이어간다. 로컬 `main`과 원격 추적 `origin/main`은 초기 snapshot `1eac6ae`다. 완료 범위의 main 병합과 새 작업의 PR 생성은 남아 있으므로 GitHub Flow 전환 전체의 완료를 주장하지 않는다. 위 커밋 수는 첫 정리 문서 커밋 직전의 기록이며 이후 커밋 수를 자동 갱신하는 값이 아니다.
 
-`chore/implementation-baseline`과 `docs/organize-project-docs`는 일회성 전환 브랜치이며 `feat/team-code-entry`는 별도 worktree에 연결되어 있다. main의 커밋 포함과 worktree 상태를 확인하지 않고 삭제하지 않는다. 2026-10-08 GitHub 조회에서 [PR1](https://github.com/sangjun-pullim/ai-collaboration-platform/pull/1)은 OPEN·draft·main 대상, [PR2](https://github.com/sangjun-pullim/ai-collaboration-platform/pull/2)는 OPEN·baseline 대상, [PR3](https://github.com/sangjun-pullim/ai-collaboration-platform/pull/3)는 OPEN·문서 정리 대상이며 각각 아래 검토한 고정 head와 일치했다. PR1의 CI 검사 목록은 비어 있고 mergeable 상태는 확인했으나 준비 완료 전환이 연결 오류로 실패해 병합하지 못했다. PR2/3의 base 변경과 병합은 선행 main 포함 확인 뒤 진행한다. 후속24개 커밋을 기존 PR3에 push해 완료 범위를 넓히지 않는다. 운영 기준은 [GitHub Flow](github-flow.md)를 따른다.
+`chore/implementation-baseline`과 `docs/organize-project-docs`는 일회성 전환 브랜치이며 `feat/team-code-entry`는 별도 worktree에 연결되어 있다. main의 커밋 포함과 worktree 상태를 확인하지 않고 삭제하지 않는다. 2026-10-08 GitHub 조회에서 [PR1](https://github.com/sangjun-pullim/ai-collaboration-platform/pull/1)은 OPEN·draft·main 대상, [PR2](https://github.com/sangjun-pullim/ai-collaboration-platform/pull/2)는 OPEN·baseline 대상, [PR3](https://github.com/sangjun-pullim/ai-collaboration-platform/pull/3)는 OPEN·문서 정리 대상이며 각각 아래 검토한 고정 head와 일치했다. PR1의 CI 검사 목록은 비어 있고 mergeable 상태는 확인했으나 준비 완료 전환이 연결 오류로 실패해 병합하지 못했다. PR2/3의 base 변경과 병합은 선행 main 포함 확인 뒤 진행한다. 후속 커밋은 기존 PR3에 push하지 않고 `feat/local-ai-chat-20261008`에 보존했다. 새 draft PR 생성은 API 연결 오류로 실패했다. 운영 기준은 [GitHub Flow](github-flow.md)를 따른다.
 
 ### 완료된 범위의 병합 준비 검증
 
@@ -95,7 +97,7 @@
 
 같은 완료 커밋만 Git metadata 없이 별도 검증 폴더로 내보내고 설치된 의존성444개와 잠금 파일의 패키지 그래프를 대조했다. 원래 폴더·사용자 next-env·실행 중인 웹을 유지한 채 unit183/183, 타입·lint·format:check를 이번에 통과했다. 실제 AI 입력·DB 변경·Git refs 변경은0이다. 이 병합 준비 시점에는 상대 링크505개·누락0, 진행 계획7개·완료 보관23개·대체 보관1개와 사용자 next-env의 기존 hash 일치를 확인했다. 이후031 구현 완료와 문서 보관을 반영한 현재 수치는 위 현재 진행 상태를 따른다.
 
-[고정 병합 순서](github-flow.md#완료된-범위의-병합-준비)에 따라 PR 설명3개와 문서 patch를 준비했다. 이 준비 시점의 원격 heads 재조회는 `github.com` DNS 실패로 끝났으며 `.git` 읽기 전용 제한을 우회하지 않았다. 2026-10-08에는 기존 PR1–3과 고정 head를 조회했고 위 후속 작업4개를 로컬 커밋했다. 완료된42개 커밋의 리뷰와 입력은 그대로 재사용하지만 PR1의 준비 완료 전환이 API 연결 오류로 실패해 실제 main 병합·후속 커밋의 원격 push를 완료하지 못했다.
+[고정 병합 순서](github-flow.md#완료된-범위의-병합-준비)에 따라 PR 설명3개와 문서 patch를 준비했다. 이 준비 시점의 원격 heads 재조회는 `github.com` DNS 실패로 끝났으며 `.git` 읽기 전용 제한을 우회하지 않았다. 2026-10-08에는 기존 PR1–3과 고정 head를 조회했고 위 후속 작업과 정리 문서를 로컬 커밋·별도 원격 브랜치에 보존했다. 완료된42개 커밋의 리뷰와 입력은 그대로 재사용하지만 PR1의 준비 완료 전환이 API 연결 오류로 실패해 실제 main 병합은 완료하지 못했다.
 
 ### 구현·검증 근거
 
