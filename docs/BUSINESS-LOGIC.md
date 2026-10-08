@@ -2,7 +2,7 @@
 
 상태: 의도한 동작의 설계 제안. 전송 채널과 관계없이 아래 규칙을 만족하도록 구현한다. 시스템 경계와 데이터 흐름은 [아키텍처](ARCHITECTURE.md)를 따른다.
 
-중앙 coordinator는 지정 질문·답변·origin continuation·기본 interrupt/pause·UNKNOWN 차단을 제공한다. 현재 계약은 [API](API-SPEC.md#내구-조사와-실행-조정), 저장 경계는 [DB](DB-SCHEMA.md#내구-질문과-실행-조정)를 따른다. 검증 상태와 남은 통합은 [개발 순서와 검증 계획](delivery-and-validation.md#현재-진행-상태)에 유지한다. 아래 설계 예시를 wire DTO로 사용하지 않는다.
+중앙 coordinator는 지정 질문·답변·origin continuation·기본 interrupt/pause·UNKNOWN 차단을 제공한다. 현재 계약은 [API](API-SPEC.md#내구-조사와-실행-조정), 저장 경계는 [DB](DB-SCHEMA.md#내구-질문과-실행-조정)를 따른다. 검증 상태와 남은 통합은 [개발 순서와 검증 계획](planning/delivery-and-validation.md#현재-진행-상태)에 유지한다. 아래 설계 예시를 wire DTO로 사용하지 않는다.
 
 ## 메시지와 실행 요청의 구분
 
@@ -21,7 +21,7 @@
 
 대상 소유자가 답변용 연결을 준비해 두었다면 질문마다 소유자 입력을 요구하지 않는다. 확인한 범위를 확대하는 요청이나 오프라인·권한 상실·UNKNOWN에서는 새 실행을 차단한다. 기존의 중복 제거·lease·저널·실제 종결과 결과 채택 분리 규칙을 동일하게 적용한다.
 
-006의 `start`는 origin과 peer 두 binding을 요구한다. [010](impl-spec/archive/010-human-direct-questions.md)의 `ask`는 별도 DIRECT cycle과 HUMAN 질문을 만들고 대상 PEER 실행만 사용한다. 구현 검증과 후속 연동은 [진행 상태](delivery-and-validation.md#현재-진행-상태)에 기록한다. 아래 AI 간 질문 봉투의 `originRunId`를 사람 질문에 가짜로 채우지 않는다.
+006의 `start`는 origin과 peer 두 binding을 요구한다. [010](impl-spec/archive/010-human-direct-questions.md)의 `ask`는 별도 DIRECT cycle과 HUMAN 질문을 만들고 대상 PEER 실행만 사용한다. 구현 검증과 후속 연동은 [진행 상태](planning/delivery-and-validation.md#현재-진행-상태)에 기록한다. 아래 AI 간 질문 봉투의 `originRunId`를 사람 질문에 가짜로 채우지 않는다.
 
 ## 질문·응답의 최소 봉투
 

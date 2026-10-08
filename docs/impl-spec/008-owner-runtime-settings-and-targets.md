@@ -9,7 +9,7 @@ risk-surface: auth, permission, db-schema, public-api
 
 ## Context
 
-[참가자별 도구·모델·effort 선택](../ai-runtime-integration.md)과 [대상 식별 요구](../onboarding-and-settings.md)를 웹과 실제 로컬 실행기에 연결한다. 각 참가자는 자신의 모델과 effort(추론 강도)를 선택한다. 상대의 선택은 변경할 수 없다. 첫 방문에는 자신의 공식 CLI가 제공한 기본값을 제안하고, 재방문에는 마지막 선택값과 실제 적용 상태를 표시한다.
+[참가자별 도구·모델·effort 선택](../research/ai-runtime-integration.md)과 [대상 식별 요구](../guides/onboarding-and-settings.md)를 웹과 실제 로컬 실행기에 연결한다. 각 참가자는 자신의 모델과 effort(추론 강도)를 선택한다. 상대의 선택은 변경할 수 없다. 첫 방문에는 자신의 공식 CLI가 제공한 기본값을 제안하고, 재방문에는 마지막 선택값과 실제 적용 상태를 표시한다.
 
 007의 Codex 실행과 개인 로그인·지침 보존, 조사 동안의 읽기 전용 실행 제한을 재사용한다. 웹은 PC의 절대 경로, 실행 명령, 인증 정보를 받지 않는다. 선택 경로와 공유 파일·인계 문구는 로컬에서 확인한다. 모델·effort만 바꾸면 기존 로컬 범위 확인을 유지하고 새 협업 맥락을 만드는 데 명시적으로 동의받는다.
 
@@ -21,7 +21,7 @@ risk-surface: auth, permission, db-schema, public-api
 
 2026-10-02에는 질문자 AI·경로 없이 사람→상대 AI에 질문하는 요구가 추가됐다. 이 명세의 양쪽 AI activation 계약은 공동 조사용 검토안으로 유지한다. 직접 질문에 질문자 설정을 요구하지 않도록 후속 작은 명세에서 대상 표시·설정 UI의 적용 범위를 다시 나눈다. 이 문구로 기존 계약 검토를 직접 질문 구현의 승인이나 완료 근거로 사용하지 않는다.
 
-2026-10-04에는 기존 등록 정보만 사용하는 공동 조사의 내 AI·상대 AI 선택 목록에 개발자·runtime·저장소·세션 표시를 반영했다. 선택 값과 요청 처리는 유지하는 작은 표시 수정이다. 이 명세의 모델·effort 설정 계약과 적용 상태는 후속 구현 범위이며 진행 근거는 [진행 정본](../delivery-and-validation.md#현재-진행-상태)에 유지한다.
+2026-10-04에는 기존 등록 정보만 사용하는 공동 조사의 내 AI·상대 AI 선택 목록에 개발자·runtime·저장소·세션 표시를 반영했다. 선택 값과 요청 처리는 유지하는 작은 표시 수정이다. 이 명세의 모델·effort 설정 계약과 적용 상태는 후속 구현 범위이며 진행 근거는 [진행 정본](../planning/delivery-and-validation.md#현재-진행-상태)에 유지한다.
 
 ## Affected Files
 
@@ -34,7 +34,7 @@ risk-surface: auth, permission, db-schema, public-api
 7. `src/features/investigation-coordinator/{contracts,request-policy,service}.ts`, `packages/local-connector/src/{workflow-contracts,workflow-client}.ts`, 신규 `src/app/api/{workflow,investigations}/v2/[action]/route.ts` — 협상된 workflow v2, 기존 v1 응답 보존, 새 nullable target snapshot과 legacy 로컬 기록 읽기 계약.
 8. `src/features/device-binding/room-bindings.tsx`, `src/features/investigation-coordinator/investigation-view.tsx`, `src/app/app/rooms/[roomId]/page.tsx` — 현재 대상 카드, 조사 대상 선택, 과거 대상 표시와 본인 설정 패널.
 9. 관련 unit·connector·integration·e2e 테스트와 기존 helper — 아래 Tests의 실제 동작 검증.
-10. `docs/ARCHITECTURE.md`, `docs/DB-SCHEMA.md`, `docs/API-SPEC.md`, `docs/BUSINESS-LOGIC.md`, `docs/ai-runtime-integration.md`, `docs/onboarding-and-settings.md`, `README.md` — 구현과 확인된 지원 범위를 동기화.
+10. `docs/ARCHITECTURE.md`, `docs/DB-SCHEMA.md`, `docs/API-SPEC.md`, `docs/BUSINESS-LOGIC.md`, `docs/research/ai-runtime-integration.md`, `docs/guides/onboarding-and-settings.md`, `README.md` — 구현과 확인된 지원 범위를 동기화.
 
 ## Affected Dependents
 

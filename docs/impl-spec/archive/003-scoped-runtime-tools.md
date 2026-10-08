@@ -9,7 +9,7 @@ risk-surface: permission
 
 ## Context
 
-[PRD의 로컬 AI 연결](../../PRD.md#로컬-ai-연결)을 구체화한다. 001의 실제 Codex 새 실행·저장 맥락 재개·중단은 확인했지만, 추가 파일 읽기 요청은 `READ_UNAVAILABLE`로 끝났고 모델의 파일 도구 호출은 관찰하지 못했다. [실제 증거와 한계](../../local-ai-connection-research.md#이번에-실제-확인한-로컬-증거)를 기준으로 공동 조사 이전에 도구 경로를 검증한다. 전체 순서는 [로드맵](../../delivery-and-validation.md#단계별-명세-범위)을 따른다.
+[PRD의 로컬 AI 연결](../../PRD.md#로컬-ai-연결)을 구체화한다. 001의 실제 Codex 새 실행·저장 맥락 재개·중단은 확인했지만, 추가 파일 읽기 요청은 `READ_UNAVAILABLE`로 끝났고 모델의 파일 도구 호출은 관찰하지 못했다. [실제 증거와 한계](../../research/local-ai-connection-research.md#이번에-실제-확인한-로컬-증거)를 기준으로 공동 조사 이전에 도구 경로를 검증한다. 전체 순서는 [로드맵](../../planning/delivery-and-validation.md#단계별-명세-범위)을 따른다.
 
 읽기 전용 planner가 현재 transport/runtime와 설치된 Codex 0.159.1의 stable 314개·experimental 440개 schema를 확인했다. `thread/start.dynamicTools`는 experimental schema에 있고 `initialize.capabilities.experimentalApi` opt-in 및 서버 callback `item/tool/call`이 필요하다. 현재 `StdioClient`는 opt-in하지 않고 해당 callback을 거절한다. `thread/resume`에는 `dynamicTools` 재등록 필드가 없으므로 저장 thread의 도구 보존을 실제로 확인해야 한다. schema 존재를 실제 호출 성공으로 기록하지 않는다.
 

@@ -9,7 +9,7 @@ risk-surface: auth
 
 ## Context
 
-[사람과 로컬 연결의 구분](../../ARCHITECTURE.md#저장소와-ai의-최초-등록), [기기 scope](../../ARCHITECTURE.md#인증기기-연결), [첫 사용 순서](../../onboarding-and-settings.md#최초-접속-흐름)를 구현한다. 현재 사람 인증·방 권한의 실제 구현과 검증은 [API](../../API-SPEC.md)·[DB](../../DB-SCHEMA.md)·[frontend](../../FRONTEND-ARCHITECTURE.md)에 있다. Auth 통합 14개·Auth browser 4개·모의 browser 20개와 독립 구현 리뷰 3을 통과했다. 004는 완료 보관 기록이다.
+[사람과 로컬 연결의 구분](../../ARCHITECTURE.md#저장소와-ai의-최초-등록), [기기 scope](../../ARCHITECTURE.md#인증기기-연결), [첫 사용 순서](../../guides/onboarding-and-settings.md#최초-접속-흐름)를 구현한다. 현재 사람 인증·방 권한의 실제 구현과 검증은 [API](../../API-SPEC.md)·[DB](../../DB-SCHEMA.md)·[frontend](../../FRONTEND-ARCHITECTURE.md)에 있다. Auth 통합 14개·Auth browser 4개·모의 browser 20개와 독립 구현 리뷰 3을 통과했다. 004는 완료 보관 기록이다.
 
 읽기 전용 planner가 현재 cookie SSR, 고정 action·RPC, membership 취소와 검사 소비자를 조사했다. `requestClient`는 사람 Auth 전용이며 device bearer로 `auth.uid()`를 대신할 수 없다. `readMutation`의 동일 Origin 검사를 connector에 맞춰 완화하지 않는다. 새 기능은 별도 `device-binding` feature와 고정 API로 분리한다. 기존 세 migration은 수정하지 않는다.
 

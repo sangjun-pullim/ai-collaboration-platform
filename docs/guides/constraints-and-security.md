@@ -71,11 +71,11 @@ Codex의 작업 전용 제한은 공식 설정 선행 검사, 실행 기능 제�
 
 ## 인증·Realtime·서버 키
 
-Supabase를 선택하면 일반 사용자 토큰, 기기 scope token, 서버 관리자 credential을 구분한다. 서버의 secret/service-role 키를 브라우저나 배포되는 connector에 포함하지 않는다. 서버 권한으로 DB를 조작할 때도 매 요청의 사람·조직·방·binding을 검증한다. [키 근거](sources.md#s10)
+Supabase를 선택하면 일반 사용자 토큰, 기기 scope token, 서버 관리자 credential을 구분한다. 서버의 secret/service-role 키를 브라우저나 배포되는 connector에 포함하지 않는다. 서버 권한으로 DB를 조작할 때도 매 요청의 사람·조직·방·binding을 검증한다. [키 근거](../research/sources.md#s10)
 
-private Broadcast/Presence 권한과 업무 테이블의 RLS는 별도다. 채널 이름만으로 보호되거나 private 옵션 하나로 모든 DB 행이 보호된다고 가정하지 않는다. [권한 근거](sources.md#s9)
+private Broadcast/Presence 권한과 업무 테이블의 RLS는 별도다. 채널 이름만으로 보호되거나 private 옵션 하나로 모든 DB 행이 보호된다고 가정하지 않는다. [권한 근거](../research/sources.md#s9)
 
-개발 도중 만든 공개 preview URL에는 회사 데이터를 넣지 않는다. 실제 접근을 인증 없는 브라우저, 초대되지 않은 계정, 취소된 기기 토큰으로 검사한다. 플랫폼 Deployment Protection의 production 적용 범위도 별도 확인한다. [배포 근거](sources.md#s2)
+개발 도중 만든 공개 preview URL에는 회사 데이터를 넣지 않는다. 실제 접근을 인증 없는 브라우저, 초대되지 않은 계정, 취소된 기기 토큰으로 검사한다. 플랫폼 Deployment Protection의 production 적용 범위도 별도 확인한다. [배포 근거](../research/sources.md#s2)
 
 ## 가용성과 운영
 
@@ -101,7 +101,7 @@ private Broadcast/Presence 권한과 업무 테이블의 RLS는 별도다. 채�
 
 실제 API 사용량과 구독 소비를 같은 단가로 환산하지 않는다. 호출 수·시간·동시성 제한은 제품에서 강제할 수 있지만 공급자가 token/금액 hard cap을 제공하는지는 별도다. 완료 후 보고된 사용량과 실행 전 예상값을 구분하고 ‘예산 초과가 절대 없다’고 표시하지 않는다.
 
-사용자가 확인한 초기 용도는 개인·비상업용이다. Vercel Hobby + Supabase Free의 무료 한도 안에서 운영하는 것을 목표로 한다. 실제 사용량과 공급자 정책은 변할 수 있으며 AI 비용까지 무료라고 가정하지 않는다. 향후 회사 업무용으로 확장할 때는 해당 용도의 플랜 적격성을 다시 확인한다. [Vercel 플랜](sources.md#s2), [비용 근거](sources.md#s11)
+사용자가 확인한 초기 용도는 개인·비상업용이다. Vercel Hobby + Supabase Free의 무료 한도 안에서 운영하는 것을 목표로 한다. 실제 사용량과 공급자 정책은 변할 수 있으며 AI 비용까지 무료라고 가정하지 않는다. 향후 회사 업무용으로 확장할 때는 해당 용도의 플랜 적격성을 다시 확인한다. [Vercel 플랜](../research/sources.md#s2), [비용 근거](../research/sources.md#s11)
 
 ## 무료 플랜 운영 기준
 
@@ -113,7 +113,7 @@ private Broadcast/Presence 권한과 업무 테이블의 RLS는 별도다. 채�
 | Supabase Free | DB 500MB/프로젝트, 파일 저장 1GB, 월 egress 5GB, Realtime 월 200만 메시지·동시 최대 200연결 |
 | Supabase 휴면·복구 | 1주 비활성 후 프로젝트 일시정지 가능. 무료 플랜에 자동 DB 백업·PITR이 포함되지 않음 |
 
-수치의 적용 단위와 최신값은 [공식 요금·사용량 문서](sources.md#s11)를 기준으로 한다. 월 200만 메시지는 AI 대화문 200만 개를 뜻하지 않는다. Broadcast는 발신 1건과 구독 client별 수신을 합산하고 Postgres Changes는 수신 client별로 집계한다. Presence도 사용량에 포함된다.
+수치의 적용 단위와 최신값은 [공식 요금·사용량 문서](../research/sources.md#s11)를 기준으로 한다. 월 200만 메시지는 AI 대화문 200만 개를 뜻하지 않는다. Broadcast는 발신 1건과 구독 client별 수신을 합산하고 Postgres Changes는 수신 client별로 집계한다. Presence도 사용량에 포함된다.
 
 - **초기 규모:** 사람 두 명·AI 두 개·한 번에 공동 조사방 하나. 필요한 방만 구독하고 사용하지 않는 탭·채널은 해제한다.
 - **임시 출력:** 공개 가능한 preview를 0.5~1초 단위로 묶는 것을 초기 제안으로 한다. 매 token의 DB 저장·API 호출을 피하고 payload 크기도 제한한다. 제어 요청과 확정 메시지는 이 묶음 지연 대상이 아니다.
@@ -122,4 +122,4 @@ private Broadcast/Presence 권한과 업무 테이블의 RLS는 별도다. 채�
 - **한도 접근:** 임시 preview 빈도를 먼저 낮추고 필요한 제어·확정 기록의 여유를 남긴다. 여유가 부족하면 새 자동 조사를 시작하지 않고 이유를 안내한다. 진행 중 실행은 기존 중단·저널·UNKNOWN 규칙으로 처리하며 기록 성공을 확인하지 않고 완료 처리하지 않는다. 플랜을 자동 유료 전환하지 않는다.
 - **휴면·백업:** 휴면을 막기 위한 가짜 트래픽을 만들지 않는다. 재접속 시 프로젝트 일시정지 여부와 운영자의 복구 절차를 안내한다. 중요한 확정 기록은 접근 권한을 지키는 내보내기·별도 백업 경로를 마련하고 복원을 확인한다.
 
-이 기준은 호스팅·DB 무료 한도를 관리하기 위한 설계 제안이다. 기존 AI 구독 활용 가능성이나 API 사용료는 [AI 인증과 비용](ai-runtime-integration.md#인증과-비용--우선-확인할-제약)에서 별도로 검증한다.
+이 기준은 호스팅·DB 무료 한도를 관리하기 위한 설계 제안이다. 기존 AI 구독 활용 가능성이나 API 사용료는 [AI 인증과 비용](../research/ai-runtime-integration.md#인증과-비용--우선-확인할-제약)에서 별도로 검증한다.

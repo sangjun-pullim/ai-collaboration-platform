@@ -23,7 +23,7 @@ evidence before the real probe path can be enabled.
 The public package has no native admission bridge for task overrides, managed policy
 precedence, reload, inherited plugin/hook startup and automatic user input. Separate
 supervisor-owned startup guards and zero-input observations are tracked in
-[delivery and validation](../../docs/delivery-and-validation.md#현재-진행-상태).
+[delivery and validation](../../docs/planning/delivery-and-validation.md#현재-진행-상태).
 They do not enable this CLI. A post-start settings response or manifest alone does not
 prove that earlier commands did not execute. Mandatory managed execution is refused.
 
@@ -98,7 +98,7 @@ History deletion, duplication or reordering refuses before provider spawn or an
 additional input slot. Incomplete cleanup or cleanup-persistence failure also blocks
 restart. Original failure logs and actual unresolved input records remain immutable.
 Public synthetic checks and their independent review are recorded in
-[delivery and validation](../../docs/delivery-and-validation.md#현재-진행-상태).
+[delivery and validation](../../docs/planning/delivery-and-validation.md#현재-진행-상태).
 They do not approve actual CLI execution or register a Claude product adapter.
 
 ## Supervisor-owned approval budget

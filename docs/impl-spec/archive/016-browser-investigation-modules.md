@@ -13,7 +13,7 @@ risk-surface: permission
 
 HTTP 응답은 최대 262,144바이트이고 서버의 공통 요청 읽기는 16KiB다. 두 처리의 상한·실행 환경·오류 정책이 다르므로 이번 변경은 브라우저 응답 책임에 한정한다. 함수 하나의 인터페이스 뒤에서 요청 검증·fetch·응답 읽기·오류 처리를 수행한다. 직접 요청 정책은 저장 키·복원·본문 생성만 소유한다.
 
-조회·요청 전송·미확정 요청의 저장/삭제·대상 선택·React 상태는 현재 화면이 계속 소유한다. hook, storage manager, 일반 browser client나 새 설정 계층을 만들지 않는다. 진행 상태는 [개발·검증 정본](../../delivery-and-validation.md#현재-진행-상태)에 유지한다. 실제 Claude 호환성과 두 PC 검증은 별도 조건이며 이 정리의 통과로 대신하지 않는다.
+조회·요청 전송·미확정 요청의 저장/삭제·대상 선택·React 상태는 현재 화면이 계속 소유한다. hook, storage manager, 일반 browser client나 새 설정 계층을 만들지 않는다. 진행 상태는 [개발·검증 정본](../../planning/delivery-and-validation.md#현재-진행-상태)에 유지한다. 실제 Claude 호환성과 두 PC 검증은 별도 조건이며 이 정리의 통과로 대신하지 않는다.
 
 ## Affected Files
 

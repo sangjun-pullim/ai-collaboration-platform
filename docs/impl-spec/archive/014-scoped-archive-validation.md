@@ -11,7 +11,7 @@ risk-surface: permission
 
 사용자가 성능과 책임 분리를 포함한 유지보수 개선을 요청했다. [HTTP 공통 읽기](013-shared-http-json-reader.md)를 완료했고, 이번 변경은 [보관·용량 명세](011-local-runtime-capacity-safety.md)의 비차단 M1을 다룬다. 현재 `RuntimeStore.write()` 1045–1049는 같은 참조의 원문을 이전·다음 기록에서 각각 읽고 해석한다. `validateChange()` 630은 두 기록의 보관 참조가 같아야 한다고 검사한다. 읽은 내용·schema는 한 저장 안에서만 재사용하며 두 기록과의 관계 검증은 각각 수행한다.
 
-기존 planner의 archive/store·호출부 조사와 입력이 같은 코드 해시를 재사용한다. RuntimeStore의 공개 저장·잠금·복구 인터페이스, 기록 schema·상한·오류, 새 실행 입장과 완료 업로드 우선순위는 유지한다. 실제 Claude 실행의 별도 입력 상한 확인을 기다리는 동안 독립적으로 진행할 수 있다. 진행 수치는 [개발·검증 정본](../../delivery-and-validation.md#현재-진행-상태)에 둔다.
+기존 planner의 archive/store·호출부 조사와 입력이 같은 코드 해시를 재사용한다. RuntimeStore의 공개 저장·잠금·복구 인터페이스, 기록 schema·상한·오류, 새 실행 입장과 완료 업로드 우선순위는 유지한다. 실제 Claude 실행의 별도 입력 상한 확인을 기다리는 동안 독립적으로 진행할 수 있다. 진행 수치는 [개발·검증 정본](../../planning/delivery-and-validation.md#현재-진행-상태)에 둔다.
 
 ## Affected Files
 

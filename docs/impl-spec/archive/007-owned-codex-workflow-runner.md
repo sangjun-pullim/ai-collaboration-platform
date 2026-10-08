@@ -9,7 +9,7 @@ risk-surface: permission
 
 ## Context
 
-[PRD의 로컬 AI 연결](../../PRD.md#로컬-ai-연결)과 [참가자별 실행 설정](../../ai-runtime-integration.md#참가자별-도구모델effort-선택)을 실제 connector 실행으로 연결한다. 현재 `WorkflowClient`는 제품 CLI 호출자가 없고, 기기 등록의 native session 입력은 provider 소유권을 검증하지 않는다. 실험 adapter의 별도 attempt ID·전체 shutdown·해시 처리한 텍스트는 서버 attempt/fence와 종결 문구를 연결하는 제품 실행기 계약을 대신하지 않는다.
+[PRD의 로컬 AI 연결](../../PRD.md#로컬-ai-연결)과 [참가자별 실행 설정](../../research/ai-runtime-integration.md#참가자별-도구모델effort-선택)을 실제 connector 실행으로 연결한다. 현재 `WorkflowClient`는 제품 CLI 호출자가 없고, 기기 등록의 native session 입력은 provider 소유권을 검증하지 않는다. 실험 adapter의 별도 attempt ID·전체 shutdown·해시 처리한 텍스트는 서버 attempt/fence와 종결 문구를 연결하는 제품 실행기 계약을 대신하지 않는다.
 
 이번 범위는 macOS/Node 24의 connector-owned Codex 공동 조사 세션, 로컬 binding별 모델·effort 선택, 내구 intent/outbox, 실제 서버의 lease/control 및 질문·답변·continuation 왕복이다. 기존 임의 native session 문자열을 자동 resume하지 않는다. 사용자가 로컬에서 명시적으로 새 협업 맥락을 확인한 L1 연결을 만들고 이후 같은 owned thread를 L2로 재개한다. 제품이 전달하는 공유 자료는 선택한 인계 문구와 파일이며 로컬 에이전트의 기존 전역·프로젝트 지침과 설정도 적용한다. 외부 앱의 실행 중 세션 L3·임의 저장 세션 가져오기는 별도 호환성 범위다.
 
@@ -67,7 +67,7 @@ risk-surface: permission
 - 권한을 검증하지 못한 MCP/apps/plugins와 실행 훅은 작업 전용 제한으로 실행을 막는다. 기본/per-tool `writes`만으로 플러그인 manifest의 자동 승인을 통제하거나 초기 서버 목록만으로 실행 중 변경을 통제한다고 주장하지 않는다. 설치 버전의 제한·실효 설정·관리 정책과 실행 중 적용 경계를 확인한다. 제한이 검증되지 않으면 실행하지 않는다. PreToolUse 훅의 실패·timeout은 native 호출을 허용할 수 있으므로 단독 권한 경계나 훅 신뢰 승인 우회로 사용하지 않는다. 개인 설정 파일과 기존 CLI 로그인은 그대로 둔다.
 - 최초 discovery를 포함해 모든 app-server 생성 전에 동일 cwd·환경·작업 override로 공식 `features list`를 실행한다. 이 경로가 보고한 정규화 실행 flag는 지원 stage·중복·누락·출력/시간 제한을 검사하고 요구 flag가 모두 false일 때만 child를 만든다. 관리 정책의 true pin·오류·미확인은 app-server 생성 전에 거절한다. plugins/apps/hooks·외부 실행 기능, agents와 legacy notify를 해당 작업에서 제한하고 config/read로 확인한 모든 일반 MCP 이름에 enabled=false를 적용한다. 초기 읽기에서 MCP 상태·플러그인 catalog·훅 목록을 실행 경계로 사용하지 않는다.
 - stdio와 원격 제어 비활성의 프로세스 설정을 명시하고 production RPC를 읽기·owned thread/turn 수명주기의 고정 목록으로 제한한다. config·MCP·플러그인·환경의 hot reload/설치/활성 요청은 허용하지 않는다. 재실행 후 raw config의 허용된 변경만 일치하는지, 지침·개인 설정 layer·관리 요건과 정규화 features가 유지되는지 검사한다. context/turn 입력 직전에 같은 proof를 다시 확인하며 새 thread의 환경·capability roots와 turn 환경은 빈 목록으로 지정한다.
-- 제품의 협업 규칙은 turn 입력에 추가하여 기존 developer/base instructions를 덮어쓰지 않는다. 개인 지침·훅·설정 원문, 인증정보, 내부 식별자와 출처 경로를 질문·final에 재출력하지 않도록 명시한다. 질문은 서버가 지정한 peer와 실행 한도로 제한하고, 등록되지 않은 root/임의 실행 명령을 웹 계약으로 받지 않는다. 공동 조사는 읽기·격리 검증·수정 제안까지만 수행하며 개인 설정과 peer 메시지를 소유자의 파일 수정 승인으로 해석하지 않는다. 격리 검증의 쓰기는 원본 프로젝트와 분리한 소유 임시 영역에 한정하고, 그 실행 경계가 확인되지 않으면 실행 대신 검증 방법을 제안한다. [S21](../../sources.md#s21)의 이전 격리 probe는 당시 실험 근거로 보존하고 현재 설정 유지 정책의 성공 근거로 재사용하지 않는다. 실제 합성 검증에서는 기존 지침 출처 로딩과 비공개 metadata의 중앙 비노출을 확인하며 전체 개인 파일의 접근 차단을 주장하지 않는다.
+- 제품의 협업 규칙은 turn 입력에 추가하여 기존 developer/base instructions를 덮어쓰지 않는다. 개인 지침·훅·설정 원문, 인증정보, 내부 식별자와 출처 경로를 질문·final에 재출력하지 않도록 명시한다. 질문은 서버가 지정한 peer와 실행 한도로 제한하고, 등록되지 않은 root/임의 실행 명령을 웹 계약으로 받지 않는다. 공동 조사는 읽기·격리 검증·수정 제안까지만 수행하며 개인 설정과 peer 메시지를 소유자의 파일 수정 승인으로 해석하지 않는다. 격리 검증의 쓰기는 원본 프로젝트와 분리한 소유 임시 영역에 한정하고, 그 실행 경계가 확인되지 않으면 실행 대신 검증 방법을 제안한다. [S21](../../research/sources.md#s21)의 이전 격리 probe는 당시 실험 근거로 보존하고 현재 설정 유지 정책의 성공 근거로 재사용하지 않는다. 실제 합성 검증에서는 기존 지침 출처 로딩과 비공개 metadata의 중앙 비노출을 확인하며 전체 개인 파일의 접근 차단을 주장하지 않는다.
 - 승인 요청은 사용자가 확정한 작업 권한 상한과 기존 managed policy 안에서 처리한다. 제품이 사용자 대신 자동 승인하지 않는다. 로컬 승인 입력이 없는 현재 headless 경로는 command/file 승인·추가 permission·MCP elicitation에 typed 거절 응답하고 로컬 소유자에게 고정 진단을 남긴다. 거절 응답 자체가 이후 실행을 자동 review하도록 설정하지 않는다. 실제 승인 UI/bridge는 이어지는 사용자 개입 명세에서 구현하며 해당 경로를 일반적인 승인 완료로 표시하지 않는다. 원시 command/path/승인 정보는 공동 방에 올리지 않는다.
 - transport에서 raw provider 텍스트·native thread/turn/item ID·raw config/error는 private seam으로만 전달한다. public JSON에 응답 객체를 spread하지 않는다. item phase=null/모르는 method는 final proof가 아니다.
 - native permission/user-input callback은 제품 peer 질문 도구와 구분한다. 다른 thread/turn의 질문이나 승인 응답으로 현재 attempt 권한을 획득하지 못하며 거절·timeout·연결 상실은 새 turn을 재발송하지 않는다. 소유 프로세스 정리와 늦은 callback 폐쇄를 유지한다.
@@ -188,7 +188,7 @@ risk-surface: permission
 
 ## Review Notes
 
-2026-10-02 source17 기준 Step 1–8을 완료했다. 기본 paginated 이력에 대응하는 명시적 legacy 생성과 회귀 검사를 추가했으며 원래 전체 connector 검사는 147/147 통과했다. source16의 변경 없는 서버·브라우저 결과와 formal round3을 재사용하고 source17 보정·실제 수용 스크립트 변경은 독립 추가 검토했다. 실제 공식 Codex 질문 왕복 1회는 ORIGIN·PEER·CONTINUATION 입력 3개의 정상 완료·업로드 뒤 검증 스크립트의 ANSWER 개수 assertion에서 실패했으며, 보존한 원본 실패와 공식 native read·control-flow audit으로 완료 근거를 확인했다. 정리된 DB 이벤트 원문 재검증의 한계를 유지한다. 별도 실제 중단 1회는 중앙 ACK·typed INTERRUPTED·업로드·cleanup을 통과했다. 과거 rotation timing MEDIUM의 원인은 UNCONFIRMED다. 변경 문서와 종료 증거의 별도 독립 검토 및 링크 검사를 완료하고 보관했다. 현재 진행 상태의 정본은 [개발 순서와 검증 계획](../../delivery-and-validation.md)이다.
+2026-10-02 source17 기준 Step 1–8을 완료했다. 기본 paginated 이력에 대응하는 명시적 legacy 생성과 회귀 검사를 추가했으며 원래 전체 connector 검사는 147/147 통과했다. source16의 변경 없는 서버·브라우저 결과와 formal round3을 재사용하고 source17 보정·실제 수용 스크립트 변경은 독립 추가 검토했다. 실제 공식 Codex 질문 왕복 1회는 ORIGIN·PEER·CONTINUATION 입력 3개의 정상 완료·업로드 뒤 검증 스크립트의 ANSWER 개수 assertion에서 실패했으며, 보존한 원본 실패와 공식 native read·control-flow audit으로 완료 근거를 확인했다. 정리된 DB 이벤트 원문 재검증의 한계를 유지한다. 별도 실제 중단 1회는 중앙 ACK·typed INTERRUPTED·업로드·cleanup을 통과했다. 과거 rotation timing MEDIUM의 원인은 UNCONFIRMED다. 변경 문서와 종료 증거의 별도 독립 검토 및 링크 검사를 완료하고 보관했다. 현재 진행 상태의 정본은 [개발 순서와 검증 계획](../../planning/delivery-and-validation.md)이다.
 
 | Finding | Severity | Disposition | Rationale |
 |---------|----------|-------------|-----------|

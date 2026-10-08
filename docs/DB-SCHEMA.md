@@ -8,7 +8,7 @@ sources:
 ---
 # 인증·조사방·기기·실행 조정 데이터 모델
 
-2026-10-03의 Git 기준 소스와 작업트리를 확인했다. 이 문서는 모델의 이유와 제약을 설명하며 실제 DDL은 [마이그레이션](../supabase/migrations/20261001000100-web-auth-room-access.sql)이 정본이다. 진행 상태와 검증 수치는 [개발 순서와 검증 계획](delivery-and-validation.md#현재-진행-상태)에 유지한다.
+2026-10-03의 Git 기준 소스와 작업트리를 확인했다. 이 문서는 모델의 이유와 제약을 설명하며 실제 DDL은 [마이그레이션](../supabase/migrations/20261001000100-web-auth-room-access.sql)이 정본이다. 진행 상태와 검증 수치는 [개발 순서와 검증 계획](planning/delivery-and-validation.md#현재-진행-상태)에 유지한다.
 
 ## 모델 경계
 
@@ -57,11 +57,11 @@ Auth 계정은 Supabase의 `auth.users`가 소유한다. 제품은 이메일이�
 
 [receipt FK 보정](../supabase/migrations/20261001000500-device-cascade-integrity.sql)은 세 credential 참조의 NO ACTION 검사를 transaction 종료까지 연기한다. 기기/조직/Auth 계정 전체 삭제는 기존 cascade로 완료하고, 살아 있는 binding이 참조하는 credential만 독립 삭제하는 동작은 계속 거절한다. 이미 적용한 SQL 네 파일은 수정하지 않았다.
 
-등록 binding을 가진 계정의 hard-delete/ban/soft-delete, 물리적 기기·조직 정리와 정상 소유자 유지를 실제 기기·Auth 통합에서 검사했다. 브라우저 검사와 독립 구현 리뷰도 완료했다. 검증 수치는 [진행 상태](delivery-and-validation.md#현재-진행-상태), 상태 불변식은 [BUSINESS-LOGIC](BUSINESS-LOGIC.md)을 따른다.
+등록 binding을 가진 계정의 hard-delete/ban/soft-delete, 물리적 기기·조직 정리와 정상 소유자 유지를 실제 기기·Auth 통합에서 검사했다. 브라우저 검사와 독립 구현 리뷰도 완료했다. 검증 수치는 [진행 상태](planning/delivery-and-validation.md#현재-진행-상태), 상태 불변식은 [BUSINESS-LOGIC](BUSINESS-LOGIC.md)을 따른다.
 
 ## 내구 질문과 실행 조정
 
-[workflow migration](../supabase/migrations/20261001000600-durable-investigation-coordinator.sql)은 private 정본 아홉 테이블과 공개 event/run 두 projection을 추가한다. 소유한 로컬 DB에 적용했고 신규 권한·제약 및 기존 catalog 보존을 확인했다. 실제 통합·브라우저·독립 구현 리뷰와 기존 Auth·기기 회귀를 통과했다. 현재 검증 수치는 [진행 상태](delivery-and-validation.md#현재-진행-상태)에 유지한다.
+[workflow migration](../supabase/migrations/20261001000600-durable-investigation-coordinator.sql)은 private 정본 아홉 테이블과 공개 event/run 두 projection을 추가한다. 소유한 로컬 DB에 적용했고 신규 권한·제약 및 기존 catalog 보존을 확인했다. 실제 통합·브라우저·독립 구현 리뷰와 기존 Auth·기기 회귀를 통과했다. 현재 검증 수치는 [진행 상태](planning/delivery-and-validation.md#현재-진행-상태)에 유지한다.
 
 방 control은 revision·commit 순서의 event counter를, cycle은 평생 실행/왕복 예약과 deadline을 소유한다. generation은 양쪽 epoch·revision·공유 입력의 immutable snapshot이다. request와 attempt는 별도로 저장하고 start intent·lease·fence·UNKNOWN·terminal을 구분한다. question별 peer/continuation 유일 제약은 중복 답변이나 종결 순서 차이에도 자동 후속 요청을 하나로 제한한다.
 
@@ -77,4 +77,4 @@ question의 `source:HUMAN`에는 `requester_user_id`가 있고 origin request·e
 
 접수와 결과 채택은 현재 질문자의 참가 권한, 대상 scope·epoch, 방 revision을 확인한다. 현재 유효한 대상의 늦은 결과는 과거 기록으로 남길 수 있지만 새 후속 실행을 만들지 않는다. UNKNOWN과 미종결 실행은 기존 한 방 한 작업 규칙으로 보호한다.
 
-[계정 전환 사전 조건 migration](../supabase/migrations/20261002000800-human-direct-actor-precondition.sql)의 private `human_actor`는 원본 16KiB·정확한 필드·UUID를 검사하고 `expectedUserId`를 현재 `auth.uid()`와 대조한다. 사전 조건을 제거한 본문은 기존 `human`에 위임한다. 기존 `human/validate` 정의와 실제 Auth 기준 receipt·정규화 hash를 보존한다. 두 공개 wrapper의 authenticated 권한은 유지하고 private helper의 직접 실행은 차단한다. `questions(cycle_id)` 일반 B-tree 인덱스는 HUMAN 부분 인덱스와 별도로 모든 모드의 cycle 조회를 지원한다. 기존 데이터·권한·query plan의 검증 범위는 [진행 상태](delivery-and-validation.md#현재-진행-상태)를 따른다.
+[계정 전환 사전 조건 migration](../supabase/migrations/20261002000800-human-direct-actor-precondition.sql)의 private `human_actor`는 원본 16KiB·정확한 필드·UUID를 검사하고 `expectedUserId`를 현재 `auth.uid()`와 대조한다. 사전 조건을 제거한 본문은 기존 `human`에 위임한다. 기존 `human/validate` 정의와 실제 Auth 기준 receipt·정규화 hash를 보존한다. 두 공개 wrapper의 authenticated 권한은 유지하고 private helper의 직접 실행은 차단한다. `questions(cycle_id)` 일반 B-tree 인덱스는 HUMAN 부분 인덱스와 별도로 모든 모드의 cycle 조회를 지원한다. 기존 데이터·권한·query plan의 검증 범위는 [진행 상태](planning/delivery-and-validation.md#현재-진행-상태)를 따른다.

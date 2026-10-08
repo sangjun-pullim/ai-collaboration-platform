@@ -1,6 +1,6 @@
 # 미결 선택·실험
 
-이 문서는 아직 닫히지 않은 선택과 실험 과제만 관리한다. 확인된 제품 요구와 비목표는 [PRD](PRD.md), 기술 구조와 불변식은 [ARCHITECTURE](ARCHITECTURE.md)와 [BUSINESS-LOGIC](BUSINESS-LOGIC.md), 확정된 중요한 결정과 trade-off는 [ADR](ADR.md)이 정본이다. 검토 중인 기술안은 이 문서에 둔다.
+이 문서는 아직 닫히지 않은 선택과 실험 과제만 관리한다. 확인된 제품 요구와 비목표는 [PRD](../PRD.md), 기술 구조와 불변식은 [ARCHITECTURE](../ARCHITECTURE.md)와 [BUSINESS-LOGIC](../BUSINESS-LOGIC.md), 확정된 중요한 결정과 trade-off는 [ADR](../ADR.md)이 정본이다. 검토 중인 기술안은 이 문서에 둔다.
 
 ## 사용자·운영자가 결정할 사항
 
@@ -18,11 +18,11 @@
 | 회사 확장 전 | 업무용 플랜·계정·데이터 정책 | 개인·비상업용 초기 범위와 분리된 적격성 검토 |
 | 후속 | 코드 수정·커밋·PR·배포 지원 여부 | 조사 효과 확인 후 권한·검증·rollback 범위 결정 |
 
-문서 정리 자체는 위 선택의 승인이 아니다. 이후 승인된 단계별 구현으로 채택한 언어·중앙/로컬 경계와 기기 인증, 기존 개인 에이전트 설정 유지는 [ADR](ADR.md)에 기록했다. 각자의 웹 도구·모델·effort 선택과 상대 프로젝트 표시 요구는 확정했으며 현재 구현 상태와 남은 검증은 [AI 연동](ai-runtime-integration.md)을 따른다. 실제 공급자 인증 적격성은 해당 연결 단계에서 확인한다.
+문서 정리 자체는 위 선택의 승인이 아니다. 이후 승인된 단계별 구현으로 채택한 언어·중앙/로컬 경계와 기기 인증, 기존 개인 에이전트 설정 유지는 [ADR](../ADR.md)에 기록했다. 각자의 웹 도구·모델·effort 선택과 상대 프로젝트 표시 요구는 확정했으며 현재 구현 상태와 남은 검증은 [AI 연동](../research/ai-runtime-integration.md)을 따른다. 실제 공급자 인증 적격성은 해당 연결 단계에서 확인한다.
 
 ## 검토 중인 기술 선택
 
-첫 구현의 제품 분리·Next.js/TypeScript·Node 24·Supabase Auth/Postgres·outbound connector는 [ADR-002](ADR.md#adr-002--첫-구현의-언어와-중앙로컬-경계)로 채택했다. 아래는 그 선택의 연구 배경과 남은 후속 통합 대안이다. 실제 Realtime·클라우드 배포·provider 실행까지 완료한 결정 기록은 아니다.
+첫 구현의 제품 분리·Next.js/TypeScript·Node 24·Supabase Auth/Postgres·outbound connector는 [ADR-002](../ADR.md#adr-002--첫-구현의-언어와-중앙로컬-경계)로 채택했다. 아래는 그 선택의 연구 배경과 남은 후속 통합 대안이다. 실제 Realtime·클라우드 배포·provider 실행까지 완료한 결정 기록은 아니다.
 
 ### 기존 백엔드와 분리된 제품 경계
 
@@ -42,7 +42,7 @@ Vercel Hobby의 웹·짧은 제어 API와 Supabase Free의 Auth/Postgres/Realtim
 
 ### 첫 버전은 조사·제안 범위로 제한
 
-첫 버전은 읽기, 허용된 격리 테스트, 수정 제안까지만 지원하고 파일 수정·커밋·배포 자동화와 원격 셸은 비목표로 둔다. 사용자가 개인 설정 유지에 관한 후속 질문에서도 이 범위를 확정했다. 개인 설정이 쓰기를 허용해도 공동 조사 작업의 수정 권한으로 확대하지 않는다. 후속 선택은 읽기 전용 우선이며 권한을 검증하지 못한 MCP·플러그인·훅 실행은 조사 동안 제한한다. 개인 지침·설정 파일은 유지하며 실행 상한만 작업에 적용한다. 자동 실행까지 넓히는 대안은 시연 범위는 커지지만 권한·승인·rollback 검증이 제품 가치 검증보다 먼저 필요해진다. 현재 제품 범위와 비목표의 정본은 [PRD](PRD.md#non-goals)다.
+첫 버전은 읽기, 허용된 격리 테스트, 수정 제안까지만 지원하고 파일 수정·커밋·배포 자동화와 원격 셸은 비목표로 둔다. 사용자가 개인 설정 유지에 관한 후속 질문에서도 이 범위를 확정했다. 개인 설정이 쓰기를 허용해도 공동 조사 작업의 수정 권한으로 확대하지 않는다. 후속 선택은 읽기 전용 우선이며 권한을 검증하지 못한 MCP·플러그인·훅 실행은 조사 동안 제한한다. 개인 지침·설정 파일은 유지하며 실행 상한만 작업에 적용한다. 자동 실행까지 넓히는 대안은 시연 범위는 커지지만 권한·승인·rollback 검증이 제품 가치 검증보다 먼저 필요해진다. 현재 제품 범위와 비목표의 정본은 [PRD](../PRD.md#non-goals)다.
 
 ## 실험·조사로 확인할 사실
 
@@ -58,4 +58,4 @@ Vercel Hobby의 웹·짧은 제어 API와 Supabase Free의 Auth/Postgres/Realtim
 | 코드·로그의 외부 전송 경로 | runtime event·공유 산출물·provider 요청 flow 검토 |
 | Vercel Hobby + Supabase Free 안의 실제 운영 가능성 | preview·heartbeat·조회·저장량을 포함한 부하 측정 |
 
-세부 실행 순서와 통과 근거는 [개발·검증 순서](delivery-and-validation.md), AI 런타임별 연구 과제는 [AI 연동](ai-runtime-integration.md), 실제 로컬 확인 범위는 [연결 조사](local-ai-connection-research.md), 각자 접속하는 흐름은 [첫 사용 설정](onboarding-and-settings.md#최초-접속-흐름)을 따른다. 과거 문서 정리·검토 범위는 [문서 정리 기록](document-maintenance.md)에 분리했다.
+세부 실행 순서와 통과 근거는 [개발·검증 순서](delivery-and-validation.md), AI 런타임별 연구 과제는 [AI 연동](../research/ai-runtime-integration.md), 실제 로컬 확인 범위는 [연결 조사](../research/local-ai-connection-research.md), 각자 접속하는 흐름은 [첫 사용 설정](../guides/onboarding-and-settings.md#최초-접속-흐름)을 따른다. 과거 문서 정리·검토 범위는 [문서 정리 기록](../records/document-maintenance.md)에 분리했다.

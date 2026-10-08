@@ -9,7 +9,7 @@ risk-surface: auth
 
 ## Context
 
-[PRD의 공동 조사방](../../PRD.md#scope)과 [인증·기기 연결 구조](../../ARCHITECTURE.md#인증기기-연결)를 구현하는 첫 권한 토대다. [로드맵](../../delivery-and-validation.md#단계별-명세-범위)의 공동 조사 단계 중 사람 인증·그룹/방 접근만 독립 검증한다. 실제 기기 pairing/binding·두 AI 왕복·private·steer·복구는 이 토대의 후속 소비자이며 이번 완료 기준으로 대체하지 않는다.
+[PRD의 공동 조사방](../../PRD.md#scope)과 [인증·기기 연결 구조](../../ARCHITECTURE.md#인증기기-연결)를 구현하는 첫 권한 토대다. [로드맵](../../planning/delivery-and-validation.md#단계별-명세-범위)의 공동 조사 단계 중 사람 인증·그룹/방 접근만 독립 검증한다. 실제 기기 pairing/binding·두 AI 왕복·private·steer·복구는 이 토대의 후속 소비자이며 이번 완료 기준으로 대체하지 않는다.
 
 읽기 전용 planner가 현재 `/`의 prototype graph와 검사 설정을 확인했다. `/`는 `PrototypeApp`만 렌더링하며 실제 Auth·DB·API는 없다. 모의 observer/reducer를 서버 권한 판정으로 사용하지 않는다. 실제 화면은 `/login`, `/app`, `/app/rooms/[roomId]`로 분리하고 기존 `/` 모의 체험과 `experiments/local-ai-runtime/**`를 유지한다. 현재 root는 Next 16.3.7/React 19.3.0/Node 24이며 Git은 없다.
 

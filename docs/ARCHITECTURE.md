@@ -9,11 +9,11 @@ sources:
 ---
 # 아키텍처
 
-이 문서는 전체 제품 설계와 현재 소스의 시스템 경계를 설명한다. 2026-10-04의 Git 기준 및 작업트리를 확인했다. 독립 런타임 실험·모의 웹, 사람 인증·방 접근, 기기 등록, 내구 조사 조정과 로컬 Codex 실행기가 있다. 공개 등록의 `unverified` 표시는 유지한다. 현재 진행 상태·검증 수치·남은 통합은 [개발 순서와 검증 계획](delivery-and-validation.md#현재-진행-상태)을 따른다. freshness stamp는 Git 기준이며 미커밋 소스는 `git diff HEAD -- <sources>`로 함께 확인한다.
+이 문서는 전체 제품 설계와 현재 소스의 시스템 경계를 설명한다. 2026-10-04의 Git 기준 및 작업트리를 확인했다. 독립 런타임 실험·모의 웹, 사람 인증·방 접근, 기기 등록, 내구 조사 조정과 로컬 Codex 실행기가 있다. 공개 등록의 `unverified` 표시는 유지한다. 현재 진행 상태·검증 수치·남은 통합은 [개발 순서와 검증 계획](planning/delivery-and-validation.md#현재-진행-상태)을 따른다. freshness stamp는 Git 기준이며 미커밋 소스는 `git diff HEAD -- <sources>`로 함께 확인한다.
 
-제품 범위는 [PRD](PRD.md), 실행·복구 불변식은 [비즈니스 로직](BUSINESS-LOGIC.md)이 정본이다. 확정된 중요한 결정의 이유는 [ADR](ADR.md), 미선택 기술안과 대안은 [미결 선택](decisions-and-open-items.md#검토-중인-기술-선택)을 따른다.
+제품 범위는 [PRD](PRD.md), 실행·복구 불변식은 [비즈니스 로직](BUSINESS-LOGIC.md)이 정본이다. 확정된 중요한 결정의 이유는 [ADR](ADR.md), 미선택 기술안과 대안은 [미결 선택](planning/decisions-and-open-items.md#검토-중인-기술-선택)을 따른다.
 
-루트 Next.js 웹은 `experiments/local-ai-runtime/`의 독립 TypeScript 실험을 import하거나 실행하지 않는다. 실제 웹 route·state·검사 범위는 [FRONTEND-ARCHITECTURE](FRONTEND-ARCHITECTURE.md), 중앙 모델과 HTTP 계약은 [DB-SCHEMA](DB-SCHEMA.md)·[API-SPEC](API-SPEC.md), 공급자 실험 증거는 [로컬 AI 연결 조사](local-ai-connection-research.md#이번에-실제-확인한-로컬-증거)를 따른다. 그림의 Realtime와 두 PC의 실제 provider 연결은 후속 수용 범위다.
+루트 Next.js 웹은 `experiments/local-ai-runtime/`의 독립 TypeScript 실험을 import하거나 실행하지 않는다. 실제 웹 route·state·검사 범위는 [FRONTEND-ARCHITECTURE](FRONTEND-ARCHITECTURE.md), 중앙 모델과 HTTP 계약은 [DB-SCHEMA](DB-SCHEMA.md)·[API-SPEC](API-SPEC.md), 공급자 실험 증거는 [로컬 AI 연결 조사](research/local-ai-connection-research.md#이번에-실제-확인한-로컬-증거)를 따른다. 그림의 Realtime와 두 PC의 실제 provider 연결은 후속 수용 범위다.
 
 ## 추천 구조
 
@@ -53,7 +53,7 @@ flowchart LR
 
 두 PC의 연결은 outbound HTTPS/실시간 연결이다. 외부에서 PC로 접속하기 위한 공개 포트나 원격 셸을 두지 않는다. 저장소 파일과 공급자 인증은 로컬에서 다루고, 승인된 공유 정보가 클라우드를 통과한다.
 
-그림은 양쪽 AI를 연결한 공동 조사 예시다. 사람→상대 AI의 직접 질문에서는 질문자 쪽 로컬 연결 프로그램·AI·저장소가 선택 사항이다. 질문자 웹→중앙 API/DB→대상 로컬 연결→AI→같은 질문의 답변 순서로 동작한다. [010](impl-spec/archive/010-human-direct-questions.md)은 기존 두 AI의 시작 계약을 유지하고 별도 DIRECT cycle에 사람 발신자와 대상 실행 하나를 기록한다. 구현 검증과 후속 연동은 [진행 상태](delivery-and-validation.md#현재-진행-상태)를 따른다. [직접 질문 규칙](BUSINESS-LOGIC.md#사람이-상대-ai에-직접-질문하는-흐름)
+그림은 양쪽 AI를 연결한 공동 조사 예시다. 사람→상대 AI의 직접 질문에서는 질문자 쪽 로컬 연결 프로그램·AI·저장소가 선택 사항이다. 질문자 웹→중앙 API/DB→대상 로컬 연결→AI→같은 질문의 답변 순서로 동작한다. [010](impl-spec/archive/010-human-direct-questions.md)은 기존 두 AI의 시작 계약을 유지하고 별도 DIRECT cycle에 사람 발신자와 대상 실행 하나를 기록한다. 구현 검증과 후속 연동은 [진행 상태](planning/delivery-and-validation.md#현재-진행-상태)를 따른다. [직접 질문 규칙](BUSINESS-LOGIC.md#사람이-상대-ai에-직접-질문하는-흐름)
 
 ‘AI를 로컬에서 실행’은 도구·저장소를 다루는 agent 프로세스가 PC에 있다는 뜻이다. 일반 Codex/Claude 연동의 모델 호출은 해당 공급자 서비스로 나가며 필요한 입력이 공급자에게 전달된다. 모든 추론과 코드 처리가 PC 안에서만 끝나는 구조로 표현하지 않는다.
 
@@ -61,7 +61,7 @@ flowchart LR
 
 방·질문·근거·AI binding은 업무 도메인과 독립된 협업 모델이다. API 연동 외에 변경 영향이나 다른 공동 문제도 목표와 근거를 입력해 조사한다. 특정 서비스의 업무 테이블·판매 채널 ID·전용 처리 흐름을 핵심 모듈에 내장하지 않는다.
 
-Vercel은 화면과 짧은 제어 API를 제공하고 AI 실행·지속 연결을 위한 상시 프로세스를 맡지 않는다. 실시간 연결은 Supabase가 담당하며 출력 미리보기는 묶어서 전송하고 최종 메시지·필수 상태만 영속화한다. 무료 한도를 위해 권한 검사·중단 제어·확정 기록의 내구성을 줄이지 않는다. 구체적인 한도와 운영 제안은 [무료 플랜 운영 기준](constraints-and-security.md#무료-플랜-운영-기준)에 둔다.
+Vercel은 화면과 짧은 제어 API를 제공하고 AI 실행·지속 연결을 위한 상시 프로세스를 맡지 않는다. 실시간 연결은 Supabase가 담당하며 출력 미리보기는 묶어서 전송하고 최종 메시지·필수 상태만 영속화한다. 무료 한도를 위해 권한 검사·중단 제어·확정 기록의 내구성을 줄이지 않는다. 구체적인 한도와 운영 제안은 [무료 플랜 운영 기준](guides/constraints-and-security.md#무료-플랜-운영-기준)에 둔다.
 
 ## 모듈 책임
 
@@ -108,41 +108,41 @@ Vercel은 화면과 짧은 제어 API를 제공하고 AI 실행·지속 연결�
 
 방별 이벤트 순서는 트랜잭션 안에서 방 카운터 증가와 이벤트 삽입을 함께 수행한다. 일반 DB sequence의 증가값만으로 같은 방의 commit 순서까지 보장한다고 가정하지 않는다. `roomRevision`은 공동 목표·방 제어의 버전, `bindingEpoch`는 특정 AI의 실행 방향 버전, `eventSequence`는 기록 순서이므로 별도로 둔다.
 
-브라우저 경로 입력만으로 PC의 CLI를 실행하지 않는다. 로컬 connector 등록과 공급자별 연결 인터페이스·검증 증거는 [로컬 AI 연결 조사](local-ai-connection-research.md)에 둔다.
+브라우저 경로 입력만으로 PC의 CLI를 실행하지 않는다. 로컬 connector 등록과 공급자별 연결 인터페이스·검증 증거는 [로컬 AI 연결 조사](research/local-ai-connection-research.md)에 둔다.
 
 ## 저장소와 AI의 최초 등록
 
-등록과 화면 순서는 [최초 접속 흐름](onboarding-and-settings.md#최초-접속-흐름)이 정본이다. 구조상 웹 로그인으로 확인한 사람, 로컬 root를 확인한 `WorkspaceBinding`, 조사방에서 선택한 `AgentBinding`을 분리한다. 등록 root와 session cwd가 일치하고 방의 binding이 확정된 뒤에만 질문을 실행한다. 같은 저장소의 다른 worktree·branch·session은 별도 연결로 취급한다.
+등록과 화면 순서는 [최초 접속 흐름](guides/onboarding-and-settings.md#최초-접속-흐름)이 정본이다. 구조상 웹 로그인으로 확인한 사람, 로컬 root를 확인한 `WorkspaceBinding`, 조사방에서 선택한 `AgentBinding`을 분리한다. 등록 root와 session cwd가 일치하고 방의 binding이 확정된 뒤에만 질문을 실행한다. 같은 저장소의 다른 worktree·branch·session은 별도 연결로 취급한다.
 
 실행 중 저장소/session을 바꾸면 해당 binding을 멈추고 새 epoch와 snapshot으로 다시 연결한다. 외부 앱의 branch 변경·파일 편집은 drift로 감지하고 기존 근거를 현재 코드라고 표시하지 않는다.
 
 ## 인증·기기 연결
 
-웹 요청의 공통 본문 읽기는 내부 `src/lib/http/read-json-body.ts`가 담당한다. Origin 비교·JSON content type·실제 수신 바이트 16KiB 상한·스트림 정리·decode/parse를 한 곳에서 처리한다. 방 접근·기기·조사 정책은 각 도메인의 필드 검증과 오류 클래스를 유지하며, 기기 bearer 요청에서는 브라우저 Origin 설정을 읽지 않는다. 방 접근·조사는 엄격한 UTF-8 해석을, 기기는 기존 대체 문자 해석을 유지한다. 공개 입력과 오류 계약은 [API-SPEC](API-SPEC.md), 검증 상태는 [진행 정본](delivery-and-validation.md#현재-진행-상태)을 따른다.
+웹 요청의 공통 본문 읽기는 내부 `src/lib/http/read-json-body.ts`가 담당한다. Origin 비교·JSON content type·실제 수신 바이트 16KiB 상한·스트림 정리·decode/parse를 한 곳에서 처리한다. 방 접근·기기·조사 정책은 각 도메인의 필드 검증과 오류 클래스를 유지하며, 기기 bearer 요청에서는 브라우저 Origin 설정을 읽지 않는다. 방 접근·조사는 엄격한 UTF-8 해석을, 기기는 기존 대체 문자 해석을 유지한다. 공개 입력과 오류 계약은 [API-SPEC](API-SPEC.md), 검증 상태는 [진행 정본](planning/delivery-and-validation.md#현재-진행-상태)을 따른다.
 
-기기는 짧은 만료시간의 일회용 pairing code로 로그인한 소유자에게 연결한다. 발급 토큰은 소유자·조직·방·연결 범위로 제한하고 갱신·취소·기기 제거를 지원한다. 공급자 로그인 토큰/API 키와 중앙 관리자 키를 pairing token으로 사용하지 않는다. 사용자 단계는 [첫 사용 설정](onboarding-and-settings.md), 신뢰·키 경계는 [인증·Realtime·서버 키](constraints-and-security.md#인증realtime서버-키)를 따른다.
+기기는 짧은 만료시간의 일회용 pairing code로 로그인한 소유자에게 연결한다. 발급 토큰은 소유자·조직·방·연결 범위로 제한하고 갱신·취소·기기 제거를 지원한다. 공급자 로그인 토큰/API 키와 중앙 관리자 키를 pairing token으로 사용하지 않는다. 사용자 단계는 [첫 사용 설정](guides/onboarding-and-settings.md), 신뢰·키 경계는 [인증·Realtime·서버 키](guides/constraints-and-security.md#인증realtime서버-키)를 따른다.
 
 현재 기기 인증은 사람 JWT와 분리한 opaque bearer다. 일회용 code와 로컬 proof는 서로 다른 256-bit 난수이며 승인 유효 기간은 5분, 기기 credential은 1시간이다. 공개 RPC는 원문 bearer를 hash해 저장 hash와 대조하고 현재 사람·조직·방·기기 scope를 다시 검사한다. 교환/회전/등록/교체는 로컬 선기록과 제한된 동일-operation receipt로 응답 유실을 복구한다. 권한 취소 뒤 재초대해도 옛 연결을 되살리지 않는다.
 
-`packages/local-connector/`는 macOS·Node 24 CLI다. canonical root와 native session mapping은 0700/0600 private state에, 사용자 별칭·Git metadata만 중앙에 둔다. v1 profile과 별도로 binding별 설정·소유 맥락·실행/outbox 저널을 저장하며 짧은 credential 잠금과 실행/session 잠금을 분리한다. 기존 등록 locator만으로 실행을 허용하지 않는다. 공식 Codex stdio child의 소유권·모델·선택 파일을 검증하고 개인·프로젝트 지침과 설정 파일을 유지한다. 공동 조사에서는 읽기 전용 native 권한과 일시적인 기능 제한으로 미검증 MCP/plugin/hook 실행을 막는다. 공개 표시는 `codex/registered/unverified`를 유지한다. 로컬 명령은 [온보딩](onboarding-and-settings.md#로컬-codex-실행-준비), 참가자별 후속 설정은 [실행 설정](ai-runtime-integration.md#참가자별-도구모델effort-선택)을 따른다.
+`packages/local-connector/`는 macOS·Node 24 CLI다. canonical root와 native session mapping은 0700/0600 private state에, 사용자 별칭·Git metadata만 중앙에 둔다. v1 profile과 별도로 binding별 설정·소유 맥락·실행/outbox 저널을 저장하며 짧은 credential 잠금과 실행/session 잠금을 분리한다. 기존 등록 locator만으로 실행을 허용하지 않는다. 공식 Codex stdio child의 소유권·모델·선택 파일을 검증하고 개인·프로젝트 지침과 설정 파일을 유지한다. 공동 조사에서는 읽기 전용 native 권한과 일시적인 기능 제한으로 미검증 MCP/plugin/hook 실행을 막는다. 공개 표시는 `codex/registered/unverified`를 유지한다. 로컬 명령은 [온보딩](guides/onboarding-and-settings.md#로컬-codex-실행-준비), 참가자별 후속 설정은 [실행 설정](research/ai-runtime-integration.md#참가자별-도구모델effort-선택)을 따른다.
 
 로컬 명령의 공개 진입점은 `cli.ts`의 `main`이다. 환경 검사·필수 옵션·객체 조립·명령 선택·JSON 출력은 이 진입점이 담당한다. 내부 `cli/parse-options.ts`는 기존 옵션 쌍의 해석과 오류를, `cli/remove-local-profile.ts`는 전체 profile 제거를 담당한다. 제거 모듈은 원래 store와 runner factory를 받아 모든 agent의 보호를 확보하고, 원래 transaction에서 전체 검증을 마친 뒤 삭제한다. 공개 명령과 bin 경로·잠금 소유자·기존 파일 검사와 정리 순서는 유지한다.
 
 로컬 실행기의 제거 보호는 내부 `workflow/local-removal.ts`가 소유 정보와 저장 맥락의 검증, 파일 속성 확인·삭제, session 잠금 안의 callback을 담당한다. `WorkflowRunner`는 진입 검사·binding 잠금·같은 실행 권한과 추적 작업·종료 대기·퇴역 상태를 계속 소유한다. 공개 `guardLocalRemoval`과 `removeLocal`, CLI의 전체 profile 제거는 기존 proof 구조와 수명·오류 순서를 유지한다. 제거 모듈은 일반 실행·복구·공급자 종료를 맡지 않는다.
 
-로컬 실행 기록은 `RuntimeStore`가 주 파일과 상태 전이를 관리하고, 내부 `RuntimeArchive`가 완료된 요청의 원문 보관 파일을 검증한다. `WorkflowRunner`는 실행·파일 읽기·서버 응답 저장에 앞서 종결과 완료 전송 공간을 확보한다. 한 저장 안에서는 보관 원문·해석 결과를 재사용하고 이전·다음 기록과의 관계를 각각 검증한다. 내부 모듈이 열린 파일과 현재 경로를 검증 범위 전후에 재대조하고 정리하며, 저장이나 호출 사이에는 결과를 보관하지 않는다. 선택 파일 도구의 저장 예약은 검증한 snapshot의 바이트 크기로 계산하며 실제 읽기 권한·변경 감지는 기존 파일 정책이 계속 확인한다. 보관 증거는 새 실행 권한이나 새 저장 세션으로 사용하지 않는다. [보관·용량 규칙](ai-runtime-integration.md#로컬-실행-기록-보관과-용량)과 [현재 검증 상태](delivery-and-validation.md#현재-진행-상태)를 따른다.
+로컬 실행 기록은 `RuntimeStore`가 주 파일과 상태 전이를 관리하고, 내부 `RuntimeArchive`가 완료된 요청의 원문 보관 파일을 검증한다. `WorkflowRunner`는 실행·파일 읽기·서버 응답 저장에 앞서 종결과 완료 전송 공간을 확보한다. 한 저장 안에서는 보관 원문·해석 결과를 재사용하고 이전·다음 기록과의 관계를 각각 검증한다. 내부 모듈이 열린 파일과 현재 경로를 검증 범위 전후에 재대조하고 정리하며, 저장이나 호출 사이에는 결과를 보관하지 않는다. 선택 파일 도구의 저장 예약은 검증한 snapshot의 바이트 크기로 계산하며 실제 읽기 권한·변경 감지는 기존 파일 정책이 계속 확인한다. 보관 증거는 새 실행 권한이나 새 저장 세션으로 사용하지 않는다. [보관·용량 규칙](research/ai-runtime-integration.md#로컬-실행-기록-보관과-용량)과 [현재 검증 상태](planning/delivery-and-validation.md#현재-진행-상태)를 따른다.
 
-`experiments/claude-code-runtime/`의 합성 실행기는 제품 연결기와 분리한다. `NativeRuntime`이 입력·예산·선택 파일·입출력·정리를 소유하고, 내부 `NativeInputProof`는 입력 하나의 신원·ACK·도구 연결·실제 응답 완료·종결 검증만 소유한다. 입력 증명은 파일·프로세스·타이머·예산을 만들지 않는다. 재개 전에는 관찰한 소유 이력과 저장된 전체 기록의 순서·개수·hash를 대조한다. 기존 transport와 잠금·저장 형식은 유지하며 합성 검사로 실제 Claude 실행 허가나 제품 등록을 만들지 않는다. 실제 실행의 제한과 검증 범위는 [실험 설명](../experiments/claude-code-runtime/README.md)과 [진행 정본](delivery-and-validation.md#현재-진행-상태)을 따른다.
+`experiments/claude-code-runtime/`의 합성 실행기는 제품 연결기와 분리한다. `NativeRuntime`이 입력·예산·선택 파일·입출력·정리를 소유하고, 내부 `NativeInputProof`는 입력 하나의 신원·ACK·도구 연결·실제 응답 완료·종결 검증만 소유한다. 입력 증명은 파일·프로세스·타이머·예산을 만들지 않는다. 재개 전에는 관찰한 소유 이력과 저장된 전체 기록의 순서·개수·hash를 대조한다. 기존 transport와 잠금·저장 형식은 유지하며 합성 검사로 실제 Claude 실행 허가나 제품 등록을 만들지 않는다. 실제 실행의 제한과 검증 범위는 [실험 설명](../experiments/claude-code-runtime/README.md)과 [진행 정본](planning/delivery-and-validation.md#현재-진행-상태)을 따른다.
 
 opaque device bearer를 Supabase Realtime JWT로 사용할 수 있다고 가정하지 않는다. Realtime 인증과 사람 HttpOnly cookie의 연결은 후속 단계에서 검증하며 중앙 signing/admin key를 로컬 앱에 배포하지 않는다. 현재 등록 프로그램은 고정 HTTP API만 사용한다.
 
-현재 브라우저에도 session JWT를 읽는 경로가 없다. 후속 전달 후보는 사람 cookie/기기 bearer로 인증한 durable 조회와 서버 내부 JWT를 사용하는 제한된 Realtime 알림 중계다. 위 그림의 Realtime→웹 연결은 아직 구현하지 않았다. 변경 알림은 공개 hint만 전달하고 정본을 재조회하며, 열린 연결의 권한 취소·만료·cookie 갱신과 종료를 실제 검증한다. 공식/설치 소스 조사 범위는 [S19](sources.md#s19)를 따른다.
+현재 브라우저에도 session JWT를 읽는 경로가 없다. 후속 전달 후보는 사람 cookie/기기 bearer로 인증한 durable 조회와 서버 내부 JWT를 사용하는 제한된 Realtime 알림 중계다. 위 그림의 Realtime→웹 연결은 아직 구현하지 않았다. 변경 알림은 공개 hint만 전달하고 정본을 재조회하며, 열린 연결의 권한 취소·만료·cookie 갱신과 종료를 실제 검증한다. 공식/설치 소스 조사 범위는 [S19](research/sources.md#s19)를 따른다.
 
 공유 binding ID는 서버의 opaque 식별자이고 공급자 native session ID·절대 경로는 로컬 매핑에 둔다. 원래 session 제목을 자동 공유하지 않고 사용자가 확인한 별칭을 쓴다.
 
 ## Vercel 선택
 
-현재 Vercel은 native WebSocket을 베타로 지원한다. 최대 Function 실행시간에 연결이 끝나며 재연결은 다른 인스턴스로 갈 수 있으므로 외부 상태·조율 저장소가 필요하다. [공식 근거](sources.md#s1)
+현재 Vercel은 native WebSocket을 베타로 지원한다. 최대 Function 실행시간에 연결이 끝나며 재연결은 다른 인스턴스로 갈 수 있으므로 외부 상태·조율 저장소가 필요하다. [공식 근거](research/sources.md#s1)
 
 | 선택 | 장점 | 부담 | 권고 |
 |---|---|---|---|
@@ -151,7 +151,7 @@ opaque device bearer를 Supabase Realtime JWT로 사용할 수 있다고 가정�
 | Vercel 웹 + 상시 Node 중계 서버 | 긴 연결·서버 실행을 직접 운영 | 별도 서버·장애·배포·모니터링 운영 | 기존 운영 기반이 있으면 후보 |
 | PC 간 직접 연결 | 중계 서비스 의존 감소 | NAT/VPN·접속 복구·공동 기록·접근 통제 부담 | 초기 권고에서 제외 |
 
-Vercel의 `*.vercel.app` 주소는 회사 내부망을 의미하지 않는다. 별도 도메인 없이 시연할 수 있지만 앱 로그인·방 권한이 필요하다. 회사 업무용 플랜 적격성도 확인한다. [공식 근거](sources.md#s2)
+Vercel의 `*.vercel.app` 주소는 회사 내부망을 의미하지 않는다. 별도 도메인 없이 시연할 수 있지만 앱 로그인·방 권한이 필요하다. 회사 업무용 플랜 적격성도 확인한다. [공식 근거](research/sources.md#s2)
 
 ## 운영 경계
 
