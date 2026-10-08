@@ -37,8 +37,22 @@ const executeNative: FolderPickerExecute = (file, args, options) =>
     let result: { error: Error | null; stdout: string; stderr: string } | undefined;
     const finish = () => {
       if (!closed || !result) return;
-      if (result.error) reject(result.error);
-      else accept({ stdout: result.stdout, stderr: result.stderr });
+      if (result.error) {
+        const error = result.error as NodeJS.ErrnoException & {
+          killed?: boolean;
+          signal?: unknown;
+        };
+        // execFile supplies stderr separately; keep only bounded, private classification data.
+        reject({
+          code: error.code,
+          killed: error.killed,
+          signal: error.signal,
+          stderr:
+            typeof result.stderr === "string" && Buffer.byteLength(result.stderr) <= maxOutputBytes
+              ? result.stderr
+              : undefined,
+        });
+      } else accept({ stdout: result.stdout, stderr: result.stderr });
     };
     const child = execFile(file, [...args], options, (error, stdout, stderr) => {
       result = { error, stdout, stderr };

@@ -303,3 +303,64 @@ test("should wait for the owned native child to close after abort", async (t) =>
     Object.defineProperty(process, "platform", descriptor);
   }
 });
+
+for (const [name, code, stderr, status] of [
+  ["cancel", 1, "private diagnostic (-128)", "CANCELLED"],
+  ["TCC denial", 1, "private diagnostic (-1743)", "DENIED"],
+  ["privilege denial", 1, "private diagnostic (-10004)", "DENIED"],
+  ["maxbuffer", "ERR_CHILD_PROCESS_STDIO_MAXBUFFER", "private diagnostic (-128)", "FAILED"],
+  ["oversized stderr", 1, "x".repeat(8193) + "(-128)", "FAILED"],
+] as const) {
+  for (const callbackFirst of [true, false])
+    test(`should classify native callback ${name} only after ${callbackFirst ? "late close" : "late callback"}`, async (t) => {
+      const descriptor = Object.getOwnPropertyDescriptor(process, "platform")!;
+      Object.defineProperty(process, "platform", { ...descriptor, value: "darwin" });
+      const child = new EventEmitter();
+      const error = Object.assign(new Error("private diagnostic"), {
+        code,
+        killed: name === "maxbuffer",
+        signal: name === "maxbuffer" ? "SIGKILL" : null,
+      });
+      assert.equal(Object.hasOwn(error, "stderr"), false);
+      let callback!: (error: Error | null, stdout: string, stderr: string) => void;
+      const mock = t.mock.method(
+        childProcess,
+        "execFile",
+        (
+          file: string,
+          args: readonly string[],
+          options: FolderPickerExecutionOptions,
+          done: typeof callback,
+        ) => {
+          assert.equal(file, "/usr/bin/osascript");
+          assert.equal(args[0], "-e");
+          assert.equal(options.timeout, 120000);
+          assert.equal(options.maxBuffer, 8192);
+          assert.equal(options.killSignal, "SIGKILL");
+          callback = done;
+          return child;
+        },
+      );
+      syncBuiltinESMExports();
+      try {
+        let settled = false;
+        const result = pickFolder().then((value) => {
+          settled = true;
+          return value;
+        });
+        if (callbackFirst) callback(error, "", stderr);
+        else child.emit("close", 1, null);
+        await Promise.resolve();
+        assert.equal(settled, false);
+        if (callbackFirst) child.emit("close", 1, null);
+        else callback(error, "", stderr);
+        assert.deepEqual(await result, { status });
+        assert.equal(JSON.stringify(await result).includes("private diagnostic"), false);
+        assert.equal(Object.hasOwn(error, "stderr"), false);
+      } finally {
+        mock.mock.restore();
+        syncBuiltinESMExports();
+        Object.defineProperty(process, "platform", descriptor);
+      }
+    });
+}

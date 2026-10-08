@@ -181,3 +181,10 @@ Docker 접근이 거절되어도 웹 준비 명령은 `LOCAL_STACK_UNVERIFIED`�
 - 원인: 첫 진입만 읽던 effect에 해시 변경 처리가 없었다. 첫 후보에서는 URL을 지운 뒤 예약한 상태 갱신을 StrictMode 정리가 취소했다.
 - 수정: [connection-manager.tsx](../src/features/device-binding/connection-manager.tsx)는 새 링크를 읽고 URL에서 즉시 제거한다. 아직 적용하지 않은 코드는 컴포넌트에 잠시 보존해 effect 재실행에서 다시 검증한다. 잘못된 코드와 이전 승인 체크를 지우고, 화면을 벗어난 뒤에는 상태를 갱신하지 않는다. 승인 API는 사용자의 직접 승인을 요구한다.
 - 검증: 두 실패를 단위 검사로 재현한 뒤 관련23건을 통과했다. 최신 독립 빌드의 desktop/mobile 기기 연결 화면6건과 독립 리뷰2가 모두 통과했다. 이전 빌드로 실행한 브라우저 실패 로그는 보존하며 최신 코드의 수용 근거에서 제외했다.
+
+## 2026-10-08 — Mac 폴더 선택 창의 취소 오류 분류
+
+- 현상: 실제 폴더 선택 창에서 취소를 눌러도 `CANCELLED` 대신 `FAILED`가 반환됐다.
+- 원인: `execFile`은 오류와 stderr를 callback의 별도 인자로 전달한다. 기본 실행 함수가 오류만 보존해 취소 코드 `-128`을 확인하지 못했다.
+- 수정: [folder-picker.ts](../packages/local-connector/src/settings/folder-picker.ts)는 callback과 소유 child의 종료를 모두 확인한 뒤 크기가 제한된 비공개 진단 정보로 분류한다. 원문 오류·경로·stderr는 공개 응답에 포함하지 않는다. 시간 제한·중단·크기 제한·선택 경로 검증은 유지한다.
+- 검증: 취소·권한 거절·크기 초과·종료 순서의 단위21건과 독립 리뷰를 통과했다. 실제 Mac 창에서 지정한 검증용 폴더의 선택과 취소를 각각 확인했으며 AI 입력은0이다. 최초 실패 결과도 보존한다.
