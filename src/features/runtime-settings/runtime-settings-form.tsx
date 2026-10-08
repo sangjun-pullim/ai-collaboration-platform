@@ -103,10 +103,16 @@ export function RuntimeSettingsForm({
         </Badge>
       </div>
       <p className="text-sm text-neutral-600">
-        자기 PC에서 <code>manage --profile &lt;profile&gt;</code>을 실행해 두세요. 프로필은 기기
-        연결에 사용한 이름입니다. 새 폴더의 필요한 코드 자동 탐색과 답·근거 경로 기록을 해당 Mac에서
-        승인합니다.
+        연결 명령을 실행한 터미널을 계속 열어 두세요. 추가 관리 프로세스를 실행할 필요가 없습니다.
+        새 폴더의 필요한 코드 자동 탐색과 답·근거 경로 기록을 해당 Mac에서 승인합니다.
       </p>
+      <details className="text-sm text-neutral-600">
+        <summary className="cursor-pointer">수동 연결의 AI 설정 실행 방법</summary>
+        <p className="mt-2">
+          수동 pair·exchange로 연결했다면 자기 PC에서 <code>manage --profile &lt;profile&gt;</code>
+          을 실행하세요. 프로필은 해당 기기 연결에 사용한 이름입니다.
+        </p>
+      </details>
       {(operation?.receipt?.readMode === "AUTO_CODE" ||
         (appliedCurrent && applied?.readMode === "AUTO_CODE")) && (
         <p className="text-sm text-neutral-600">

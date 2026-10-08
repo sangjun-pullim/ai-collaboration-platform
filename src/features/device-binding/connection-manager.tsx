@@ -6,6 +6,8 @@ import { messages, type ConnectionErrorCode, type OwnedDevice } from "./contract
 import { Button } from "../../components/ui/button";
 import { Input } from "../../components/ui/input";
 import { RuntimeSettingsForm } from "../runtime-settings/runtime-settings-form";
+import { LocalConnectionGuide } from "./local-connection-guide";
+import { consumeConnectionFragment } from "./local-connection-command";
 import styles from "../room-access/access.module.css";
 type RoomOption = {
   roomId: string;
@@ -16,9 +18,13 @@ type RoomOption = {
 export function ConnectionManager({
   devices,
   rooms,
+  origin,
+  userId,
 }: {
   devices: OwnedDevice[];
   rooms: RoomOption[];
+  origin: string;
+  userId: string;
 }) {
   const router = useRouter();
   const alert = useRef<HTMLParagraphElement>(null);
@@ -26,6 +32,23 @@ export function ConnectionManager({
   const [error, setError] = useState<ConnectionErrorCode | null>(null);
   const [notice, setNotice] = useState("");
   const [roomId, setRoomId] = useState(rooms[0]?.roomId ?? "");
+  const [pairingCode, setPairingCode] = useState("");
+  useEffect(() => {
+    if (!window.location.hash) return;
+    const hash = window.location.hash;
+    window.history.replaceState(
+      window.history.state,
+      "",
+      window.location.pathname + window.location.search,
+    );
+    const pairing = consumeConnectionFragment(hash, rooms);
+    if (pairing) {
+      queueMicrotask(() => {
+        setRoomId(pairing.roomId);
+        setPairingCode(pairing.code);
+      });
+    }
+  }, [rooms]);
   const [settingsRoomId, setSettingsRoomId] = useState(
     devices.find((device) => device.state === "active")?.roomId ?? rooms[0]?.roomId ?? "",
   );
@@ -64,7 +87,7 @@ export function ConnectionManager({
       }
       setNotice(
         action === "approve"
-          ? `기기 ${result.data.deviceAlias} 승인을 완료했습니다. 자기 PC에서 소유 계정과 방을 확인한 뒤 exchange로 인증을 교환하고 manage --profile <profile>을 실행하세요.`
+          ? `기기 ${result.data.deviceAlias} 승인을 완료했습니다. 실행 중인 터미널에서 내 계정과 방을 확인한 뒤 아래 AI 설정을 진행하세요. 수동 연결은 펼침 안내를 확인하세요.`
           : "연결을 취소했습니다. 다시 연결하려면 새 승인이 필요합니다.",
       );
       router.refresh();
@@ -90,8 +113,10 @@ export function ConnectionManager({
         roomId: room.roomId,
         confirmed: fields.get("confirmed") === "on",
       })
-    )
+    ) {
       form.reset();
+      setPairingCode("");
+    }
   }
   return (
     <main className={styles.shell}>
@@ -107,32 +132,30 @@ export function ConnectionManager({
         <Link href="/app" className="text-sm underline">
           질문만 하기
         </Link>
-        <section className={styles.panel}>
-          <h2 className="font-semibold">연결 순서</h2>
-          <ol className="list-decimal space-y-2 pl-5 text-sm text-neutral-600">
-            <li>AI 소유자가 자기 PC의 로컬 연결 프로그램에서 기기 연결 코드를 생성합니다.</li>
-            <li>아래에서 연결할 방을 고르고 코드를 입력해 승인합니다. 기기 등록이 완료됩니다.</li>
-            <li>같은 PC에서 소유 계정과 선택한 방을 확인한 뒤 exchange로 인증을 교환합니다.</li>
-            <li>
-              같은 PC에서 <code>manage --profile &lt;profile&gt;</code>을 실행합니다. 프로필은 기기
-              연결에 사용한 이름입니다. 아래에서 프로그램을 고르고 폴더 선택을 요청하세요.
-            </li>
-            <li>
-              Mac에서 폴더와 공유 범위를 확인한 뒤 아래에서 모델과 추론 강도를 선택하고 적용합니다.
-            </li>
-            <li>PC 적용 확인 뒤 AI 채팅방의 질문 대상 선택에서 실제 응답 준비를 확인합니다.</li>
-          </ol>
-          <p className="text-xs text-neutral-500">
-            등록만으로 응답 준비가 완료되지는 않습니다. 로컬 경로와 공급자 인증 정보는 자기 PC에만
-            보관하세요.
+        <LocalConnectionGuide
+          origin={origin}
+          userId={userId}
+          rooms={rooms}
+          roomId={roomId}
+          onRoomChange={setRoomId}
+        />
+        <details className={styles.panel}>
+          <summary className="cursor-pointer text-sm">기존 수동 연결을 사용하는 경우</summary>
+          <p className="mt-2 text-sm text-neutral-600">
+            기존 pair 명령의 코드를 아래에서 승인한 뒤, 자기 PC에서 계정·방을 확인하고 exchange를
+            실행하세요. 같은 프로필로 manage를 실행하면 아래 AI 설정을 사용할 수 있습니다.
           </p>
-        </section>
+        </details>
         {error && (
           <p role="alert" aria-label="기기 연결 오류" tabIndex={-1} ref={alert}>
             {messages[error]}
           </p>
         )}
-        {notice && <p role="status">{notice}</p>}
+        {notice && (
+          <p role="status" aria-label="기기 연결 결과">
+            {notice}
+          </p>
+        )}
         <section className={styles.panel}>
           <h2>새 기기 승인</h2>
           {rooms.length ? (
@@ -160,6 +183,8 @@ export function ConnectionManager({
                 기기 연결 코드
                 <Input
                   name="code"
+                  value={pairingCode}
+                  onChange={(event) => setPairingCode(event.target.value)}
                   required
                   minLength={64}
                   maxLength={64}

@@ -526,3 +526,35 @@ test("should honor all YAML boolean spellings for enabled transformer credential
     assert.equal((await f.run()).SUPABASE_PUBLISHABLE_KEY, anon);
   }
 });
+
+test("should prepare the distribution before starting Next and refuse failed preparation", async () => {
+  const { startLocalWeb } = await import(pathToFileURL(resolve("scripts/dev-local-web.mjs")).href);
+  const order: string[] = [],
+    env = { APP_ORIGIN: "http://127.0.0.1:4318" },
+    child = { pid: 123 };
+  assert.equal(
+    await startLocalWeb(env, {
+      build: async () => {
+        order.push("build");
+      },
+      start: (given: unknown) => {
+        assert.equal(given, env);
+        order.push("start");
+        return child;
+      },
+    }),
+    child,
+  );
+  assert.deepEqual(order, ["build", "start"]);
+  await assert.rejects(
+    startLocalWeb(env, {
+      build: async () => {
+        throw Error("build-failed");
+      },
+      start: () => {
+        assert.fail("must not start Next");
+      },
+    }),
+    /build-failed/,
+  );
+});

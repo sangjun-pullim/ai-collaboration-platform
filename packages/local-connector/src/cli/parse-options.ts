@@ -7,6 +7,8 @@ export function parseCliOptions(rest: string[]): Record<string, string> {
     "state-dir",
     "profile",
     "device-alias",
+    "organization-id",
+    "room-id",
     "confirm-scope",
     "root",
     "native-session",

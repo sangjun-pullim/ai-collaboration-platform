@@ -228,6 +228,23 @@ export async function localWebEnvironment(
   };
 }
 
+export async function startLocalWeb(
+  env,
+  {
+    build = async () =>
+      (await import("./build-local-connection.mjs")).buildLocalConnection({ root }),
+    start = (environment) =>
+      spawn(
+        process.execPath,
+        ["node_modules/next/dist/bin/next", "dev", "--hostname", "127.0.0.1", "--port", "4318"],
+        { cwd: root, env: environment, stdio: "inherit" },
+      ),
+  } = {},
+) {
+  await build();
+  return start(env);
+}
+
 async function main() {
   if (process.platform !== "darwin" || Number(process.versions.node.split(".")[0]) !== 24)
     throw new WebSetupError("MACOS_NODE24_REQUIRED");
@@ -238,11 +255,7 @@ async function main() {
     `${JSON.stringify({ status: checkOnly ? "CHECKED" : "STARTING", origin: env.APP_ORIGIN, modelInputs: 0 })}\n`,
   );
   if (checkOnly) return;
-  const child = spawn(
-    process.execPath,
-    ["node_modules/next/dist/bin/next", "dev", "--hostname", "127.0.0.1", "--port", "4318"],
-    { cwd: root, env, stdio: "inherit" },
-  );
+  const child = await startLocalWeb(env);
   for (const signal of ["SIGINT", "SIGTERM"]) process.on(signal, () => child.kill(signal));
   child.on("exit", (code) => {
     process.exitCode = code ?? 1;

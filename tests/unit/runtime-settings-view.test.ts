@@ -427,7 +427,11 @@ function textContent(node: unknown): string {
   if (Array.isArray(node)) return node.map(textContent).join("");
   return node && typeof node === "object" ? textContent((node as UINode).props?.children) : "";
 }
-function loadUI(path: string, replacements: Record<string, unknown>) {
+function loadUI(
+  path: string,
+  replacements: Record<string, unknown>,
+  globals: Record<string, unknown> = {},
+) {
   const exported: Record<string, unknown> = {};
   const source = ts.transpileModule(readFileSync(path, "utf8"), {
     compilerOptions: {
@@ -440,6 +444,7 @@ function loadUI(path: string, replacements: Record<string, unknown>) {
   runInNewContext(source, {
     exports: exported,
     Date,
+    ...globals,
     require(name: string) {
       if (name === "react/jsx-runtime") return { jsx, jsxs: jsx };
       if (Object.hasOwn(replacements, name)) return replacements[name];
@@ -589,6 +594,12 @@ test("should restrict setup to a live owned device in the selected room and pres
     "../../components/ui/button": { Button: "button" },
     "../../components/ui/input": { Input: "input" },
     "../runtime-settings/runtime-settings-form": { RuntimeSettingsForm: "settings-form" },
+    "./local-connection-guide": { LocalConnectionGuide: "connection-guide" },
+    "./local-connection-command": {
+      consumeConnectionFragment() {
+        return null;
+      },
+    },
     "../room-access/access.module.css": { default: {} },
   }).ConnectionManager as (props: unknown) => UINode;
   const future = new Date(Date.now() + 60000).toISOString();
@@ -603,6 +614,8 @@ test("should restrict setup to a live owned device in the selected room and pres
     expiresAt: future,
   };
   const props = {
+    origin: "https://example.com",
+    userId: rootId,
     checkedAt: Date.now(),
     devices: [
       owned,
@@ -760,4 +773,207 @@ test("should label automatic code exploration only for an approved owner receipt
     textContent(formTree(formView({ response: automatic }))).includes("자동 탐색 · 답과 근거"),
     true,
   );
+});
+
+test("should keep the active connector and put manage only inside closed manual guidance", () => {
+  const tree = formTree(formView());
+  const manual = nodes(tree).find(
+    (node) =>
+      node.type === "details" &&
+      nodes(node).some(
+        (child) => child.type === "code" && textContent(child).includes("manage --profile"),
+      ),
+  )!;
+  assert.ok(manual);
+  assert.equal(manual.props.open, undefined);
+  const outside = nodes(tree).filter((node) => node.type === "p" && !nodes(manual).includes(node));
+  assert.ok(outside.some((node) => textContent(node).includes("터미널을 계속 열어")));
+  assert.ok(outside.every((node) => !textContent(node).includes("manage --profile")));
+});
+
+test("should consume a known pairing fragment once without selecting approval", async () => {
+  const states: unknown[] = [],
+    effects: (() => unknown)[] = [];
+  let cursor = 0,
+    replaced = "",
+    requests = 0;
+  const roomId = deviceId,
+    code = "a".repeat(64);
+  const window = {
+    location: { hash: `#code=${code}&room=${roomId}`, pathname: "/app/connections", search: "" },
+    history: {
+      state: null,
+      replaceState(_a: unknown, _b: unknown, path: string) {
+        replaced = path;
+        window.location.hash = "";
+      },
+    },
+  };
+  const ui = loadUI(
+    "src/features/device-binding/connection-manager.tsx",
+    {
+      react: {
+        useEffect: (f: () => unknown) => effects.push(f),
+        useRef: () => ({ current: null }),
+        useState(initial: unknown) {
+          const slot = cursor++;
+          if (!(slot in states)) states[slot] = typeof initial === "function" ? initial() : initial;
+          return [states[slot], (next: unknown) => (states[slot] = next)];
+        },
+      },
+      "next/link": { default: "link" },
+      "next/navigation": { useRouter: () => ({ refresh() {} }) },
+      "./contracts": { messages: {} },
+      "../../components/ui/button": { Button: "button" },
+      "../../components/ui/input": { Input: "input" },
+      "../runtime-settings/runtime-settings-form": { RuntimeSettingsForm: "settings-form" },
+      "./local-connection-guide": { LocalConnectionGuide: "connection-guide" },
+      "./local-connection-command": {
+        consumeConnectionFragment: (hash: string) =>
+          hash.includes(code) ? { roomId, code } : null,
+      },
+      "../room-access/access.module.css": { default: {} },
+    },
+    {
+      window,
+      queueMicrotask,
+      fetch() {
+        requests++;
+        throw Error("must not approve automatically");
+      },
+    },
+  ).ConnectionManager as (props: unknown) => UINode;
+  const props = {
+    devices: [],
+    rooms: [{ roomId, organizationId: rootId, roomTitle: "방", organizationName: "조직" }],
+    origin: "https://example.com",
+    userId: rootId,
+  };
+  ui(props);
+  effects[0]();
+  await Promise.resolve();
+  cursor = 0;
+  const tree = ui(props);
+  assert.equal(replaced, "/app/connections");
+  assert.equal(window.location.hash, "");
+  assert.equal(nodes(tree).find((node) => node.props.name === "code")?.props.value, code);
+  const checkbox = nodes(tree).find((node) => node.props.type === "checkbox")!;
+  assert.ok(checkbox);
+  assert.equal(checkbox.props.checked, undefined);
+  assert.equal(checkbox.props.defaultChecked, undefined);
+  effects[0]();
+  assert.equal(requests, 0);
+});
+
+test("should prepare a room-specific command and expose it when clipboard permission is denied", async () => {
+  const states: unknown[] = [],
+    effects: (() => unknown)[] = [],
+    calls: string[] = [];
+  let cursor = 0;
+  const room = {
+    roomId: deviceId,
+    organizationId: rootId,
+    roomTitle: "공유 방",
+    organizationName: "조직",
+  };
+  const manifest = { version: 1, bootstrap: { sha256: "verified-digest" } },
+    options: unknown[] = [];
+  const field = {
+    closest: () => ({ setAttribute: (name: string) => calls.push(name) }),
+    focus: () => calls.push("focus"),
+    select: () => calls.push("select"),
+  };
+  const ui = loadUI(
+    "src/features/device-binding/local-connection-guide.tsx",
+    {
+      react: {
+        useEffect: (f: () => unknown) => effects.push(f),
+        useRef: () => ({ current: field }),
+        useState(initial: unknown) {
+          const slot = cursor++;
+          if (!(slot in states)) states[slot] = initial;
+          return [states[slot], (next: unknown) => (states[slot] = next)];
+        },
+      },
+      "../../components/ui/button": { Button: "button" },
+      "../../components/ui/input": { Input: "input" },
+      "./local-connection-command": {
+        connectionOrigin: (value: string) => value,
+        parseConnectionManifest: () => manifest,
+        localConnectionCommand: async (value: unknown) => {
+          options.push(value);
+          return "verified-connection-command";
+        },
+      },
+    },
+    {
+      AbortController,
+      setTimeout,
+      clearTimeout,
+      TextDecoder,
+      Uint8Array,
+      fetch: async () =>
+        new Response(JSON.stringify(manifest), {
+          status: 200,
+          headers: { "Content-Type": "application/json" },
+        }),
+      navigator: {
+        clipboard: {
+          writeText: async () => {
+            throw Error("denied");
+          },
+        },
+      },
+    },
+  ).LocalConnectionGuide as (props: unknown) => UINode;
+  const props = {
+    origin: "https://example.com",
+    userId: rootId,
+    rooms: [room],
+    roomId: deviceId,
+    onRoomChange() {},
+  };
+  ui(props);
+  const cleanup = effects[0]() as () => void;
+  await new Promise((resolve) => setImmediate(resolve));
+  cursor = 0;
+  effects.length = 0;
+  ui(props);
+  effects[1]();
+  await new Promise((resolve) => setImmediate(resolve));
+  cursor = 0;
+  const tree = ui(props),
+    button = nodes(tree).find((node) => node.type === "button")!;
+  assert.equal(button.props.disabled, false);
+  assert.equal(options.length, 1);
+  assert.deepEqual(JSON.parse(JSON.stringify(options[0])), {
+    origin: props.origin,
+    userId: rootId,
+    roomId: deviceId,
+    organizationId: rootId,
+    deviceAlias: "내 Mac",
+    manifest,
+  });
+  assert.equal(
+    nodes(tree).find((node) => node.type === "textarea")?.props.value,
+    "verified-connection-command",
+  );
+  await (button.props.onClick as () => Promise<void>)();
+  assert.deepEqual(calls, ["open", "focus", "select"]);
+  cursor = 0;
+  assert.ok(
+    nodes(ui(props)).some(
+      (node) => node.props.role === "status" && node.props["aria-label"] === "연결 명령 복사 결과",
+    ),
+  );
+  assert.ok(!nodes(tree).some((node) => node.props.type === "checkbox"));
+  cursor = 0;
+  const changed = ui({
+    ...props,
+    roomId: secondOperationId,
+    rooms: [room, { ...room, roomId: secondOperationId }],
+  });
+  assert.equal(nodes(changed).find((node) => node.type === "button")?.props.disabled, true);
+  assert.equal(nodes(changed).find((node) => node.type === "textarea")?.props.value, "");
+  cleanup();
 });

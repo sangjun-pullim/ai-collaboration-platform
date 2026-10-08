@@ -18,7 +18,7 @@ export function withSettingsDeviceLock<T>(
   return settings.locked(async () => {
     await settings.assertIdle();
     const state = await settings.read();
-    if (state && ["pair", "exchange"].includes(command) && !(await profile.read()))
+    if (state && ["pair", "exchange", "connect"].includes(command) && !(await profile.read()))
       throw new RetiredProfileError();
     if (state?.current && ["register", "replace", "runtime-prepare"].includes(command))
       throw new RuntimeError("UNSUPPORTED_SETTINGS");

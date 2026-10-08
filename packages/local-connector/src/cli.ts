@@ -28,6 +28,7 @@ import { withSettingsDeviceLock, RetiredProfileError } from "./cli/settings-lock
 import { currentRunner, configuredRunner } from "./cli/runtime-context.ts";
 import { runRuntimeCommand, untilStopped } from "./cli/runtime-command.ts";
 import { createProviderAdapter } from "./provider-adapter.ts";
+import { prepareConnection, terminalInteraction } from "./cli/connect-command.ts";
 export const hash = (value: string) => createHash("sha256").update(value).digest("hex");
 export class Connector {
   constructor(
@@ -430,53 +431,70 @@ export async function main(args: string[]) {
       createProviderAdapter("codex", { profile: store }),
       runnerOptions,
     );
+  const manage = (signal: AbortSignal) =>
+    new SettingsManager(store, new SettingsStore(store), new SettingsClient(client.origin), {
+      runner: (pointer, runtime) =>
+        configuredRunner(store, client.origin, runnerOptions, pointer, runtime),
+    }).run({ once: options.once === "yes", signal });
+  if (command === "connect" && options.once) throw new ConnectionError("INVALID_BODY");
   const result =
-    command === "manage"
-      ? await untilStopped((signal) =>
-          new SettingsManager(store, new SettingsStore(store), new SettingsClient(client.origin), {
-            runner: (pointer, runtime) =>
-              configuredRunner(store, client.origin, runnerOptions, pointer, runtime),
-          }).run({ once: options.once === "yes", signal }),
-        )
-      : await withSettingsDeviceLock(store, command, async (settings) => {
-          const runtime = () =>
-            currentRunner(store, client.origin, runnerOptions, settings, required("agent-id"));
-          if (command?.startsWith("runtime-"))
-            return runRuntimeCommand(command, options, required, runtime, { profile: store });
-          if (command === "revoke-local")
-            return (await settings.read())
-              ? revokeConfiguredProfile(store, settings)
-              : revokeLocalProfile(store, legacyRunner);
-          if (command === "replace")
-            return (await runtime()).guardMutation(() =>
-              store.transaction(() =>
-                connector.replace({
-                  agentId: required("agent-id"),
+    command === "connect"
+      ? await untilStopped(async (signal) => {
+          await withSettingsDeviceLock(store, command, () =>
+            prepareConnection(
+              connector,
+              {
+                organizationId: required("organization-id"),
+                roomId: required("room-id"),
+                deviceAlias: required("device-alias"),
+              },
+              terminalInteraction(signal),
+            ),
+          );
+          if (signal.aborted) throw new ConnectionError("CONFLICT");
+          return manage(signal);
+        })
+      : command === "manage"
+        ? await untilStopped(manage)
+        : await withSettingsDeviceLock(store, command, async (settings) => {
+            const runtime = () =>
+              currentRunner(store, client.origin, runnerOptions, settings, required("agent-id"));
+            if (command?.startsWith("runtime-"))
+              return runRuntimeCommand(command, options, required, runtime, { profile: store });
+            if (command === "revoke-local")
+              return (await settings.read())
+                ? revokeConfiguredProfile(store, settings)
+                : revokeLocalProfile(store, legacyRunner);
+            if (command === "replace")
+              return (await runtime()).guardMutation(() =>
+                store.transaction(() =>
+                  connector.replace({
+                    agentId: required("agent-id"),
+                    root: required("root"),
+                    nativeSessionId: required("native-session"),
+                    repositoryAlias: required("repository-alias"),
+                    sessionAlias: required("session-alias"),
+                    confirmed: options["confirm-public"] === "yes",
+                  }),
+                ),
+              );
+            return store.transaction(async () => {
+              if (command === "pair") return connector.pair(required("device-alias"));
+              if (command === "status") return connector.status();
+              if (command === "exchange") return connector.exchange(required("confirm-scope"));
+              if (command === "rotate") return connector.rotate();
+              if (command === "heartbeat") return connector.heartbeat();
+              if (command === "register")
+                return connector.register({
                   root: required("root"),
                   nativeSessionId: required("native-session"),
                   repositoryAlias: required("repository-alias"),
                   sessionAlias: required("session-alias"),
                   confirmed: options["confirm-public"] === "yes",
-                }),
-              ),
-            );
-          return store.transaction(async () => {
-            if (command === "pair") return connector.pair(required("device-alias"));
-            if (command === "status") return connector.status();
-            if (command === "exchange") return connector.exchange(required("confirm-scope"));
-            if (command === "rotate") return connector.rotate();
-            if (command === "heartbeat") return connector.heartbeat();
-            if (command === "register")
-              return connector.register({
-                root: required("root"),
-                nativeSessionId: required("native-session"),
-                repositoryAlias: required("repository-alias"),
-                sessionAlias: required("session-alias"),
-                confirmed: options["confirm-public"] === "yes",
-              });
-            throw new ConnectionError("INVALID_BODY");
+                });
+              throw new ConnectionError("INVALID_BODY");
+            });
           });
-        });
   process.stdout.write(JSON.stringify(result) + "\n");
 }
 if (process.argv[1] && pathToFileURL(resolve(process.argv[1])).href === import.meta.url)

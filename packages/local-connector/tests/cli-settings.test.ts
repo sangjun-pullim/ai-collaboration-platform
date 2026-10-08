@@ -307,7 +307,7 @@ test("should require a fresh profile before pairing over retained revoked histor
       revokeConfiguredProfile(f.profile, settings),
     );
     const retained = await readFile(f.settings.file);
-    for (const command of ["pair", "exchange"]) {
+    for (const command of ["pair", "exchange", "connect"]) {
       await assert.rejects(
         withSettingsDeviceLock(f.profile, command, async () =>
           assert.fail("must not start enrollment"),
