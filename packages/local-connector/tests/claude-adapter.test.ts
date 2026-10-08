@@ -418,6 +418,140 @@ test("should preserve coalesced assistant and terminal frames while the durable 
   }
 });
 
+for (const beforeAssistant of [false, true]) {
+  test(`should preserve coalesced rate before ${beforeAssistant ? "assistant" : "terminal"} while the durable ACK is pending`, async () => {
+    const f = await fixture(),
+      gate = deferred<void>(),
+      received = deferred<void>();
+    const acknowledge = f.authority.ack;
+    let acknowledged = false,
+      finalized = false;
+    f.authority.ack = async (...args) => {
+      await gate.promise;
+      await acknowledge(...args);
+      acknowledged = true;
+    };
+    f.native.onInput = async (input) => {
+      await f.emit(input);
+      await f.emit(f.init());
+      const rate = {
+        type: "rate_limit_event",
+        uuid: uuid(),
+        session_id: f.context.threadId,
+        rate_limit_info: {
+          status: "allowed_warning",
+          overageStatus: "rejected",
+          limitScope: "group_pool",
+        },
+      };
+      const first = beforeAssistant ? rate : f.assistant(input);
+      const second = beforeAssistant ? f.assistant(input) : rate;
+      const jobs = Promise.all([f.emit(first), f.emit(second), f.emit(f.result(input))]);
+      received.resolve();
+      await jobs;
+    };
+    try {
+      const execution = f.execute().then((value) => {
+        finalized = true;
+        return value;
+      });
+      await received.promise;
+      await Promise.resolve();
+      assert.equal(acknowledged, false);
+      assert.equal(finalized, false);
+      assert.equal(f.tools.length, 0);
+      assert.equal(f.native.replies.length, 0);
+      assert.equal(f.native.controls.length, 0);
+      gate.resolve();
+      assert.equal((await execution).terminal, "COMPLETED");
+      assert.equal(acknowledged, true);
+      assert.equal(f.native.writes.length, 1);
+      assert.equal(f.tools.length, 0);
+    } finally {
+      gate.resolve();
+      await f.close();
+    }
+  });
+}
+
+test("should reject a rate arriving after a coalesced terminal even while the durable ACK is pending", async () => {
+  const f = await fixture(),
+    gate = deferred<void>(),
+    received = deferred<void>();
+  const acknowledge = f.authority.ack;
+  f.authority.ack = async (...args) => {
+    await gate.promise;
+    await acknowledge(...args);
+  };
+  f.native.onInput = async (input) => {
+    await f.emit(input);
+    await f.emit(f.init());
+    const jobs = Promise.all([
+      f.emit(f.assistant(input)),
+      f.emit(f.result(input)),
+      f.emit({
+        type: "rate_limit_event",
+        uuid: uuid(),
+        session_id: f.context.threadId,
+        rate_limit_info: { status: "allowed" },
+      }),
+    ]);
+    received.resolve();
+    await jobs;
+  };
+  try {
+    const execution = f.execute();
+    const rejected = assert.rejects(execution, { code: "UNKNOWN" });
+    await received.promise;
+    gate.resolve();
+    await rejected;
+    assert.equal(f.tools.length, 0);
+    assert.equal(f.native.writes.length, 1);
+  } finally {
+    gate.resolve();
+    await f.close();
+  }
+});
+
+test("should reject coalesced rate and terminal when durable ACK storage fails", async () => {
+  const f = await fixture(),
+    gate = deferred<void>(),
+    received = deferred<void>();
+  f.authority.ack = async () => {
+    await gate.promise;
+    throw new RuntimeError("CONTEXT_UNCONFIRMED");
+  };
+  f.native.onInput = async (input) => {
+    await f.emit(input);
+    await f.emit(f.init());
+    const jobs = Promise.all([
+      f.emit(f.assistant(input)),
+      f.emit({
+        type: "rate_limit_event",
+        uuid: uuid(),
+        session_id: f.context.threadId,
+        rate_limit_info: { status: "allowed" },
+      }),
+      f.emit(f.result(input)),
+    ]);
+    received.resolve();
+    await jobs;
+  };
+  try {
+    const rejected = assert.rejects(f.execute(), { code: "CONTEXT_UNCONFIRMED" });
+    await received.promise;
+    gate.resolve();
+    await rejected;
+    assert.equal(f.tools.length, 0);
+    assert.equal(f.native.replies.length, 0);
+    assert.equal(f.native.controls.length, 0);
+    assert.equal(f.native.writes.length, 1);
+  } finally {
+    gate.resolve();
+    await f.close();
+  }
+});
+
 test("should reject a changed native catalog before submitting the reserved input", async () => {
   const f = await fixture();
   f.native.request = async (body) =>

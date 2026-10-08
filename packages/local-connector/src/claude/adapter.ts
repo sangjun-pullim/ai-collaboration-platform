@@ -541,6 +541,15 @@ export class ClaudeAdapter implements RuntimeAdapter {
       active.proof.command(frame);
       return;
     }
+    if (frame.type === "rate_limit_event") {
+      if (!active.ack || active.terminalReceived) throw new RuntimeError("UNKNOWN");
+      // Validate advisory arrival before any later terminal can seal this input.
+      // Completion still joins durable ACK storage and the live authority barrier.
+      active.proof.rateLimit(frame, active.initHash !== null);
+      await active.ack;
+      this.live(context.root.path, check);
+      return;
+    }
     if (frame.type === "result") {
       active.terminalReceived = true;
       // Only stores already started at receipt can delay the terminal; future RPC replies cannot.

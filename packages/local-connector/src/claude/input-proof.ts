@@ -21,6 +21,75 @@ const bounded = (value: unknown, max = 200): value is string =>
   typeof value === "string" && value.length > 0 && Buffer.byteLength(value) <= max;
 const exact = (frame: Record<string, unknown>, keys: string[]): boolean =>
   Object.keys(frame).length === keys.length && keys.every((key) => Object.hasOwn(frame, key));
+const rateStatuses = ["allowed", "allowed_warning", "rejected"];
+const rateWindows = ["five_hour", "seven_day", "seven_day_overage_included"];
+const utilization = (value: unknown): boolean =>
+  typeof value === "number" &&
+  Number.isFinite(value) &&
+  value >= 0 &&
+  value <= Number.MAX_SAFE_INTEGER;
+const resetTime = (value: unknown): boolean => Number.isSafeInteger(value) && Number(value) >= 0;
+const enumValue =
+  (choices: readonly string[]) =>
+  (value: unknown): boolean =>
+    typeof value === "string" && choices.includes(value);
+const booleanValue = (value: unknown): boolean => typeof value === "boolean";
+// All public 0.3.293 SDK fields; unlisted internal fields remain fail-closed.
+const rateInfoFields: Record<string, (value: unknown) => boolean> = {
+  status: enumValue(rateStatuses),
+  resetsAt: resetTime,
+  rateLimitType: enumValue([...rateWindows, "seven_day_opus", "seven_day_sonnet", "overage"]),
+  utilization,
+  overageStatus: enumValue(rateStatuses),
+  overageResetsAt: resetTime,
+  overageDisabledReason: enumValue([
+    "overage_not_provisioned",
+    "org_level_disabled",
+    "org_level_disabled_until",
+    "out_of_credits",
+    "seat_tier_level_disabled",
+    "member_level_disabled",
+    "seat_tier_zero_credit_limit",
+    "group_zero_credit_limit",
+    "member_zero_credit_limit",
+    "org_service_level_disabled",
+    "no_limits_configured",
+    "fetch_error",
+    "unknown",
+  ]),
+  isUsingOverage: booleanValue,
+  overageInUse: booleanValue,
+  surpassedThreshold: utilization,
+  limitScope: enumValue(["service", "channel", "group_pool"]),
+  errorCode: enumValue(["credits_required"]),
+  canUserPurchaseCredits: booleanValue,
+  hasChargeableSavedPaymentMethod: booleanValue,
+};
+function validRateLimitInfo(info: Record<string, unknown>): boolean {
+  if (
+    !Object.hasOwn(info, "status") ||
+    Object.entries(info).some(
+      ([key, value]) =>
+        key !== "unifiedWindows" &&
+        (!Object.hasOwn(rateInfoFields, key) || !rateInfoFields[key]!(value)),
+    )
+  )
+    return false;
+  if (Object.hasOwn(info, "unifiedWindows")) {
+    const windows = object(info.unifiedWindows);
+    if (Object.keys(windows).some((key) => !rateWindows.includes(key))) return false;
+    for (const raw of Object.values(windows)) {
+      const window = object(raw);
+      if (
+        !exact(window, ["utilization", "resetsAt"]) ||
+        !utilization(window.utilization) ||
+        !resetTime(window.resetsAt)
+      )
+        return false;
+    }
+  }
+  return true;
+}
 // Canonical arguments also detect an exact synthetic replay with reordered keys.
 const canonical = stableJson;
 
@@ -88,6 +157,7 @@ interface Tool {
   argsHash: string;
   response?: Promise<Record<string, unknown>>;
   responseWritten: boolean;
+  claimed: boolean;
 }
 interface Control {
   toolId: string;
@@ -96,6 +166,7 @@ interface Control {
   written: boolean;
   cancellation: Promise<void>;
   cancel: () => void;
+  progressToken?: string | number;
 }
 export interface InputTerminal {
   kind: "COMPLETED" | "FAILED" | "INTERRUPTED";
@@ -108,12 +179,14 @@ export class NativeInputProof {
   #ack = false;
   #anchored = false;
   #open = true;
+  #sealed = false;
   #terminal: InputTerminal | undefined;
   #interruptRequested = false;
   #interruptReceipt = false;
   readonly #tools = new Map<string, Tool>();
   readonly #controls = new Map<string, Control>();
   readonly #commands = new Map<string, string>();
+  readonly #rateLimits = new Map<string, string>();
   #progressCount = 0;
   #progressLast: { uuid: string; estimatedTokens: number; estimatedTokensDelta: number } | null =
     null;
@@ -151,6 +224,7 @@ export class NativeInputProof {
   }
   seal(): void {
     this.#open = false;
+    this.#sealed = true;
   }
 
   private same(frame: Record<string, unknown>, stamped = false): void {
@@ -248,6 +322,7 @@ export class NativeInputProof {
             args: structuredClone(args),
             argsHash: hash,
             responseWritten: false,
+            claimed: false,
           });
         }
       } else if (
@@ -292,16 +367,35 @@ export class NativeInputProof {
     );
     const argsHash = digest(canonical(args));
     let toolId: string;
+    let progressToken: string | number | undefined;
     if (params._meta !== undefined) {
       const meta = object(params._meta);
-      if (
-        meta.session_id !== this.sessionId ||
-        meta.user_message_uuid !== this.inputId ||
-        !bounded(meta.tool_use_id)
-      ) {
-        throw new RuntimeError("UNKNOWN");
+      if (Object.hasOwn(meta, "claudecode/toolUseId")) {
+        if (
+          !exact(
+            meta,
+            Object.hasOwn(meta, "progressToken")
+              ? ["claudecode/toolUseId", "progressToken"]
+              : ["claudecode/toolUseId"],
+          ) ||
+          !bounded(meta["claudecode/toolUseId"]) ||
+          (Object.hasOwn(meta, "progressToken") &&
+            !bounded(meta.progressToken) &&
+            !Number.isSafeInteger(meta.progressToken))
+        )
+          throw new RuntimeError("UNKNOWN");
+        toolId = meta["claudecode/toolUseId"];
+        progressToken = meta.progressToken as string | number | undefined;
+      } else {
+        if (
+          !exact(meta, ["session_id", "user_message_uuid", "tool_use_id"]) ||
+          meta.session_id !== this.sessionId ||
+          meta.user_message_uuid !== this.inputId ||
+          !bounded(meta.tool_use_id)
+        )
+          throw new RuntimeError("UNKNOWN");
+        toolId = meta.tool_use_id;
       }
-      toolId = meta.tool_use_id;
     } else {
       const matches = [...this.#tools].filter(
         ([, tool]) =>
@@ -315,8 +409,14 @@ export class NativeInputProof {
     const tool = this.#tools.get(toolId);
     if (
       !tool ||
+      tool.claimed ||
       tool.name !== `mcp__${OWNED_SERVER}__${params.name}` ||
-      tool.argsHash !== argsHash
+      tool.argsHash !== argsHash ||
+      (progressToken !== undefined &&
+        [...this.#controls.values()].some(
+          (control) =>
+            !control.written && !control.cancelled && control.progressToken === progressToken,
+        ))
     ) {
       throw new RuntimeError("UNKNOWN");
     }
@@ -325,12 +425,14 @@ export class NativeInputProof {
     const cancellation = new Promise<void>((resolve) => {
       cancel = resolve;
     });
+    tool.claimed = true;
     this.#controls.set(controlId, {
       toolId,
       cancellation,
       cancel,
       cancelled: false,
       written: false,
+      progressToken,
     });
     return { toolId, name: params.name, args: structuredClone(args), cancellation };
   }
@@ -473,6 +575,24 @@ export class NativeInputProof {
       estimatedTokens: frame.estimated_tokens as number,
       estimatedTokensDelta: frame.estimated_tokens_delta as number,
     };
+  }
+  rateLimit(frame: Record<string, unknown>, identityVerified: boolean): void {
+    this.same(frame);
+    if (
+      !identityVerified ||
+      !this.#ack ||
+      this.#sealed ||
+      (!this.#open && !this.#interruptRequested) ||
+      !exact(frame, ["type", "rate_limit_info", "uuid", "session_id"]) ||
+      frame.type !== "rate_limit_event" ||
+      !uuid(frame.uuid) ||
+      this.#rateLimits.has(frame.uuid) ||
+      !validRateLimitInfo(object(frame.rate_limit_info))
+    )
+      throw new RuntimeError("UNKNOWN");
+    if (this.#rateLimits.size >= 64) throw new RuntimeError("RUNTIME_CAPACITY");
+    // A status observation never supplies input, tool, interruption or terminal authority.
+    this.#rateLimits.set(frame.uuid, digest(stableJson(frame)));
   }
   command(frame: Record<string, unknown>): void {
     const keys = ["type", "command_uuid", "state", "uuid", "session_id"];
