@@ -180,6 +180,7 @@ function nativeGlobalProjection(value: Record<string, unknown>, roots: readonly 
     "cachedExtraUsageDisabledReason",
     "additionalModelCostsCache",
     "additionalModelOptionsCache",
+    "additionalModelOptionsAnsweredAt",
     "autoCompactWindowsCache",
     "clientDataCacheSlots",
     "orgModelDefaultCache",

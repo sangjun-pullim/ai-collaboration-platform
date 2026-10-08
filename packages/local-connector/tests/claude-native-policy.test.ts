@@ -4,6 +4,7 @@ import { readFile, symlink, unlink, writeFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
 import { createProviderAdapter } from "../src/provider-adapter.ts";
 import { NativeClaudePolicy } from "../src/claude/native-policy.ts";
+import { nativeIdentity, OWNED_SERVER } from "../src/claude/input-proof.ts";
 import {
   assertNativeInstallation,
   verifyNativeInstallation,
@@ -13,6 +14,7 @@ import { nativeToolNames } from "../src/workspace/tool-contracts.ts";
 import { FakeTransport } from "./claude-runtime-fixture.ts";
 import { claudeRecord } from "./provider-runtime-fixture.ts";
 import { nativeFixture } from "./claude-native-fixture.ts";
+import { uuid } from "./runtime-fixture.ts";
 import fs from "node:fs";
 import { syncBuiltinESMExports } from "node:module";
 
@@ -206,6 +208,92 @@ test("should ignore native bookkeeping refresh and retain account and execution 
   assert.throws(() => f.policy.assertLive(f.root, () => {}), { code: "SNAPSHOT_CHANGED" });
 });
 
+test("should retain the live fingerprint when only the additional model cache timestamp refreshes", async (t) => {
+  const f = await nativeFixture(t);
+  const global = { ...f.global, additionalModelOptionsAnsweredAt: 1 };
+  await f.json(f.globalPath, global);
+  const policy = new NativeClaudePolicy({});
+  await policy.admit(f.root, () => {});
+  const fingerprint = policy.fingerprint;
+  const settings = await readFile(f.settingsPath);
+  const probes = f.probes.length;
+  global.additionalModelOptionsAnsweredAt = 2;
+  await f.json(f.globalPath, global);
+  policy.assertLive(f.root, () => {});
+  assert.equal(policy.fingerprint, fingerprint);
+  assert.equal(f.probes.length, probes);
+  assert.deepEqual(await readFile(f.settingsPath), settings);
+});
+
+test("should retain the live fingerprint when the additional model cache and timestamp refresh together", async (t) => {
+  const f = await nativeFixture(t);
+  const global = {
+    ...f.global,
+    additionalModelOptionsCache: { models: ["synthetic-model-one"] },
+    additionalModelOptionsAnsweredAt: 1,
+  };
+  await f.json(f.globalPath, global);
+  const policy = new NativeClaudePolicy({});
+  await policy.admit(f.root, () => {});
+  const fingerprint = policy.fingerprint;
+  global.additionalModelOptionsCache.models = ["synthetic-model-two"];
+  global.additionalModelOptionsAnsweredAt = 2;
+  await f.json(f.globalPath, global);
+  policy.assertLive(f.root, () => {});
+  assert.equal(policy.fingerprint, fingerprint);
+});
+
+test("should keep authority and unknown native settings pinned across model cache timestamp refresh", async (t) => {
+  for (const change of [
+    "MCP authorization token",
+    "account",
+    "organization",
+    "permissions",
+    "MCP endpoint",
+    "unknown setting",
+    "unknown timestamp key",
+  ] as const) {
+    await t.test(`should reject ${change} drift with SNAPSHOT_CHANGED`, async (t) => {
+      const f = await nativeFixture(t);
+      const global = {
+        ...f.global,
+        additionalModelOptionsAnsweredAt: 1,
+        additionalModelOptionsAnsweredAtUnknown: 1,
+        unknownSetting: { enabled: true },
+        permissions: { allow: ["Read"] },
+        mcpServers: {
+          fixture: {
+            type: "http",
+            url: "https://fixture.example.invalid/mcp",
+            headers: { Authorization: "Bearer synthetic-token-one" },
+          },
+        },
+      };
+      await f.json(f.globalPath, global);
+      const policy = new NativeClaudePolicy({});
+      await policy.admit(f.root, () => {});
+      const fingerprint = policy.fingerprint;
+      const probes = f.probes.length;
+      global.additionalModelOptionsAnsweredAt = 2;
+      await f.json(f.globalPath, global);
+      policy.assertLive(f.root, () => {});
+      assert.equal(policy.fingerprint, fingerprint);
+      if (change === "MCP authorization token")
+        global.mcpServers.fixture.headers.Authorization = "Bearer synthetic-token-two";
+      if (change === "account") global.oauthAccount.accountUuid = "different-account";
+      if (change === "organization") global.oauthAccount.organizationUuid = "different-org";
+      if (change === "permissions") global.permissions.allow.push("Write");
+      if (change === "MCP endpoint")
+        global.mcpServers.fixture.url = "https://other.example.invalid/mcp";
+      if (change === "unknown setting") global.unknownSetting.enabled = false;
+      if (change === "unknown timestamp key") global.additionalModelOptionsAnsweredAtUnknown = 2;
+      await f.json(f.globalPath, global);
+      assert.throws(() => policy.assertLive(f.root, () => {}), { code: "SNAPSHOT_CHANGED" });
+      assert.equal(f.probes.length, probes);
+    });
+  }
+});
+
 test("should reject account status changes before a new catalog or input", async (t) => {
   const f = await admittedFixture(t);
   f.state.auth.email = "different@example.invalid";
@@ -280,3 +368,78 @@ test("should reuse unchanged instruction imports and reject a changed imported f
   await writeFile(imported, "Changed synthetic preference\n", { mode: 0o600 });
   assert.throws(() => policy.assertLive(f.root, () => {}), { code: "SNAPSHOT_CHANGED" });
 });
+
+for (const version of ["2.1.288", "2.1.293"] as const) {
+  test(`should disable only reviewed builtin plugins for native ${version}`, async (t) => {
+    const f = await nativeFixture(t);
+    if (version === "2.1.293") {
+      const executable = join(dirname(f.executable), version);
+      await writeFile(executable, "synthetic updated native bytes; do not execute\n", {
+        mode: 0o700,
+      });
+      await unlink(join(f.home, ".local", "bin", "claude"));
+      await symlink(executable, join(f.home, ".local", "bin", "claude"));
+      f.state.installationVersion = version;
+      f.state.version = `${version} (Claude Code)\n`;
+    }
+    const before = await readFile(f.settingsPath);
+    const policy = new NativeClaudePolicy({});
+    await policy.admit(f.root, () => {});
+    const context = claudeRecord(f.record).context!;
+    context.materialization!.version = policy.version;
+    context.materialization!.policyFingerprint = policy.fingerprint;
+    const tools = nativeToolNames("SELECTED", false);
+    const launch = policy.launch(context, null, tools, false);
+    const overlay = JSON.parse(launch.args[launch.args.indexOf("--settings") + 1]);
+    assert.deepEqual(overlay.enabledPlugins, {
+      "cc-plugin-agents-md@builtin": false,
+      ...(version === "2.1.293" ? { "cc-plugin-plugin-authoring@builtin": false } : {}),
+      "cc-plugin-telemetry@builtin": false,
+      "personal@catalog": false,
+    });
+    assert.equal(overlay.enabledPlugins["unknown@builtin"], undefined);
+    assert.deepEqual(await readFile(f.settingsPath), before);
+    context.materialization!.policyFingerprint = "0".repeat(64);
+    assert.throws(() => policy.launch(context, null, tools, false), {
+      code: "CONTEXT_UNCONFIRMED",
+    });
+  });
+
+  test(`should require an empty native plugin identity for ${version} despite builtin overrides`, async (t) => {
+    const f = await nativeFixture(t);
+    const context = claudeRecord(f.record).context!;
+    const tools = nativeToolNames("SELECTED", false);
+    const frame = {
+      type: "system",
+      subtype: "init",
+      uuid: uuid(),
+      session_id: context.threadId,
+      cwd: f.root,
+      claude_code_version: version,
+      permissionMode: "dontAsk",
+      model: "claude-test",
+      tools,
+      plugins: [] as unknown[],
+      mcp_servers: [{ name: OWNED_SERVER, source: "sdk", status: "connected" }],
+    };
+    assert.equal(
+      nativeIdentity(frame, context.threadId, f.root, version, tools).model,
+      "claude-test",
+    );
+    for (const plugin of [
+      {
+        name: "cc-plugin-plugin-authoring",
+        source: "cc-plugin-plugin-authoring@builtin",
+        path: "(builtin)",
+      },
+      { name: "unknown", source: "unknown@builtin", path: "(builtin)" },
+      { name: "personal", source: "personal@catalog", path: "/synthetic/private-plugin" },
+    ]) {
+      assert.throws(
+        () =>
+          nativeIdentity({ ...frame, plugins: [plugin] }, context.threadId, f.root, version, tools),
+        { code: "CONTEXT_UNCONFIRMED" },
+      );
+    }
+  });
+}

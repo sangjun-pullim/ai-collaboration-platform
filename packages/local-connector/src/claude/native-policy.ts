@@ -188,7 +188,13 @@ export class NativeClaudePolicy implements ClaudePolicy {
       disableAllHooks: true,
       autoMemoryEnabled: false,
       enabledPlugins: Object.fromEntries(
-        [...new Set([...builtinPlugins, ...this.snapshots!.flatMap((source) => source.plugins)])]
+        [
+          ...new Set([
+            ...builtinPlugins,
+            ...(this.version === "2.1.293" ? ["cc-plugin-plugin-authoring@builtin"] : []),
+            ...this.snapshots!.flatMap((source) => source.plugins),
+          ]),
+        ]
           .sort()
           .map((name) => [name, false]),
       ),
