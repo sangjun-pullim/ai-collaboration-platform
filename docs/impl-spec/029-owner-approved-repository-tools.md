@@ -108,7 +108,7 @@ risk-surface: permission
 
 ### [ ] Step 6: 실제 설정·브라우저 수용
 
-> 2026-10-08 실제 설정 DB·HTTP·브라우저와 SQL012 warm upgrade를 통과했다. Mac의 실제 폴더 선택·취소와 공식 AI의 자동 탐색 도구 실행 수용이 남아 있어 이 Step은 미완료로 유지한다.
+> 2026-10-08 실제 설정 DB·HTTP·브라우저와 SQL012 warm upgrade를 통과했다. 지정한 검증용 폴더 선택과 취소도 실제 Mac 창에서 확인했다. 공식 AI의 자동 탐색 도구 실행 수용이 남아 있어 이 Step은 미완료로 유지한다. 검증 근거는 [진행 정본](../planning/delivery-and-validation.md#현재-진행-상태)을 따른다.
 
 
 **File**: 기존 설정 통합·browser fixture와 실행 기록

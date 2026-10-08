@@ -59,8 +59,8 @@ risk-surface: auth, permission, db-schema, public-api
 - 전송 뒤 ACK 유실에서는 `journal.native=null`이어도 `nativeIntent`의 exact session/input UUID로 읽기 전용 observe를 수행한다. 같은 root의 정확한 소유 이력·입력 UUID/prompt hash·종결 연결 증거가 없으면 UNKNOWN을 유지한다. host 예약만으로 ACK/종결을 만들지 않고 새 입력·다른 session 탐색·자동 재전송은 0회다. Codex 기존 ACK 기반 관측과 저장 v1은 보존한다.
 - 009의 검증된 native policy/버전/설정 우선순위 근거가 있어야 실제 Claude admission을 열 수 있다. 일반 개인 설정 파일을 변경하거나 credentials를 복사하지 않는다. 시작 inventory·실행 중 설정 drift·읽기 전용 allowlist·소유 child 정리 실패를 기존 미확인 계약에 연결한다.
 
-### [ ] Step 2: 소유자 전용 설정 명령과 영수증
-> 실제 수용 대기: DB 적용 사용자 보고는 [진행 정본](../planning/delivery-and-validation.md#현재-진행-상태)을 따른다. Docker socket 접근 제한으로 에이전트의 기존 데이터·receipt 보존 upgrade 회귀와 실제 소유자 권한·HTTP 검사는 실행하지 못했다. 계약·타입·합성 검사 통과와 DB 적용 보고는 실제 DB 수용을 대신하지 않는다.
+### [x] Step 2: 소유자 전용 설정 명령과 영수증
+> 2026-10-08 실제 설정 DB·HTTP·소유자 권한과 SQL011 warm upgrade를 검증했다. 기존 데이터·receipt·동일 본문 재전송과 설정 계약을 보존했고, 적용 영수증의 SQL016 보정은 별도 실제 회귀와 독립 리뷰를 통과했다. 검사 수치와 근거는 [진행 정본](../planning/delivery-and-validation.md#현재-진행-상태)에 유지한다. 이 단계의 DB·API 완료가 실제 Mac 폴더 창·공식 AI 답변·두 Mac 수용의 완료를 뜻하지 않는다.
 
 **File**: 새 migration, runtime-settings web/connector contracts/client/service/store
 
@@ -74,7 +74,7 @@ risk-surface: auth, permission, db-schema, public-api
 - catalog는 실제 adapter initialize에서 받은 모델/effort만 사용한다. 버전/hash/selection을 같이 검증하고 전체 응답 16KiB·모델 256개·effort 12개 한도를 지킨다. 한도를 넘으면 전체 catalog unsupported를 명시하고 조용히 일부를 자르지 않는다. 초기 단계에서 512KiB pagination과 양쪽 AI activation은 추가하지 않는다.
 
 ### [ ] Step 3: Mac 폴더 선택과 로컬 설정 관리 루프
-> BLOCKED: 실제 Mac 폴더 창의 선택·취소와 실제 공급자까지 이어지는 적용을 확인하지 못했다. 중단 복구 HIGH는023에서 해소했으며 정책/history 소스 공급은024에서 연결했다. 실제 Claude의 검토 근거와 수용은 미완료다.
+> 실제 수용 일부 완료: 지정한 검증용 폴더 선택과 취소를 실제 Mac 창에서 확인했다. 취소 오류 분류 보정은 독립 리뷰를 통과했다. 실제 공급자까지 이어지는 적용은 남아 있어 이 Step을 미완료로 유지한다. 중단 복구 HIGH는023에서 해소했으며 정책/history 소스 공급은024에서 연결했다. 검증 근거는 [진행 정본](../planning/delivery-and-validation.md#현재-진행-상태)을 따른다.
 
 **File**: settings manager/folder-picker/store, CLI 및 runner idle 접점
 
@@ -98,7 +98,7 @@ risk-surface: auth, permission, db-schema, public-api
 - 동일 agent/epoch의 현재 공개 별칭과 실제 provider만 대상 카드에 표시한다. 과거 질문의 당시 저장소/모델 snapshot이 없는 v1 기록은 현재 값으로 채우지 않는다. model/effort의 상세 역사 snapshot은 후속 계약이며 초기 DIRECT 기본 질문의 전제조건이 아니다.
 
 ### [ ] Step 5: 권한·장애·실제 연결 검증과 종료
-> BLOCKED: 원래 구현 리뷰3의 역사적 REVISE를 보존하며 중단 복구 HIGH는023의 독립 리뷰2 PASS로 해소했다. 정책/history 소스 연결은024에서 완료했다. 2026-10-08 native 정책 활성화·실제 DB·HTTP·브라우저와 PR1–3 병합을 확인했다. Mac 폴더 창·공식 Claude·두 Mac 수용과 전체 종료 검토가 남아 있어022를 종료하거나 보관하지 않는다.
+> BLOCKED: 원래 구현 리뷰3의 역사적 REVISE를 보존하며 중단 복구 HIGH는023의 독립 리뷰2 PASS로 해소했다. 정책/history 소스 연결은024에서 완료했다. 2026-10-08 native 정책 활성화·실제 DB·HTTP·브라우저·Mac 폴더 선택과 취소·PR1–3 병합을 확인했다. 공식 Claude·두 Mac 수용과 전체 종료 검토가 남아 있어022를 종료하거나 보관하지 않는다.
 
 **File**: test와 관련 정본 문서
 
