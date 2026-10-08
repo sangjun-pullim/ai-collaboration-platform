@@ -366,10 +366,6 @@ test("should show a direct question form without an own AI connection", async ({
         .getByRole("listitem")
         .filter({ hasText: "한국어 키보드 직접 질문 😀" })
         .first();
-      await expect(questionRecord).toContainText("저장된 대상:");
-      await expect(questionRecord).toContainText(
-        "당시 대상은 저장되어 있으나 파일 관찰 자료는 없습니다.",
-      );
       if (variant === "single") {
         await expect(
           region.getByRole("button", { name: "새 메시지 · 아래로 이동", exact: true }),
@@ -381,6 +377,13 @@ test("should show a direct question form without an own AI connection", async ({
         );
         await region.getByRole("button", { name: "새 메시지 · 아래로 이동", exact: true }).click();
       }
+      await questionRecord.getByRole("button", { name: "저장소·자료", exact: true }).click();
+      const questionSources = questionRecord.getByRole("region", { name: "당시 저장소·자료" });
+      await expect(questionSources).toContainText("당시 공유 저장소:");
+      await expect(questionRecord).toContainText(
+        "당시 대상은 저장되어 있으나 파일 관찰 자료는 없습니다.",
+      );
+      await questionRecord.getByRole("button", { name: "저장소·자료 닫기", exact: true }).click();
       if (variant === "single") {
         process.stdout.write("010_DIRECT_STAGE RECOVERY_VISIBLE_BEFORE\n");
         await expect(
@@ -800,6 +803,7 @@ test("should distinguish owner input request from connector application and rest
     });
     await expect(resumeInput).toHaveAttribute("aria-describedby", describedBy!);
     await resumeInput.click();
+    await expect(own.getByText("요청됨 · 연결 프로그램 대기", { exact: true })).toBeVisible();
     await broker("input-drive", { scene, step: "ack-resume" });
     await expect(own.getByText("재개 적용 보고", { exact: true })).toBeVisible({ timeout: 45000 });
     await expect(region.getByRole("status", { name: "방 상태", exact: true })).toContainText(
