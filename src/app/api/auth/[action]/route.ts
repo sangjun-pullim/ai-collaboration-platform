@@ -6,6 +6,7 @@ import {
 import { readMutation } from "../../../../features/room-access/request-policy";
 import { requestClient, failure, privateHeaders } from "../../../../lib/supabase/server";
 import { NextResponse } from "next/server";
+import { enterTeam } from "../../../../features/room-access/team-entry-service";
 export async function POST(request: Request, context: { params: Promise<{ action: string }> }) {
   let session: Awaited<ReturnType<typeof requestClient>> | undefined;
   try {
@@ -13,19 +14,8 @@ export async function POST(request: Request, context: { params: Promise<{ action
     if (!(authActions as readonly string[]).includes(action)) throw new AccessError("NOT_FOUND");
     const body = await readMutation(request, action as AuthAction);
     session = await requestClient();
-    if (action === "code") {
-      const { error } = await session.client.auth.signInWithOtp({
-        email: body.email,
-        options: { shouldCreateUser: true },
-      });
-      if (error) throw new AccessError(error.status === 429 ? "CODE_COOLDOWN" : "CODE_REJECTED");
-    } else if (action === "verify") {
-      const { error } = await session.client.auth.verifyOtp({
-        email: body.email,
-        token: body.code,
-        type: "email",
-      });
-      if (error) throw new AccessError("CODE_REJECTED");
+    if (action === "enter") {
+      return session.finish({ ok: true, data: await enterTeam(session, body) });
     } else {
       // Obtain current user so an eligible refresh and its revocation share this response.
       try {

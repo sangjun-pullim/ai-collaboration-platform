@@ -605,7 +605,7 @@ export async function runWorkflowBrowserParent() {
       if (req.url === "/setup") {
         ensure(
           Object.keys(input).length === 1 &&
-            /^(?:desktop|mobile)-(?:history|control|direct-single|direct-multiple|direct-actor|direct-cookie)$/.test(
+            /^(?:desktop|mobile)-(?:history|control|direct-single|direct-multiple|direct-actor|direct-cookie|direct-history)$/.test(
               input.scene,
             ) &&
             !scenes.has(input.scene),
@@ -643,9 +643,11 @@ export async function runWorkflowBrowserParent() {
           data = {
             roomId: s.scope.roomId,
             targetAgentIds: targets.map((target) => target.agentId!),
-            requester: { id: s.requester.id, email: s.requester.email },
-            observer: { id: s.observer.id, email: s.observer.email },
-            ...(actorCase ? { actorB: { id: s.outsider.id, email: s.outsider.email } } : {}),
+            requester: { id: s.requester.id, displayName: s.requester.displayName },
+            observer: { id: s.observer.id, displayName: s.observer.displayName },
+            ...(actorCase
+              ? { actorB: { id: s.outsider.id, displayName: s.outsider.displayName } }
+              : {}),
           };
         } else {
           const s = await fixture.scene(input.scene);
@@ -654,14 +656,14 @@ export async function runWorkflowBrowserParent() {
           for (const p of [s.owner, s.peer, s.observer]) people.set(p.id, p);
           data = {
             roomId: s.scope.roomId,
-            owner: { id: s.owner.id, email: s.owner.email },
-            observer: { id: s.observer.id, email: s.observer.email },
+            owner: { id: s.owner.id, displayName: s.owner.displayName },
+            observer: { id: s.observer.id, displayName: s.observer.displayName },
           };
         }
       } else if (req.url === "/code") {
         ensure(Object.keys(input).length === 1 && people.has(input.id), "Unowned broker person");
         const p = people.get(input.id)!;
-        data = { code: await fixture.stack.code(p.email) };
+        data = fixture.stack.entryForBrowser(p);
       } else if (req.url === "/direct-drive") {
         ensure(
           Object.keys(input).length === 2 &&
@@ -671,6 +673,8 @@ export async function runWorkflowBrowserParent() {
               "ready",
               "offline",
               "replace",
+              "replace-completed",
+              "detach-completed",
               "answer",
               "start",
               "ack",
@@ -684,7 +688,12 @@ export async function runWorkflowBrowserParent() {
         const targets = directTargets.get(input.scene)!;
         const seen = steps.get(input.scene)!;
         ensure(!seen.has(input.step), "Repeated direct driver step");
-        const history = await fixture.history(scene, scene.requester);
+        // A logout revokes the requester's native session. Inspect the same
+        // owned room as its still-authenticated owner during the final audit.
+        const history = await fixture.history(
+          scene,
+          input.step === "actor-check" ? scene.owner : scene.requester,
+        );
         if (["ready", "offline", "replace"].includes(input.step)) {
           ensure(history.cycle === null, "Target update after direct admission refused");
           if (input.step === "ready") for (const target of targets) await fixture.ready(target);
@@ -721,7 +730,92 @@ export async function runWorkflowBrowserParent() {
           const request = history.runs[0];
           const target = targets.find((profile) => profile.agentId === request.agentId);
           ensure(target, "Foreign direct target");
-          if (input.step === "actor-check") {
+          if (["replace-completed", "detach-completed"].includes(input.step)) {
+            ensure(
+              input.scene.endsWith("-direct-history") &&
+                seen.has("answer") &&
+                request.state === "COMPLETED" &&
+                request.cycleId === history.cycle.cycleId &&
+                request.agentId === history.cycle.targetAgentId &&
+                request.bindingEpoch === history.cycle.targetEpoch &&
+                !active.has(input.scene) &&
+                targets.length === 1 &&
+                target === scene.responder &&
+                fixture.devices.profiles.get(target.name) === target &&
+                target.roomId === scene.scope.roomId &&
+                target.organizationId === scene.scope.organizationId &&
+                target.ownerUserId === scene.owner.id &&
+                !!target.deviceId &&
+                !!target.credential &&
+                fixture.stack.users.has(scene.owner.id) &&
+                fixture.stack.organizationOwners.get(scene.scope.organizationId) ===
+                  scene.owner.id &&
+                history.events.some(
+                  (event) =>
+                    event.kind === "ANSWER" &&
+                    event.questionId === request.questionId &&
+                    event.adoption === "ACCEPTED",
+                ),
+              "Unowned or incomplete direct history transition",
+            );
+            const count = await fixture.count(scene.scope.roomId);
+            ensure(
+              count.requests === 1 && count.attempts === 1 && count.budget === 1,
+              "History transition requires exactly one completed run",
+            );
+            if (input.step === "replace-completed") {
+              ensure(!seen.has("detach-completed"), "Replacement after detach refused");
+              const epoch = await fixture.epoch(target);
+              ensure(
+                epoch === request.bindingEpoch,
+                "Completed request target changed before replacement",
+              );
+              const response = await fixture.devices.request(
+                "replace",
+                {
+                  operationId: randomUUID(),
+                  agentId: target.agentId!,
+                  expectedEpoch: epoch,
+                  repositoryAlias: "완료 뒤 새 저장소",
+                  sessionAlias: "완료 뒤 새 세션",
+                  runtime: "codex",
+                  branch: "main",
+                  commit: "unknown",
+                  dirty: "unknown",
+                },
+                target.credential,
+              );
+              ensure(response.status === 200, "Owned completed target replacement failed");
+              ensure(
+                (await fixture.epoch(target)) === epoch + 1,
+                "Replacement did not advance the exact target epoch",
+              );
+              await fixture.ready(target);
+            } else {
+              ensure(seen.has("replace-completed"), "Detach requires the completed replacement");
+              const response = await fixture.devices.human(scene.owner, "remove", {
+                deviceId: target.deviceId!,
+              });
+              ensure(response.status === 200, "Owned completed device detach failed");
+              const after = await fixture.history(scene, scene.requester);
+              ensure(
+                !after.bindings.some((binding) => binding.agentId === target.agentId),
+                "Detached target remained bound",
+              );
+            }
+            const finalHistory = await fixture.history(scene, scene.requester);
+            const finalCount = await fixture.count(scene.scope.roomId);
+            ensure(
+              finalHistory.runs.length === 1 &&
+                finalHistory.runs[0].requestId === request.requestId &&
+                finalHistory.runs[0].state === "COMPLETED" &&
+                finalCount.requests === 1 &&
+                finalCount.attempts === 1 &&
+                finalCount.budget === 1,
+              "Completed target change altered the exact finished run",
+            );
+            data = { state: "COMPLETED", requests: 1 };
+          } else if (input.step === "actor-check") {
             ensure(
               (input.scene.endsWith("actor") || input.scene.endsWith("cookie")) &&
                 seen.has("answer") &&
@@ -788,6 +882,7 @@ export async function runWorkflowBrowserParent() {
         ensure(
           Object.keys(input).length === 2 &&
             scenes.has(input.scene) &&
+            !directTargets.has(input.scene) &&
             ["history", "start", "ack", "unknown", "terminal"].includes(input.step),
           "Invalid fixed driver step",
         );
@@ -858,7 +953,19 @@ export async function runWorkflowBrowserParent() {
       res
         .writeHead(200, { "Content-Type": "application/json", "Cache-Control": "no-store" })
         .end(JSON.stringify(data));
-    } catch {
+    } catch (error) {
+      const frame =
+        error instanceof Error
+          ? error.stack?.match(/workflow-fixture\.(?:js|ts):(\d+):(\d+)/)
+          : null;
+      if (frame)
+        process.stdout.write(
+          JSON.stringify({
+            source: "owned-workflow-broker",
+            line: Number(frame[1]),
+            column: Number(frame[2]),
+          }) + "\n",
+        );
       res
         .writeHead(500, { "Content-Type": "application/json" })
         .end('{"error":"Owned workflow broker failed"}');
@@ -873,6 +980,12 @@ export async function runWorkflowBrowserParent() {
   if (process.argv.includes("--direct-browser-only")) {
     // Only this fixed test name is selectable; never forward caller-supplied patterns.
     browserArgs.push("--grep", "should show a direct question form without an own AI connection");
+  } else if (process.argv.includes("--chat-browser-only")) {
+    // A fixed regression subset, with no caller-selected pattern or broker action.
+    browserArgs.push(
+      "--grep",
+      "should isolate unresolved direct intents|should retain saved direct identity",
+    );
   }
   try {
     await new Promise<void>((r) => server.listen(0, "127.0.0.1", r));

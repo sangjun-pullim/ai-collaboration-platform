@@ -1,5 +1,5 @@
 ---
-verified-against: 6f30eedc2edfaa2f17f3ea2c29d41d504df05f90
+verified-against: 128c45f103776f5275d362e5859f1e991edbb58f
 sources:
   - src/**
   - packages/local-connector/src/**
@@ -9,11 +9,17 @@ sources:
 ---
 # 아키텍처
 
-이 문서는 전체 제품 설계와 현재 소스의 시스템 경계를 설명한다. 2026-10-04의 Git 기준 및 작업트리를 확인했다. 독립 런타임 실험·모의 웹, 사람 인증·방 접근, 기기 등록, 내구 조사 조정과 로컬 Codex 실행기가 있다. 공개 등록의 `unverified` 표시는 유지한다. 현재 진행 상태·검증 수치·남은 통합은 [개발 순서와 검증 계획](planning/delivery-and-validation.md#현재-진행-상태)을 따른다. freshness stamp는 Git 기준이며 미커밋 소스는 `git diff HEAD -- <sources>`로 함께 확인한다.
+이 문서는 전체 제품 설계와 현재 소스의 시스템 경계를 설명한다. 2026-10-05의 Git 기준 및 작업트리를 확인했다. 독립 런타임 실험·모의 웹, 사람 인증·방 접근, 기기 등록, 내구 조사 조정과 로컬 Codex 실행기가 있다. 공개 등록의 `unverified` 표시는 유지한다. 현재 진행 상태·검증 수치·남은 통합은 [개발 순서와 검증 계획](planning/delivery-and-validation.md#현재-진행-상태)을 따른다. freshness stamp는 Git 기준이며 미커밋 소스는 `git diff HEAD -- <sources>`로 함께 확인한다.
 
 제품 범위는 [PRD](PRD.md), 실행·복구 불변식은 [비즈니스 로직](BUSINESS-LOGIC.md)이 정본이다. 확정된 중요한 결정의 이유는 [ADR](ADR.md), 미선택 기술안과 대안은 [미결 선택](planning/decisions-and-open-items.md#검토-중인-기술-선택)을 따른다.
 
 루트 Next.js 웹은 `experiments/local-ai-runtime/`의 독립 TypeScript 실험을 import하거나 실행하지 않는다. 실제 웹 route·state·검사 범위는 [FRONTEND-ARCHITECTURE](FRONTEND-ARCHITECTURE.md), 중앙 모델과 HTTP 계약은 [DB-SCHEMA](DB-SCHEMA.md)·[API-SPEC](API-SPEC.md), 공급자 실험 증거는 [로컬 AI 연결 조사](research/local-ai-connection-research.md#이번에-실제-확인한-로컬-증거)를 따른다. 그림의 Realtime와 두 PC의 실제 provider 연결은 후속 수용 범위다.
+
+## 웹 입장과 대화의 구현 경계
+
+실제 웹은 회사 코드·표시 이름 입장과 AI 채팅방 목록을 기본 진입으로 사용한다. shadcn/ui·Tailwind가 화면 구성과 접근 가능한 Dialog·Sheet를 제공한다. 모의 체험은 `/demo`에 둔다. `ChatShell`은 탐색·배치만 맡고 `InvestigationView`가 조회·요청·미확정 저장·대상 선택의 상태를 소유한다. 표시용 Timeline·Composer·고급 제어에 별도 HTTP·storage·polling을 만들지 않는다.
+
+웹은 현재 사용자 session과 publishable key로 DB를 호출한다. 입장 코드 verifier·admission·시도 제한은 private DB 모델이 소유하며 제품 웹에 admin key·DB 비밀번호를 주지 않는다. Native 폴더·공급자·모델·effort의 웹 적용은 아직 별도 설정 구현 범위이며 현재 화면에서 적용 성공으로 표시하지 않는다. [프런트엔드](FRONTEND-ARCHITECTURE.md)·[입장 DB](DB-SCHEMA.md#회사-코드-입장)
 
 ## 추천 구조
 

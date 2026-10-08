@@ -50,7 +50,7 @@ export type GroupMember = {
   display_alias: string;
   status: "active" | "removed";
 };
-export const authActions = ["code", "verify", "logout"] as const;
+export const authActions = ["enter", "logout"] as const;
 export const accessActions = [
   "bootstrap",
   "room",
@@ -70,7 +70,7 @@ export const messages: Record<AccessErrorCode, string> = {
   FORBIDDEN: "이 작업을 수행할 권한이 없습니다.",
   INVITE_UNAVAILABLE: "초대가 만료되었거나 취소되었습니다. 새 초대를 요청하세요.",
   ALREADY_MEMBER: "이미 참가한 방입니다.",
-  CODE_REJECTED: "코드가 올바르지 않거나 만료되었습니다. 새 코드를 요청하세요.",
-  CODE_COOLDOWN: "잠시 뒤 코드를 다시 요청하세요.",
+  CODE_REJECTED: "회사 입장 코드를 확인하세요.",
+  CODE_COOLDOWN: "입장 시도가 많습니다. 잠시 뒤 다시 시도하세요.",
   UNAVAILABLE: "서비스를 준비 중입니다. 잠시 뒤 다시 시도하세요.",
 };

@@ -11,7 +11,7 @@ export function PrototypeApp() {
   return (
     <div className="app-shell">
       <header className="site-header">
-        <Link className="brand" href="/" aria-label="조사실 처음으로">
+        <Link className="brand" href="/demo" aria-label="조사실 처음으로">
           <span className="brand-mark" aria-hidden="true">
             ↗
           </span>

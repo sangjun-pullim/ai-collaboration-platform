@@ -813,13 +813,13 @@ export async function runDeviceBrowserParent() {
       const input = JSON.parse(raw);
       let data: unknown;
       if (req.url === "/person") {
-        const p = await fixture.stack.person("browser", false);
+        const p = await fixture.stack.person("browser");
         people.set(p.id, p);
-        data = { id: p.id, email: p.email };
+        data = { id: p.id, displayName: p.displayName };
       } else if (req.url === "/code") {
         const p = people.get(input.id);
         ensure(p, "Unknown fixture person");
-        data = { code: await fixture.stack.code(p.email) };
+        data = fixture.stack.entryForBrowser(p);
       } else if (req.url === "/track") {
         await fixture.stack.trackOrganization(input.organizationId);
         data = {};

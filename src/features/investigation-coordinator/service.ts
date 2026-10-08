@@ -1,4 +1,5 @@
 import "server-only";
+import { retryableAuthFailure } from "../room-access/team-entry-policy";
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { deviceClient } from "../device-binding/device-client";
 import { serverConfig } from "../../lib/supabase/server";
@@ -25,7 +26,8 @@ export async function humanWorkflow(client: SupabaseClient, action: HumanAction,
     data: { user },
     error,
   } = await client.auth.getUser();
-  if (error || !user) throw new WorkflowError("UNAUTHENTICATED");
+  if (error || !user)
+    throw new WorkflowError(retryableAuthFailure(error) ? "UNAVAILABLE" : "UNAUTHENTICATED");
   return projectResponse(action, await rpc(client, `workflow_human_${action}`, { p_body: body }));
 }
 export async function deviceWorkflow(action: DeviceAction, body: Body, secret: string) {

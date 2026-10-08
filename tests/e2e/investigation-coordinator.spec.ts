@@ -1,6 +1,29 @@
 import { test, expect, type Browser, type Page, type TestInfo } from "@playwright/test";
 import { installAuthArtifactPolicy } from "../helpers/auth-browser-artifact-policy.js";
+test.afterEach(({ browserName }, info) => {
+  void browserName;
+  if (!info.errors.length) return;
+  // Emit only source coordinates. Never expose the error, locator or fixture data.
+  const frames = info.errors.flatMap((error) =>
+    [...(error.stack ?? "").matchAll(/investigation-coordinator\.spec\.ts:(\d+):(\d+)/g)]
+      .slice(0, 4)
+      .map((match) => ({ line: Number(match[1]), column: Number(match[2]) })),
+  );
+  console.log(
+    JSON.stringify({
+      source: "workflow-browser",
+      mobile: info.project.name.includes("mobile"),
+      frames,
+    }),
+  );
+});
 installAuthArtifactPolicy(test);
+import {
+  enterTeam,
+  clearAuthCookies,
+  type BrowserEntry,
+  type BrowserPerson,
+} from "../helpers/browser-team-entry.js";
 function check(v: unknown): asserts v {
   if (!v) throw new Error("Owned workflow browser assertion failed");
 }
@@ -24,16 +47,10 @@ async function context(browser: Browser, info: TestInfo) {
     hasTouch: info.project.use.hasTouch,
   });
 }
-async function login(page: Page, person: { id: string; email: string }) {
-  await page.goto("/login");
-  await page.getByLabel("이메일", { exact: true }).fill(person.email);
-  await page.getByRole("button", { name: "코드 받기", exact: true }).click();
-  await expect(page.getByLabel("로그인 코드", { exact: true })).toBeVisible();
-  const { code } = await broker<{ code: string }>("code", { id: person.id });
-  await page.getByLabel("로그인 코드", { exact: true }).fill(code);
-  await page.getByRole("button", { name: "로그인", exact: true }).click();
-  await expect(page.getByRole("heading", { name: "내 조사방", exact: true })).toBeVisible();
+async function login(page: Page, person: BrowserPerson) {
+  await enterTeam(page, person, () => broker<BrowserEntry>("code", { id: person.id }));
 }
+
 function sceneName(info: TestInfo, kind: "history" | "control") {
   return `${info.project.name.includes("mobile") ? "mobile" : "desktop"}-${kind}`;
 }
@@ -46,8 +63,8 @@ test("should display an owned investigation and restore public history for an ob
     const scene = sceneName(info, "history");
     const data = await broker<{
       roomId: string;
-      owner: { id: string; email: string };
-      observer: { id: string; email: string };
+      owner: BrowserPerson;
+      observer: BrowserPerson;
     }>("setup", { scene });
     const ap = await a.newPage(),
       bp = await b.newPage();
@@ -57,12 +74,15 @@ test("should display an owned investigation and restore public history for an ob
     await bp.goto(`/app/rooms/${data.roomId}`);
     const own = ap.getByRole("region", { name: "실제 공동 조사" }),
       observed = bp.getByRole("region", { name: "실제 공동 조사" });
+    await own.getByLabel("보낼 곳", { exact: true }).selectOption("speak");
     await expect(own.getByRole("button", { name: "공동 발언 저장", exact: true })).toBeVisible();
+    await own.getByRole("button", { name: "공동 조사", exact: true }).click();
+    const advanced = ap.getByRole("dialog", { name: "공동 조사", exact: true });
     await expect(observed.getByRole("button", { name: "공동 발언 저장", exact: true })).toHaveCount(
       0,
     );
-    for (const label of ["내 조사 binding", "질문받을 binding"]) {
-      const selector = own.getByLabel(label);
+    for (const label of ["내 AI", "상대 AI"]) {
+      const selector = advanced.getByLabel(label);
       const option = selector.locator("option").filter({ hasText: "공개 저장소" });
       await expect(option).toHaveCount(1);
       await expect(option).toContainText("codex");
@@ -72,6 +92,7 @@ test("should display an owned investigation and restore public history for an ob
       await selector.selectOption(value);
       await expect(selector).toHaveValue(value);
     }
+    await ap.keyboard.press("Escape");
     await own.getByLabel("공동 발언", { exact: true }).fill("브라우저 공개 발언");
     await own.getByRole("button", { name: "공동 발언 저장", exact: true }).click();
     await expect(own.getByLabel("확정 공동 이력")).toContainText("브라우저 공개 발언");
@@ -102,21 +123,24 @@ test("should distinguish reported execution unknown and confirmed pause in the b
   const a = await context(browser, info);
   try {
     const scene = sceneName(info, "control");
-    const data = await broker<{ roomId: string; owner: { id: string; email: string } }>("setup", {
+    const data = await broker<{ roomId: string; owner: BrowserPerson }>("setup", {
       scene,
     });
     const page = await a.newPage();
     await login(page, data.owner);
     await page.goto(`/app/rooms/${data.roomId}`);
     const region = page.getByRole("region", { name: "실제 공동 조사" });
-    await expect(region).toContainText("실제 provider 검증은 아직 없습니다");
+    await expect(region.getByLabel("보낼 곳")).toHaveValue("ask");
     await broker("drive", { scene, step: "start" });
     await expect(region.getByLabel("공개 실행 보고")).toContainText("실행 보고 · provider 미검증", {
       timeout: 45000,
     });
-    const pause = region.getByRole("button", { name: "방 일시정지 요청", exact: true });
+    await region.getByRole("button", { name: "공동 조사", exact: true }).click();
+    const advanced = page.getByRole("dialog", { name: "공동 조사", exact: true });
+    const pause = advanced.getByRole("button", { name: "방 일시정지 요청", exact: true });
     await pause.focus();
     await page.keyboard.press("Enter");
+    await page.keyboard.press("Escape");
     await expect(region.getByRole("status")).toContainText("중단 확인 대기");
     await broker("drive", { scene, step: "ack" });
     await expect(region.getByRole("status")).toContainText("중단 확인 대기");
@@ -125,19 +149,23 @@ test("should distinguish reported execution unknown and confirmed pause in the b
       "종결 미확인 · 사람 확인 필요",
       { timeout: 45000 },
     );
-    const resume = region.getByRole("button", { name: "방 발언·조사 접수 재개", exact: true });
+    await region.getByRole("button", { name: "공동 조사", exact: true }).click();
+    const resume = advanced.getByRole("button", { name: "방 발언·조사 접수 재개", exact: true });
     await expect(resume).toBeDisabled();
+    await page.keyboard.press("Escape");
     await broker("drive", { scene, step: "terminal" });
     await expect(region.getByRole("status")).toContainText("일시정지 확인", { timeout: 45000 });
+    await region.getByRole("button", { name: "공동 조사", exact: true }).click();
     await expect(resume).toBeEnabled();
     await resume.focus();
     await page.keyboard.press("Enter");
+    await page.keyboard.press("Escape");
     await expect(region.getByRole("status")).toContainText("활성");
+    await region.getByLabel("보낼 곳").selectOption("speak");
     await region.getByLabel("공동 발언", { exact: true }).fill(" ");
-    await region.getByRole("button", { name: "공동 발언 저장", exact: true }).click();
-    const error = region.getByRole("alert", { name: "조사 오류", exact: true });
-    await expect(error).toBeVisible();
-    await expect(error).toBeFocused();
+    await expect(
+      region.getByRole("button", { name: "공동 발언 저장", exact: true }),
+    ).toBeDisabled();
     check(!(await page.content()).includes("private-native-"));
     check(await page.locator("body").evaluate((el) => el.scrollWidth <= innerWidth + 1));
   } finally {
@@ -162,8 +190,8 @@ test("should show a direct question form without an own AI connection", async ({
       const data = await broker<{
         roomId: string;
         targetAgentIds: string[];
-        requester: { id: string; email: string };
-        observer: { id: string; email: string };
+        requester: BrowserPerson;
+        observer: BrowserPerson;
       }>("setup", { scene });
       process.stdout.write("010_DIRECT_STAGE SETUP_AFTER\n");
       const page = await own.newPage(),
@@ -187,7 +215,13 @@ test("should show a direct question form without an own AI connection", async ({
       process.stdout.write("010_DIRECT_STAGE OBSERVER_READ_ONLY_BEFORE\n");
       await expect(observer.getByRole("form", { name: "상대 AI에 직접 질문" })).toHaveCount(0);
       process.stdout.write("010_DIRECT_STAGE OWN_AI_DISABLED_BEFORE\n");
-      await expect(region.getByRole("button", { name: "조사 시작", exact: true })).toBeDisabled();
+      await region.getByRole("button", { name: "공동 조사", exact: true }).click();
+      await expect(
+        page
+          .getByRole("dialog", { name: "공동 조사", exact: true })
+          .getByRole("button", { name: "조사 시작", exact: true }),
+      ).toBeDisabled();
+      await page.keyboard.press("Escape");
       if (variant === "single") {
         process.stdout.write("010_DIRECT_STAGE SINGLE_TARGET_BEFORE\n");
         await expect(target).toHaveValue(data.targetAgentIds[0]);
@@ -213,13 +247,90 @@ test("should show a direct question form without an own AI connection", async ({
         await target.selectOption(data.targetAgentIds[1]);
         process.stdout.write("010_DIRECT_STAGE MULTIPLE_SELECTION_AFTER\n");
       }
+      if (variant === "single") {
+        await region.getByLabel("보낼 곳", { exact: true }).selectOption("speak");
+        const input = region.getByLabel("공동 발언", { exact: true });
+        for (let index = 0; index < 3; index++) {
+          await input.fill(
+            `스크롤 회귀용 공개 발언 ${index}\n` +
+              "읽고 있던 기록의 위치를 유지합니다.\n".repeat(30),
+          );
+          await region.getByRole("button", { name: "공동 발언 저장", exact: true }).click();
+          await expect(input).toHaveValue("");
+          await expect(input).toBeFocused();
+        }
+        await expect(region.getByLabel("확정 공동 이력")).toContainText(
+          "스크롤 회귀용 공개 발언 2",
+        );
+        await region.getByLabel("보낼 곳", { exact: true }).selectOption("ask");
+        const scroll = region.getByLabel("대화 기록 스크롤", { exact: true });
+        await scroll.evaluate((element) => {
+          element.scrollTop = 0;
+          element.dispatchEvent(new Event("scroll", { bubbles: true }));
+        });
+        check(await scroll.evaluate((element) => element.scrollHeight > element.clientHeight));
+      }
       process.stdout.write("010_DIRECT_STAGE FORM_INPUT_BEFORE\n");
       await form
         .getByLabel("상대에게 보낼 질문", { exact: true })
         .fill("한국어 키보드 직접 질문 😀");
-      await form.getByRole("checkbox").check();
       await expect(send).toBeEnabled();
       process.stdout.write("010_DIRECT_STAGE FORM_READY\n");
+      const questionInput = form.getByLabel("상대에게 보낼 질문", { exact: true });
+      await questionInput.dispatchEvent("compositionstart");
+      await questionInput.dispatchEvent("keydown", {
+        key: "Enter",
+        code: "Enter",
+        bubbles: true,
+        isComposing: true,
+        keyCode: 229,
+      });
+      await questionInput.dispatchEvent("keydown", {
+        key: "Enter",
+        code: "Enter",
+        bubbles: true,
+        isComposing: false,
+        keyCode: 13,
+      });
+      await expect(region.getByLabel("확정 공동 이력")).not.toContainText(
+        "한국어 키보드 직접 질문 😀",
+      );
+      await expect(questionInput).toHaveValue("한국어 키보드 직접 질문 😀");
+      await questionInput.dispatchEvent("compositionend");
+      await questionInput.press("Shift+Enter");
+      await expect(questionInput).toHaveValue("한국어 키보드 직접 질문 😀\n");
+      await questionInput.fill("한국어 키보드 직접 질문 😀");
+      await page.getByRole("button", { name: "채팅방 관리", exact: true }).click();
+      await expect(page.getByRole("dialog", { name: "채팅방 관리", exact: true })).toBeVisible();
+      await page.keyboard.press("Escape");
+      await expect(page.getByRole("button", { name: "채팅방 관리", exact: true })).toBeFocused();
+      for (const width of [1440, 768, 390]) {
+        await page.setViewportSize({ width, height: 844 });
+        check(
+          await page.locator("body").evaluate((element) => element.scrollWidth <= innerWidth + 1),
+        );
+        await expect(questionInput).toHaveValue("한국어 키보드 직접 질문 😀");
+        if (width < 1280) {
+          const participants = page.getByRole("button", { name: "참가자 정보 열기", exact: true });
+          await participants.click();
+          await expect(
+            page.getByRole("dialog", { name: "참가자와 AI", exact: true }),
+          ).toBeVisible();
+          await page.keyboard.press("Escape");
+          await expect(participants).toBeFocused();
+        }
+        if (width < 1024) {
+          const menu = page.getByRole("button", { name: "채팅방 목록 열기", exact: true });
+          await menu.click();
+          await expect(
+            page.getByRole("dialog", { name: "AI 채팅방 목록", exact: true }),
+          ).toBeVisible();
+          await page.keyboard.press("Escape");
+          await expect(menu).toBeFocused();
+        }
+      }
+      await page.setViewportSize(info.project.use.viewport!);
+
       const bodies: unknown[] = [];
       if (variant === "single") {
         let lost = false;
@@ -241,6 +352,24 @@ test("should show a direct question form without an own AI connection", async ({
         { timeout: 45000 },
       );
       process.stdout.write("010_DIRECT_STAGE QUESTION_HISTORY_AFTER\n");
+      const questionRecord = region
+        .getByLabel("확정 공동 이력")
+        .getByRole("listitem")
+        .filter({ hasText: "한국어 키보드 직접 질문 😀" })
+        .first();
+      await expect(questionRecord).toContainText("저장된 대상:");
+      await expect(questionRecord).toContainText("당시 저장소 정보 없음");
+      if (variant === "single") {
+        await expect(
+          region.getByRole("button", { name: "새 메시지 · 아래로 이동", exact: true }),
+        ).toBeVisible();
+        check(
+          await region
+            .getByLabel("대화 기록 스크롤", { exact: true })
+            .evaluate((element) => element.scrollTop === 0),
+        );
+        await region.getByRole("button", { name: "새 메시지 · 아래로 이동", exact: true }).click();
+      }
       if (variant === "single") {
         process.stdout.write("010_DIRECT_STAGE RECOVERY_VISIBLE_BEFORE\n");
         await expect(
@@ -324,8 +453,8 @@ test("should isolate unresolved direct intents across authenticated users", asyn
       const scene = `${info.project.name.includes("mobile") ? "mobile" : "desktop"}-direct-${mode}`;
       const data = await broker<{
         roomId: string;
-        requester: { id: string; email: string };
-        actorB: { id: string; email: string };
+        requester: BrowserPerson;
+        actorB: BrowserPerson;
       }>("setup", { scene });
       const page = await owned.newPage();
       await login(page, data.requester);
@@ -350,7 +479,6 @@ test("should isolate unresolved direct intents across authenticated users", asyn
       await form
         .getByLabel("상대에게 보낼 질문", { exact: true })
         .fill("계정 전환의 확정된 첫 질문");
-      await form.getByRole("checkbox").check();
       await form.getByRole("button", { name: "상대 AI에 질문 보내기", exact: true }).click();
       await expect(
         region.getByRole("button", { name: "같은 요청 확인", exact: true }),
@@ -362,7 +490,7 @@ test("should isolate unresolved direct intents across authenticated users", asyn
       if (mode === "actor") {
         await page.getByRole("button", { name: "로그아웃", exact: true }).click();
         await expect(
-          page.getByRole("heading", { name: "조사실 로그인", exact: true }),
+          page.getByRole("heading", { name: "AI 채팅방 입장", exact: true }),
         ).toBeVisible();
         await login(page, data.actorB);
         await page.goto(`/app/rooms/${data.roomId}`);
@@ -375,9 +503,22 @@ test("should isolate unresolved direct intents across authenticated users", asyn
         ).toHaveCount(0);
         check(transmissions === 1);
       } else {
-        // Another page changes shared cookies, while A's original page stays mounted.
-        const cookiePage = await owned.newPage();
-        await login(cookiePage, data.actorB);
+        // Verify B independently, then replace shared cookies while A stays mounted.
+        const replacement = await context(browser, info);
+        try {
+          const replacementPage = await replacement.newPage();
+          await login(replacementPage, data.actorB);
+          const cookies = await replacement.cookies();
+          await clearAuthCookies(owned);
+          await owned.addCookies(cookies);
+          const cookiePage = await owned.newPage();
+          await cookiePage.goto("/login");
+          await expect(
+            cookiePage.getByRole("heading", { name: "내 AI 채팅방", exact: true }),
+          ).toBeVisible();
+        } finally {
+          await replacement.close();
+        }
         await page.bringToFront();
         await region.getByRole("button", { name: "같은 요청 확인", exact: true }).click();
         await expect(region.getByRole("alert", { name: "조사 오류", exact: true })).toBeVisible({
@@ -394,5 +535,168 @@ test("should isolate unresolved direct intents across authenticated users", asyn
     } finally {
       await owned.close();
     }
+  }
+});
+
+test("should retain saved direct identity through completed replacement and detach while preserving chat input and reading position", async ({
+  browser,
+}, info) => {
+  const owned = await context(browser, info);
+  try {
+    const scene = `${info.project.name.includes("mobile") ? "mobile" : "desktop"}-direct-history`;
+    const data = await broker<{
+      roomId: string;
+      targetAgentIds: string[];
+      requester: BrowserPerson;
+    }>("setup", { scene });
+    const page = await owned.newPage();
+    await login(page, data.requester);
+    await broker("direct-drive", { scene, step: "ready" });
+    await page.setViewportSize({ width: 768, height: 844 });
+    await page.goto(`/app/rooms/${data.roomId}`);
+    const region = page.getByRole("region", { name: "실제 공동 조사" });
+    const list = region.getByLabel("확정 공동 이력", { exact: true });
+    const scroll = region.getByLabel("대화 기록 스크롤", { exact: true });
+    const mode = region.getByLabel("보낼 곳", { exact: true });
+    await mode.selectOption("speak");
+    const speech = region.getByLabel("공동 발언", { exact: true });
+    for (let index = 0; index < 3; index++) {
+      await speech.fill(
+        `완료 이력의 앞선 발언 ${index}\n` + "읽고 있던 긴 기록입니다.\n".repeat(30),
+      );
+      await region.getByRole("button", { name: "공동 발언 저장", exact: true }).click();
+      await expect(speech).toHaveValue("");
+      await expect(speech).toBeFocused();
+    }
+    await expect(list).toContainText("완료 이력의 앞선 발언 2");
+    await mode.selectOption("ask");
+    const form = region.getByRole("form", { name: "상대 AI에 직접 질문" });
+    const input = form.getByLabel("상대에게 보낼 질문", { exact: true });
+    const target = form.getByLabel("직접 질문 대상", { exact: true });
+    const send = form.getByRole("button", { name: "상대 AI에 질문 보내기", exact: true });
+    await expect(target).toHaveValue(data.targetAgentIds[0]);
+    await expect(form.getByRole("checkbox")).toHaveCount(0);
+    await expect(form).toContainText("질문과 답변은 채팅방 참가자에게 공유됩니다.");
+    let transmissions = 0;
+    const askCount = () => transmissions;
+    page.on("request", (request) => {
+      if (request.method() === "POST" && request.url().endsWith("/api/investigations/ask"))
+        transmissions++;
+    });
+    await input.fill("저장된 연결의 한 번 질문");
+    await input.focus();
+    await input.dispatchEvent("compositionstart");
+    await input.press("Enter");
+    await input.dispatchEvent("keydown", {
+      key: "Enter",
+      code: "Enter",
+      isComposing: true,
+      bubbles: true,
+      keyCode: 229,
+    });
+    await expect(input).toHaveValue(/저장된 연결의 한 번 질문/);
+    check(askCount() === 0);
+    await input.dispatchEvent("compositionend");
+    await input.fill("저장된 연결의 한 번 질문");
+    await input.press("End");
+    await input.press("Shift+Enter");
+    await expect(input).toHaveValue("저장된 연결의 한 번 질문\n");
+    check(askCount() === 0);
+    await input.fill("저장된 연결의 한 번 질문");
+    const asked = page.waitForResponse(
+      (response) =>
+        response.request().method() === "POST" &&
+        response.url().endsWith("/api/investigations/ask"),
+    );
+    await input.press("Enter");
+    check((await asked).status() === 200 && askCount() === 1);
+    await expect(input).toHaveValue("");
+    await expect(input).toBeFocused();
+    await expect(list).toContainText("저장된 연결의 한 번 질문");
+    const question = list
+      .getByRole("listitem")
+      .filter({ has: page.getByText("질문", { exact: true }) });
+    const stored = await question.locator("p").filter({ hasText: "저장된 대상:" }).textContent();
+    check(stored && stored.includes(data.targetAgentIds[0]));
+    const epoch = stored.match(/epoch\s+(\d+)/)?.[1];
+    check(epoch && Number(epoch) > 0);
+    await expect(question).toContainText("당시 저장소 정보 없음");
+
+    const draft = "답변을 읽으며 쓰는 다음 질문";
+    await input.fill(draft);
+    await input.focus();
+    await input.evaluate((element) => (element as HTMLTextAreaElement).setSelectionRange(2, 8));
+    await scroll.evaluate((element) => {
+      element.scrollTop = 0;
+      element.dispatchEvent(new Event("scroll", { bubbles: true }));
+    });
+    check(await scroll.evaluate((element) => element.scrollHeight > element.clientHeight));
+    const answered = await broker<{ requests: number }>("direct-drive", { scene, step: "answer" });
+    check(answered.requests === 1);
+    await expect(list).toContainText("한글 직접 답변", { timeout: 45_000 });
+    await expect(input).toHaveValue(draft);
+    await expect(input).toBeFocused();
+    await expect(target).toHaveValue(data.targetAgentIds[0]);
+    check(
+      await input.evaluate(
+        (element) =>
+          (element as HTMLTextAreaElement).selectionStart === 2 &&
+          (element as HTMLTextAreaElement).selectionEnd === 8,
+      ),
+    );
+    check(await scroll.evaluate((element) => element.scrollTop === 0));
+    const unread = region.getByRole("button", { name: "새 메시지 · 아래로 이동", exact: true });
+    await expect(unread).toBeVisible();
+    await unread.click();
+    await expect(unread).toHaveCount(0);
+    check(
+      await scroll.evaluate(
+        (element) => element.scrollHeight - element.scrollTop - element.clientHeight < 64,
+      ),
+    );
+    check(askCount() === 1);
+
+    async function savedHistory() {
+      const records = list.getByRole("listitem").filter({ hasText: "저장된 대상:" });
+      await expect(records.filter({ has: page.getByText(/^(질문|답변)$/) })).toHaveCount(2);
+      for (const record of await records.all()) {
+        const metadata = await record
+          .locator("p")
+          .filter({ hasText: "저장된 대상:" })
+          .textContent();
+        check(
+          metadata &&
+            metadata.includes(data.targetAgentIds[0]) &&
+            metadata.match(/epoch\s+(\d+)/)?.[1] === epoch,
+        );
+        await expect(record).toContainText("현재 같은 연결 없음");
+        await expect(record).toContainText("당시 저장소 정보 없음");
+        await expect(record).not.toContainText("완료 뒤 새 저장소");
+      }
+      await expect(
+        list.getByRole("listitem").filter({ has: page.getByText("답변", { exact: true }) }),
+      ).toHaveCount(1);
+      check(askCount() === 1);
+    }
+    await broker("direct-drive", { scene, step: "replace-completed" });
+    await expect(target).toContainText("완료 뒤 새 저장소", { timeout: 45_000 });
+    await expect(target).toContainText("기존 대상 변경");
+    await expect(send).toBeDisabled();
+    await savedHistory();
+    await target.selectOption(data.targetAgentIds[0]);
+    await expect(form).toContainText("완료 뒤 새 저장소");
+    await page.reload();
+    await expect(form).toContainText("완료 뒤 새 저장소", { timeout: 45_000 });
+    await savedHistory();
+    await broker("direct-drive", { scene, step: "detach-completed" });
+    await expect(form).toContainText("준비 보고가 유효한 상대가 없습니다", { timeout: 45_000 });
+    await expect(form).not.toContainText("완료 뒤 새 저장소");
+    await savedHistory();
+    await page.reload();
+    await expect(form).toContainText("준비 보고가 유효한 상대가 없습니다", { timeout: 45_000 });
+    await savedHistory();
+    check(await page.locator("body").evaluate((element) => element.scrollWidth <= innerWidth + 1));
+  } finally {
+    await owned.close();
   }
 });

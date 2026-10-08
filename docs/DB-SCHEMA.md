@@ -1,14 +1,14 @@
 ---
-verified-against: 1eac6aee424d6acdc4ba89afac4e3683db04828d
+verified-against: 128c45f103776f5275d362e5859f1e991edbb58f
 sources:
   - supabase/migrations/**
   - src/features/room-access/access-service.ts
   - src/features/device-binding/service.ts
   - src/features/investigation-coordinator/service.ts
 ---
-# 인증·조사방·기기·실행 조정 데이터 모델
+# 입장·AI 채팅방·기기·실행 조정 데이터 모델
 
-2026-10-03의 Git 기준 소스와 작업트리를 확인했다. 이 문서는 모델의 이유와 제약을 설명하며 실제 DDL은 [마이그레이션](../supabase/migrations/20261001000100-web-auth-room-access.sql)이 정본이다. 진행 상태와 검증 수치는 [개발 순서와 검증 계획](planning/delivery-and-validation.md#현재-진행-상태)에 유지한다.
+2026-10-05의 Git 기준 소스와 작업트리를 확인했다. 이 문서는 모델의 이유와 제약을 설명하며 실제 DDL은 [마이그레이션](../supabase/migrations/20261001000100-web-auth-room-access.sql)이 정본이다. 진행 상태와 검증 수치는 [개발 순서와 검증 계획](planning/delivery-and-validation.md#현재-진행-상태)에 유지한다.
 
 ## 모델 경계
 
@@ -16,12 +16,20 @@ sources:
 |---|---|
 | `public.organizations` | 사람이 소유하는 그룹. Auth 사용자 FK와 별도 `access_version`을 가진다 |
 | `public.organization_members` | 그룹별 사용자 한 행. `owner/member`, `active/removed`와 화면 별칭을 보관한다 |
-| `public.rooms` | 그룹에 속한 범용 조사방. 목표·관찰·환경, 소유자와 별도 `access_version`을 가진다 |
+| `public.rooms` | 그룹에 속한 AI 채팅방. 목표·관찰·환경, 소유자와 별도 `access_version`을 가진다 |
 | `public.room_members` | 방별 사용자 한 행. `owner/participant/observer`, `active/removed`. 그룹 membership과 방의 복합 FK로 tenant를 일치시킨다 |
 | `room_access_private.room_invites` | 초대 SHA-256 hash·역할·발급자·유효 기간·소비 상태와 발급 시 access version. 원문 코드를 저장하지 않는다 |
 | `room_access_private.access_audit` | 성공한 권한 변경의 actor·역할·대상·시각. 변경과 동일한 transaction으로 기록한다 |
 
 Auth 계정은 Supabase의 `auth.users`가 소유한다. 제품은 이메일이나 provider credential을 위 여섯 모델에 복제하지 않는다. UUID는 소유권 증거가 아니며, 접근할 때 현재 membership과 Auth 상태를 다시 확인해야 한다.
+
+## 회사 코드 입장
+
+[회사 코드 migration](../supabase/migrations/20261004000900-team-code-entry.sql)은 `team_entry_private`에 configuration·admissions·attempts·global_attempts를 추가한다. 원문 코드를 SHA-256으로 먼저 처리한 뒤 bcrypt verifier만 저장하므로 긴 UTF-8 코드도 bcrypt의 72바이트 절단에 영향을 받지 않는다. private schema의 사용·직접 조회·변경은 anon/authenticated에 허용하지 않는다.
+
+`team_entry_admit`은 실제 `auth.uid()`와 현재 계정의 정지·삭제 상태를 검사하고 입장 코드·표시 이름을 확인한다. 전역→사용자 시도 기록을 같은 transaction에서 잠그며 거절 결과도 카운터와 함께 확정한다. `team_entry_status`는 해당 사용자의 입장 여부만 반환한다. 기존에 확인된 일반 Auth 사용자는 migration 시 한 번 입장을 이관하며 미래 사용자에게 자동 입장을 부여하지 않는다. 기존 Auth ID·membership·기기 소유자를 바꾸지 않는다.
+
+그룹·방 조회와 actor, 기기의 live 권한에 admission 조건을 추가한다. 유효한 Auth session이나 bearer가 있어도 입장이 취소된 사용자는 기존 데이터·기기·workflow 권한을 얻지 못한다. 방의 membership 조건은 계속 별도로 적용한다.
 
 ## 조회와 변경
 

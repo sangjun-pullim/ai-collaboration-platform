@@ -41,6 +41,9 @@
 - [개발·검증 상태](planning/delivery-and-validation.md): 현재 진행 상태, 검증 근거와 다음 작업의 정본.
 - [결정과 미결 항목](planning/decisions-and-open-items.md): 아직 확인하거나 선택해야 할 사항.
 - [GitHub Flow 운영](planning/github-flow.md): 작업 브랜치, PR, 검토와 병합 후 정리.
+- [AI 채팅방 화면 구현 기록](impl-spec/archive/020-chat-first-web-experience.md): 기본 채팅 화면과 shadcn/ui·Tailwind 전환을 완료하고 검증한 계획.
+- [회사 코드 입장 구현 기록](impl-spec/archive/021-team-code-entry.md): 코드·표시 이름과 내부 소유권 보존을 완료하고 검증한 계획.
+- [내 Mac의 AI 설정 계획](impl-spec/022-owner-local-ai-setup.md): 질문자 AI 없이 상대에게 질문하고, 답변 제공자가 실제 폴더·Claude/Codex·모델·effort를 적용하는 후속 단계. 독립 계획 리뷰를 통과했으며 구현 승인을 기다린다.
 - [진행 중인 구현 계획](impl-spec): 실행할 코드 수준 계획.
 - [완료 계획 보관](impl-spec/archive): 당시 계획과 검증 기록. 현재 코드 상태는 구조 문서와 실행 결과로 확인한다.
 

@@ -1,6 +1,6 @@
 import { notFound, redirect } from "next/navigation";
 import { requestClient } from "../../../../lib/supabase/server";
-import { roomDetails } from "../../../../features/room-access/access-service";
+import { roomDetails, dashboard } from "../../../../features/room-access/access-service";
 import { RoomAccessView } from "../../../../features/room-access/room-access-view";
 import { AccessError, messages } from "../../../../features/room-access/contracts";
 import { roomBindings } from "../../../../features/device-binding/service";
@@ -12,10 +12,16 @@ export default async function RoomPage({ params }: { params: Promise<{ roomId: s
   let data: Awaited<ReturnType<typeof roomDetails>> | undefined;
   let bindings: PublicBinding[] = [];
   let bindingUnavailable = false;
+  let rooms: Awaited<ReturnType<typeof dashboard>>["rooms"] = [];
   try {
     const { roomId } = await params;
     const { client } = await requestClient();
     data = await roomDetails(client, roomId);
+    try {
+      rooms = (await dashboard(client)).rooms;
+    } catch {
+      rooms = [data.room];
+    }
     try {
       bindings = await roomBindings(client, roomId);
     } catch {
@@ -27,6 +33,7 @@ export default async function RoomPage({ params }: { params: Promise<{ roomId: s
   }
   return data ? (
     <RoomAccessView
+      rooms={rooms}
       investigation={
         <InvestigationView
           key={`${data.userId}:${data.room.id}`}

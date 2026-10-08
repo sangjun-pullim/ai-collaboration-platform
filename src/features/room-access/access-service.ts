@@ -1,4 +1,6 @@
 import "server-only";
+import { admittedEntry } from "./team-entry-service";
+import { retryableAuthFailure } from "./team-entry-policy";
 import type { SupabaseClient } from "@supabase/supabase-js";
 import {
   AccessError,
@@ -8,13 +10,21 @@ import {
   type Member,
   type GroupMember,
 } from "./contracts";
+async function currentIdentity(client: SupabaseClient) {
+  let current: Awaited<ReturnType<SupabaseClient["auth"]["getUser"]>>;
+  try {
+    current = await client.auth.getUser();
+  } catch {
+    throw new AccessError("UNAVAILABLE");
+  }
+  if (current.error || !current.data.user)
+    throw new AccessError(retryableAuthFailure(current.error) ? "UNAVAILABLE" : "UNAUTHENTICATED");
+  const entry = await admittedEntry(client);
+  if (entry.userId !== current.data.user.id) throw new AccessError("UNAUTHENTICATED");
+  return entry;
+}
 export async function currentUser(client: SupabaseClient) {
-  const {
-    data: { user },
-    error,
-  } = await client.auth.getUser();
-  if (error || !user) throw new AccessError("UNAUTHENTICATED");
-  return user.id;
+  return (await currentIdentity(client)).userId;
 }
 const rpcs: Record<AccessAction, string> = {
   bootstrap: "access_bootstrap",
@@ -55,13 +65,19 @@ export async function mutate(
   return { removed: data.removed === true };
 }
 export async function dashboard(client: SupabaseClient) {
-  const userId = await currentUser(client);
+  const entry = await currentIdentity(client);
+  const userId = entry.userId;
   const [orgs, rooms] = await Promise.all([
     client.from("organizations").select("id,name,owner_user_id"),
     client.from("rooms").select("id,organization_id,title,goal,observation,environment"),
   ]);
   if (orgs.error || rooms.error) throw new AccessError("UNAVAILABLE");
-  return { userId, organizations: orgs.data as Organization[], rooms: rooms.data as Room[] };
+  return {
+    userId,
+    displayName: entry.displayName,
+    organizations: orgs.data as Organization[],
+    rooms: rooms.data as Room[],
+  };
 }
 export async function roomDetails(client: SupabaseClient, roomId: string) {
   const userId = await currentUser(client);

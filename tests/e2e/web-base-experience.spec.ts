@@ -9,7 +9,7 @@ function run(page: Page, name: "A" | "B") {
   return page.getByRole("article", { name: `AI ${name} 실행 확인` });
 }
 async function create(page: Page) {
-  await page.goto("/");
+  await page.goto("/demo");
   await page.getByRole("button", { name: "모의 조사방 만들기" }).click();
   await expect(
     page.getByRole("heading", { name: "두 저장소의 상태 갱신 차이 조사", exact: true }),
@@ -27,7 +27,7 @@ async function openReplay(card: Locator) {
 }
 
 test("should create a generic room with visibly simulated bindings", async ({ page }) => {
-  await page.goto("/");
+  await page.goto("/demo");
   await expect(page.locator("html")).toHaveAttribute("lang", "ko");
   await expect(page.getByRole("heading", { name: "연결할 두 작업 공간" })).toBeVisible();
   await expect(page.getByText("인증 미연결 · 실제 과금 없음", { exact: false })).toHaveCount(2);
@@ -227,7 +227,7 @@ test("should separate owned stop from pause across both simulated runs", async (
 });
 
 test("should allow observation without a connector or writable controls", async ({ page }) => {
-  await page.goto("/");
+  await page.goto("/demo");
   await page.getByRole("button", { name: "관찰자로 체험하기 →" }).click();
   await expect(page.getByText("connector 없이 관찰 중", { exact: true })).toBeVisible();
   await expect(timeline(page).getByRole("listitem")).toHaveCount(2);
@@ -278,7 +278,7 @@ test("should show evidence proposals owners and next validation", async ({ page 
 });
 
 test("should preserve controls and focus on a narrow screen", async ({ page }, testInfo) => {
-  await page.goto("/");
+  await page.goto("/demo");
   await page.screenshot({ path: testInfo.outputPath("setup.png"), fullPage: true });
   await page.getByRole("button", { name: "모의 조사방 만들기" }).click();
   await page.screenshot({ path: testInfo.outputPath("room.png"), fullPage: true });
@@ -367,4 +367,54 @@ test("should not submit an input while korean composition is active", async ({ p
       .getByText("비공개 한글 조합", { exact: true }),
   ).toBeVisible();
   await expect(timeline(page).getByText("비공개 한글 조합", { exact: true })).toHaveCount(0);
+});
+
+test("should enter the real app and keep computed login styles unchanged after returning from demo", async ({
+  page,
+}) => {
+  await page.goto("/login");
+  await expect(page.getByLabel("회사 입장 코드", { exact: true })).toBeVisible();
+  async function loginStyles() {
+    return page.evaluate(() =>
+      Object.fromEntries(
+        [
+          "body",
+          "h1",
+          "form",
+          'input[name="code"]',
+          'input[name="displayName"]',
+          "form button",
+        ].map((selector) => {
+          const element = document.querySelector(selector);
+          if (!element) throw new Error("Login style target missing");
+          const style = getComputedStyle(element);
+          return [
+            selector,
+            Object.fromEntries(
+              [
+                "font-family",
+                "font-size",
+                "line-height",
+                "color",
+                "background-color",
+                "border-radius",
+                "padding",
+                "display",
+                "box-sizing",
+              ].map((property) => [property, style.getPropertyValue(property)]),
+            ),
+          ];
+        }),
+      ),
+    );
+  }
+  const before = await loginStyles();
+  await page.goto("/demo");
+  await expect(page.locator(".prototype-demo")).toBeVisible();
+  await page.getByRole("link", { name: "실제 AI 채팅방으로 이동", exact: true }).click();
+  await expect(page).toHaveURL(/\/login$/);
+  await expect(page.getByLabel("회사 입장 코드", { exact: true })).toBeVisible();
+  await expect(page.locator(".prototype-demo")).toHaveCount(0);
+  expect(await loginStyles()).toEqual(before);
+  await expect(page.locator("body")).not.toContainText("예제 데이터로 체험 중");
 });

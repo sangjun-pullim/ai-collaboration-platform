@@ -44,7 +44,23 @@ export async function requestClient() {
   const jar = await cookies();
   const refreshHeaders = new Headers();
   const writes = new Map<string, { name: string; value: string; options: CookieOptions }>();
+  const base = `sb-${new URL(config.url).hostname.split(".")[0]}-auth-token`;
+  const isAuthCookie = (name: string) => name === base || name.startsWith(`${base}.`);
   const options = { path: "/", httpOnly: true, sameSite: "lax" as const, secure: config.secure };
+  let explicitLogout = false;
+  function preserveSessionCookies() {
+    // Keep cleanup paired with a completed same-identity refresh. A failed refresh
+    // may only delete cookies; retain the original browser identity in that case.
+    if (
+      [...writes.values()].some(
+        (cookie) => isAuthCookie(cookie.name) && cookie.value && cookie.options.maxAge !== 0,
+      )
+    )
+      return;
+    for (const [name, cookie] of writes) {
+      if (isAuthCookie(name) && (!cookie.value || cookie.options.maxAge === 0)) writes.delete(name);
+    }
+  }
   const client = createServerClient(config.url, config.key, {
     cookieOptions: options,
     cookies: {
@@ -58,9 +74,11 @@ export async function requestClient() {
   });
   return {
     client,
+    hasAuthCookies: jar.getAll().some((cookie) => isAuthCookie(cookie.name) && !!cookie.value),
+    preserveSessionCookies,
     clearSessionCookies() {
+      explicitLogout = true;
       // Include all old chunks and chunks created by this request's refresh.
-      const base = `sb-${new URL(config.url).hostname.split(".")[0]}-auth-token`;
       for (const name of new Set([...jar.getAll().map((c) => c.name), ...writes.keys(), base])) {
         if (
           name === base ||
@@ -77,6 +95,7 @@ export async function requestClient() {
       }
     },
     finish(data: unknown, status = 200) {
+      if (status >= 400 && !explicitLogout) preserveSessionCookies();
       const response = privateHeaders(NextResponse.json(data, { status }));
       refreshHeaders.forEach((value, name) => response.headers.set(name, value));
       for (const cookie of writes.values())

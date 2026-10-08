@@ -1,4 +1,5 @@
 import "server-only";
+import { retryableAuthFailure } from "../room-access/team-entry-policy";
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { deviceClient } from "./device-client";
 import { serverConfig } from "../../lib/supabase/server";
@@ -44,7 +45,8 @@ export async function humanMutation(client: SupabaseClient, action: HumanAction,
     data: { user },
     error,
   } = await client.auth.getUser();
-  if (error || !user) throw new ConnectionError("UNAUTHENTICATED");
+  if (error || !user)
+    throw new ConnectionError(retryableAuthFailure(error) ? "UNAVAILABLE" : "UNAUTHENTICATED");
   return projectResponse(action, await rpc(client, humanRpcs[action], { p_body: body }));
 }
 export async function deviceMutation(action: ConnectorAction, body: Body, secret?: string) {

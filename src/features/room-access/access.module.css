@@ -41,7 +41,7 @@
   border-radius: 8px;
 }
 .notice {
-  color: var(--muted);
+  color: var(--muted-foreground);
 }
 .list {
   padding: 0;
@@ -82,4 +82,18 @@
   .panel {
     padding: 16px;
   }
+}
+
+.field input,
+.field select,
+.field textarea {
+  width: 100%;
+  min-width: 0;
+  border: 1px solid var(--input);
+  border-radius: 6px;
+  padding: 8px 12px;
+  background: white;
+}
+.field input[type="checkbox"] {
+  width: auto;
 }

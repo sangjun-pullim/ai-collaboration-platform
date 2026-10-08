@@ -16,8 +16,8 @@
 | AI 연결 소유자 | 기기 연결 | 웹 pairing | 연결한 사람·기기·최근 확인, 연결/취소 버튼 |
 | AI 연결 소유자 | 저장소 root | 로컬 선택 화면 또는 CLI 안내 | 저장소 별칭, branch/worktree, 파일 변경 여부 |
 | AI 연결 소유자 | AI 도구·인증·session | 로컬 runtime와 연결 안내 | 도구 종류/버전, 로그인 상태, session 별칭, 연결 수준 |
-| 질문할 참가자 | 상대 등록 연결·질문 | 웹 조사방 | 상대 사람·AI·저장소·준비 상태, 확인된 공유 범위 |
-| 공동 조사 참가자 | 사용할 등록 연결·공유 scope·문제 | 웹 조사방 | AI별 저장소/branch/session, 준비 상태, 공동 목표 |
+| 질문할 참가자 | 상대 등록 연결·질문 | 웹 AI 채팅방 | 상대 사람·AI·저장소·준비 상태, 확인된 공유 범위 |
+| 공동 조사 참가자 | 사용할 등록 연결·공유 scope·문제 | 웹 AI 채팅방 | AI별 저장소/branch/session, 준비 상태, 공동 목표 |
 
 서비스의 DB password/service-role key를 일반 개발자 설정값으로 보여주지 않는다. 공급자 인증은 공급자가 허용하는 로컬 흐름으로 진행하고 웹 입력칸에 기존 AI 로그인 토큰을 붙여넣게 하지 않는다.
 
@@ -25,7 +25,7 @@
 
 ## 개발 단계별 계정 준비
 
-Vercel/Supabase 후보를 선택하더라도 구현 시작 전에 클라우드 계정·프로젝트가 모두 준비돼 있어야 하는 것은 아니다. 계정 준비는 서비스 운영자 작업이며 조사방 참여자마다 호스팅 계정을 만들지 않는다.
+Vercel/Supabase 후보를 선택하더라도 구현 시작 전에 클라우드 계정·프로젝트가 모두 준비돼 있어야 하는 것은 아니다. 계정 준비는 서비스 운영자 작업이며 AI 채팅방 참여자마다 호스팅 계정을 만들지 않는다.
 
 | 단계 | 필요한 준비 | 클라우드 계정 필요 여부 |
 |---|---|---|
@@ -38,19 +38,32 @@ Supabase의 신규 로컬 개발 흐름은 CLI·container runtime으로 시작�
 
 권고 순서는 로컬 핵심 흐름 검증 → 선택한 클라우드의 계정·프로젝트 준비 → 배포·로그인·기기 연결·두 PC 왕복 검증이다. 클라우드 단계에서는 서비스 주소, 인증 redirect, 환경 변수, 방·기기 권한도 실제 배포 기준으로 확인한다. 질문만 하는 참여자는 제품 계정·방 권한을 준비한다. AI를 제공할 참여자만 자기 AI 인증과 로컬 연결을 추가한다.
 
-## 현재 구현한 로컬 로그인과 조사방
+## 현재 웹 입장과 AI 채팅방
 
-실제 웹 경로는 `/login`, `/app`, `/app/rooms/<roomId>`, `/app/connections`다. 이메일 코드를 확인하면 자기 그룹·방을 만들고 participant/observer 초대를 발급하거나 코드로 참가할 수 있다. 현재 DB membership으로 권한을 확인한다. 기기 코드 승인·공개 저장소/session 등록은 가능하다. 실제 Codex 실행은 아래 로컬 CLI로 준비하며, 등록만으로 실행 준비가 완료되지는 않는다.
+실제 웹 경로는 `/login`, `/app`, `/app/rooms/<roomId>`, `/app/connections`다. 회사 공용 입장 코드와 표시 이름으로 접속한다. 같은 브라우저에서는 session을 유지하고 로그아웃·cookie 유실 후에는 새 사용자로 입장한다. 같은 이름으로 이전 방·기기 소유권을 복구하지 않는다. 새 채팅방은 이름만 입력해 만들고 participant/observer 초대로 동료를 초대한다. 현재 코드 입장과 DB membership으로 권한을 확인한다. 기기 코드 승인·공개 저장소/session 등록은 가능하다. 실제 Codex 실행은 아래 로컬 CLI로 준비하며, 등록만으로 실행 준비가 완료되지는 않는다.
 
-방의 실제 공동 이력은 DB cursor polling으로 복원한다. 참가자는 공동 발언과 조사/중단/방·조사 재개를 구분해 사용할 수 있다. driver가 없는 binding은 미검증 안내를 유지한다. 중앙 조정과 실제 Codex의 한 PC 왕복·중단을 검증했다. 검사 수치와 실제 두 PC·Claude의 남은 범위는 [진행 상태](../planning/delivery-and-validation.md#현재-진행-상태)에 유지한다.
+방의 대화는 DB cursor polling으로 복원한다. 준비된 상대 AI를 선택해 직접 질문하거나 방 참가자에게 메시지를 보낸다. 내 AI 연결 없이 질문할 수 있다. 공동 조사·중단·방/조사 재개는 별도 제어에서 사용할 수 있다. driver가 없는 binding은 미검증 안내를 유지한다. 중앙 조정과 실제 Codex의 한 PC 왕복·중단을 검증했다. 검사 수치와 실제 두 PC·Claude의 남은 범위는 [진행 상태](../planning/delivery-and-validation.md#현재-진행-상태)에 유지한다.
 
 개발자는 Node 24에서 `npm ci` 후, [환경 변수 예시](../../.env.example)의 `SUPABASE_URL`, `SUPABASE_PUBLISHABLE_KEY`, `APP_ORIGIN`을 프로세스 환경에 전달해 `npm run dev`를 실행한다. `APP_ORIGIN`은 브라우저로 접속할 정확한 origin이어야 한다. 제품 웹 서버에는 admin/service-role key·DB password·AI 공급자 인증을 전달하지 않는다. 실제 설정을 파일로 만들 때는 개인 자격증명을 저장소에 포함하지 않는다.
 
-새 격리 로컬 Supabase에는 [첫 migration](../../supabase/migrations/20261001000100-web-auth-room-access.sql)부터 [실행 조정](../../supabase/migrations/20261001000600-durable-investigation-coordinator.sql)까지 여섯 파일을 이름 순서대로 적용한다. 기존 DB에는 아직 적용하지 않은 후속 파일만 적용하며 reset·기적용 파일 수정/재적용을 하지 않는다. 실행 중인 PostgREST에는 적용 후 DB에서 `NOTIFY pgrst, 'reload schema';`를 보내 schema cache를 갱신한다. OTP 메일 template은 [magic-link.html](../../supabase/templates/magic-link.html)의 `{{ .Token }}`을 local Auth의 magic-link·confirmation 설정에 연결한 뒤 해당 stack을 재시작해 실제 발송을 확인한다. 개발용 Mailpit을 사용하는 loopback 실험은 외부 이메일을 발송하지 않는다.
+아래는 새로 만든 격리 로컬 Supabase의 준비 절차다. 공유 DB·운영 Auth에서는 운영자가 대상과 변경을 확인한 후 실행한다. 잘못된 DB에 적용하면 다른 사용자의 접근 정책과 인증 설정이 바뀐다.
+
+1. 운영자는 해당 로컬 DB에 [첫 migration](../../supabase/migrations/20261001000100-web-auth-room-access.sql)부터 [회사 코드 입장](../../supabase/migrations/20261004000900-team-code-entry.sql)까지 001–009 아홉 파일을 이름 순서대로 적용한다. 직접 질문·발신자 검증·입장 권한이 함께 준비된다. 기존 DB에는 미적용 후속 파일만 적용하며 reset·기적용 파일 수정/재적용을 하지 않는다.
+2. PostgREST가 실행 중이면 운영자는 같은 DB에 `NOTIFY pgrst, 'reload schema';`를 보내 새 함수와 schema cache를 반영한다.
+3. 운영자는 해당 로컬 Auth에서 anonymous sign-in을 활성화한다. 이메일 없는 내부 사용자 ID를 생성할 수 있게 된다.
+4. 운영자는 아래 [회사 코드 운영 설정](#회사-코드-운영-설정)에 따라 표준 입력으로 코드를 설정한다. 코드와 표시 이름으로 입장할 수 있다. 현재 제품은 OTP 메일 template이나 메일 발송 준비를 요구하지 않는다.
 
 현재 실제 검사는 소유권을 확인한 로컬 Docker project의 여섯 container와 API/DB/Mailpit의 고정 loopback port를 사용한다. `test:integration`, `test:e2e:auth`의 test-parent 환경은 [local-access-stack](../../tests/helpers/local-access-stack.ts)이 제한하며 일반 `npm test`·모의 browser 검사와 분리된다. parent에만 `LOCAL_ACCESS_PROJECT`, `LOCAL_ACCESS_STACK_WORKDIR`, `LOCAL_ACCESS_DB_URL`, `LOCAL_ACCESS_MAIL_URL`, `LOCAL_ACCESS_ADMIN_KEY`, `LOCAL_ACCESS_SIGNING_JWK`가 필요하다. browser에는 scope가 제한된 fixture bridge만 전달하고 제품 child에는 위 세 제품 설정만 전달한다. 설정이 원격이거나 다른 project이면 fixture 생성·삭제를 거절한다. 정리는 생성한 합성 ID와 inbox만 대상으로 한다.
 
 사람 인증·방 접근과 기기 등록의 통합·브라우저 검사 및 독립 리뷰를 완료했다. 두 PC·Claude·Realtime·개인 설명의 제품 통합은 후속 범위다. 현재 검증 수치와 순서는 [개발 순서와 검증 계획](../planning/delivery-and-validation.md#현재-진행-상태)을 따른다.
+
+## 회사 코드 운영 설정
+
+운영자는 Supabase의 anonymous Auth를 사용 가능하게 설정하고 회사 코드 migration을 적용한다. 코드 원문은 제품 웹 환경이나 소스에 넣지 않고 `scripts/configure-team-entry.mjs`의 표준 입력으로 설정한다. 관리자 DB 연결은 이 설정 프로세스에서만 사용하며 제품 웹·브라우저에는 전달하지 않는다. 스크립트는 `--apply`를 요구하고 원문이나 verifier를 출력하지 않는다. 기존 admitted 사용자 session은 코드 교체로 자동 해제되지 않는다. 공유 DB의 migration·코드 변경은 운영자 확인 후 실행한다.
+
+## CLI가 필요한 참가자
+
+질문만 하는 참가자는 브라우저만 사용한다. 로컬 AI를 제공하는 참가자는 자기 Mac에 로컬 연결 프로그램과 지원하는 공식 AI CLI·로그인을 준비한다. 현재 제품 실행기는 Codex를 지원한다. Claude와 웹 폴더·모델·effort의 실제 적용은 [현재 진행 상태](../planning/delivery-and-validation.md#현재-진행-상태)에 있는 후속 구현·검증 항목이며 선택 화면만으로 완료를 표시하지 않는다.
 
 ## 현재 로컬 기기와 저장소 등록
 

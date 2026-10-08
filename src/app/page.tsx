@@ -1,13 +1,4 @@
-import Link from "next/link";
-import { PrototypeApp } from "../features/investigation-prototype/prototype-app";
-
+import { redirect } from "next/navigation";
 export default function Home() {
-  return (
-    <>
-      <nav aria-label="실제 조사실">
-        <Link href="/login">실제 조사실 로그인</Link>
-      </nav>
-      <PrototypeApp />
-    </>
-  );
+  redirect("/app");
 }

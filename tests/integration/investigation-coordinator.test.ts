@@ -754,16 +754,16 @@ test(
       assert.equal(beforeClaim.rowCount, 1);
       assert.equal(beforeClaim.rows[0].state, "QUEUED");
       await assertOwnedStack(f.stack.config);
-      assert.ok(raced.peer.email.startsWith(`${f.stack.namespace}-`));
+      assert.ok(raced.peer.displayName.startsWith(`${f.stack.namespace}-`));
       assert.ok(f.stack.users.has(raced.peer.id));
       assert.equal(f.rooms.get(raced.scope.roomId), raced.scope.organizationId);
       assert.equal(f.stack.organizationOwners.get(raced.scope.organizationId), raced.owner.id);
       assert.notEqual(raced.peer.id, raced.owner.id);
       const ownedPeer = await f.stack.db.query(
-        "select exists(select 1 from auth.users where id=$1 and email=$2) owned_user,exists(select 1 from public.organizations where id=$3 and owner_user_id=$4 and owner_user_id<>$1) owned_organization,exists(select 1 from public.rooms where id=$5 and organization_id=$3 and owner_user_id=$4 and owner_user_id<>$1) owned_room,exists(select 1 from public.room_members where organization_id=$3 and room_id=$5 and user_id=$1 and status='active') peer_member,exists(select 1 from device_binding_private.agents where id=$6 and device_id=$7 and owner_user_id=$1 and organization_id=$3 and room_id=$5 and state='active') peer_binding",
+        "select exists(select 1 from auth.users u join team_entry_private.admissions e on e.user_id=u.id where u.id=$1 and e.display_name=$2) owned_user,exists(select 1 from public.organizations where id=$3 and owner_user_id=$4 and owner_user_id<>$1) owned_organization,exists(select 1 from public.rooms where id=$5 and organization_id=$3 and owner_user_id=$4 and owner_user_id<>$1) owned_room,exists(select 1 from public.room_members where organization_id=$3 and room_id=$5 and user_id=$1 and status='active') peer_member,exists(select 1 from device_binding_private.agents where id=$6 and device_id=$7 and owner_user_id=$1 and organization_id=$3 and room_id=$5 and state='active') peer_binding",
         [
           raced.peer.id,
-          raced.peer.email,
+          raced.peer.displayName,
           raced.scope.organizationId,
           raced.owner.id,
           raced.scope.roomId,
@@ -932,13 +932,13 @@ test(
         await f.poll(s.origin);
         await f.poll(s.responder);
         await assertOwnedStack(f.stack.config);
-        assert.ok(s.owner.email.startsWith(`${f.stack.namespace}-`));
+        assert.ok(s.owner.displayName.startsWith(`${f.stack.namespace}-`));
         assert.ok(f.stack.users.has(s.owner.id));
         assert.equal(f.rooms.get(s.scope.roomId), s.scope.organizationId);
         assert.equal(f.stack.organizationOwners.get(s.scope.organizationId), s.owner.id);
         const owned = await f.stack.db.query(
-          "select r.id from public.rooms r join public.organizations o on o.id=r.organization_id join auth.users u on u.id=o.owner_user_id where r.id=$1 and o.id=$2 and r.owner_user_id=$3 and o.owner_user_id=$3 and u.email=$4",
-          [s.scope.roomId, s.scope.organizationId, s.owner.id, s.owner.email],
+          "select r.id from public.rooms r join public.organizations o on o.id=r.organization_id join auth.users u on u.id=o.owner_user_id where r.id=$1 and o.id=$2 and r.owner_user_id=$3 and o.owner_user_id=$3 and exists(select 1 from team_entry_private.admissions e where e.user_id=u.id and e.display_name=$4)",
+          [s.scope.roomId, s.scope.organizationId, s.owner.id, s.owner.displayName],
         );
         assert.equal(owned.rowCount, 1);
         const captured = await f.stack.db.query(

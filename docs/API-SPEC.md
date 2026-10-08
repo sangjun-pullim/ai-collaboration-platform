@@ -1,5 +1,5 @@
 ---
-verified-against: 1eac6aee424d6acdc4ba89afac4e3683db04828d
+verified-against: 128c45f103776f5275d362e5859f1e991edbb58f
 sources:
   - src/app/api/**
   - src/features/room-access/contracts.ts
@@ -11,9 +11,9 @@ sources:
   - src/features/investigation-coordinator/**
   - packages/local-connector/src/workflow-contracts.ts
 ---
-# 사람 인증·조사방·기기·실행 조정 계약
+# 사람 입장·AI 채팅방·기기·실행 조정 계약
 
-2026-10-02의 Git 기준 소스와 작업트리를 확인했다. 이 문서는 현재 사람 cookie Auth·기기 bearer·내구 조사 계약을 설명한다. 실행 보고와 실제 provider 종결의 검증은 구분한다. 진행 상태와 검증 수치는 [개발 순서와 검증 계획](planning/delivery-and-validation.md#현재-진행-상태)에 유지한다.
+2026-10-05의 Git 기준 소스와 작업트리를 확인했다. 이 문서는 현재 사람 cookie Auth·기기 bearer·내구 조사 계약을 설명한다. 실행 보고와 실제 provider 종결의 검증은 구분한다. 진행 상태와 검증 수치는 [개발 순서와 검증 계획](planning/delivery-and-validation.md#현재-진행-상태)에 유지한다.
 
 ## 공통 요청과 응답
 
@@ -21,21 +21,24 @@ sources:
 
 성공은 `{"ok":true,"data":{...}}`, 실패는 `{"ok":false,"error":{"code":"..."}}`이며 예외 원문이나 SQL 오류를 반환하지 않는다. 응답은 `private, no-store`다. 사람 응답은 Cookie/Origin, connector 성공은 Authorization을 Vary에 포함하며 framework 토큰이 함께 올 수 있다. connector는 Cookie Vary·Set-Cookie를 사용하지 않는다.
 
-인증 session은 서버가 관리하는 HttpOnly·SameSite=Lax cookie로 전달하고 HTTPS에서는 Secure를 적용한다. 브라우저 JSON에 session 원문을 반환하지 않는다. 보호 화면의 미인증 redirect는 고정 `/login`으로 해석되어야 한다.
+인증 session은 서버가 관리하는 HttpOnly·SameSite=Lax cookie로 전달하고 HTTPS에서는 Secure를 적용한다. 브라우저 JSON에 session 원문을 반환하지 않는다. 보호 화면의 미인증 redirect는 `/login`으로 보낸다. `/app?invite=<64자리 hex>`의 유효한 초대 목적지는 `/login?invite=...`를 거쳐 복원한다. 외부 redirect를 받지 않는다. API에서는 proxy가 인증을 먼저 갱신하지 않으며 각 route가 Origin·본문·인증과 응답 쿠키를 처리한다.
 
 ## Auth action
 
 | 경로 | body | 성공 data |
 |---|---|---|
-| `/api/auth/code` | `email` | `{}`. 메일의 6자리 코드를 요청한다. 첫 가입을 허용한다 |
-| `/api/auth/verify` | `email`, `code` | `{}`. 실제 OTP를 검증하고 session cookie를 설정한다 |
+| `/api/auth/enter` | `code`, `displayName` | `userId`, `displayName`. 실제 Auth 사용자에게 회사 코드 입장을 기록한다. 확정된 무세션에서만 anonymous 사용자를 생성한다 |
 | `/api/auth/logout` | `{}` | `{}`. 현재 Auth session을 signOut하고 모든 cookie chunk를 지운다 |
 
-로그아웃의 cookie 삭제가 같은 요청의 갱신보다 우선한다. 이후 웹 보호 요청과 refresh 재사용은 거절되어야 한다. 이미 발급된 모든 access JWT의 즉시 폐기를 보장하지 않는다. 그룹·방 권한 취소와 Auth 계정 정지는 별도로 검사한다.
+`enter`의 코드는 최대 128자이며 앞뒤 공백을 그대로 검사한다. 표시 이름은 최대 80자로 앞뒤 공백을 제거한다. 제어 문자·잘못된 UTF-8·추가 필드를 거절한다. 이름은 계정 복구나 권한의 증거가 아니다. 옛 `/code`·`/verify`는 404이고 메일을 발송하지 않는다.
+
+입장 시도는 DB에서 사용자별 15분에 5회와 서비스 전체 1분에 60회로 제한한다. 신규 anonymous 생성은 서버 프로세스별 1분에 10회로 제한하며 Auth 공급자의 별도 제한도 적용된다. 429·5xx·통신 실패를 무세션으로 해석하지 않고 기존 사용자·모든 cookie chunk를 보존한다. 오류 응답에서 SDK가 생성한 삭제만 있는 쿠키 변경을 억제하며 성공한 갱신의 옛 chunk 정리는 적용한다. 확인 실패는 503, 확정된 미인증은 401이다.
+
+명시적 로그아웃의 cookie 삭제가 같은 요청의 갱신보다 우선한다. 이후 웹 보호 요청과 refresh 재사용은 거절되어야 한다. 이미 발급된 모든 access JWT의 즉시 폐기를 보장하지 않는다. 그룹·방 권한 취소와 Auth 계정 정지는 별도로 검사한다.
 
 ## Access action
 
-`/api/access/<action>`은 아래 여섯 action만 허용한다. 모든 요청에서 현재 Auth 사용자와 live DB 권한을 확인한다.
+`/api/access/<action>`은 아래 여섯 action만 허용한다. 모든 요청에서 현재 Auth 사용자·회사 코드 입장과 live DB 권한을 확인한다.
 
 | action | body | 성공 data·권한 |
 |---|---|---|
@@ -46,7 +49,7 @@ sources:
 | `revoke-room-member` | `roomId`, `userId` | `removed`. 방 owner가 owner 이외의 멤버를 제거한다 |
 | `revoke-group-member` | `organizationId`, `userId` | `removed`. 그룹 owner가 owner 이외의 그룹 멤버를 제거한다 |
 
-초대 원문은 발급 응답과 발급자의 일시적인 화면 상태에만 존재한다. URL·로그·다른 사용자의 HTML에 넣지 않는다. 활성 room membership으로 재참가하면 초대 미소비·기존 role 보존과 함께 `ALREADY_MEMBER`를 반환한다. 재초대와 취소의 저장 규칙은 [DB-SCHEMA](DB-SCHEMA.md)를 따른다.
+초대 원문은 발급 응답과 발급자의 일시적인 화면 상태에서 전달한다. 사용자가 받은 초대 링크로 접속한 경우 입장 전 URL과 자기 참가 Dialog에 잠시 유지하며 참가 성공 때 URL에서 제거한다. 공동 이력·로그·다른 참가자의 HTML에 저장하지 않는다. 활성 room membership으로 재참가하면 초대 미소비·기존 role 보존과 함께 `ALREADY_MEMBER`를 반환한다. 재초대와 취소의 저장 규칙은 [DB-SCHEMA](DB-SCHEMA.md)를 따른다.
 
 ## 고정 오류
 
