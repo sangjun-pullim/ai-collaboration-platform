@@ -107,7 +107,9 @@ test("should agree on workflow contracts across web and local clients", () => {
     badQuestion.cycleState = "ACTIVE";
     assert.throws(() => contract.projectResponse("question", badQuestion), { code: "UNAVAILABLE" });
     const h = structuredClone(fixture.cases[0].response) as web.HistoryPage;
-    h.bindings[0].runtime = "claude" as "codex";
+    h.bindings[0].runtime = "claude";
+    assert.deepEqual(contract.projectResponse("read", h), h);
+    (h.bindings[0] as unknown as Record<string, unknown>).runtime = "unknown-provider";
     assert.throws(() => contract.projectResponse("read", h), { code: "UNAVAILABLE" });
     const a = structuredClone(fixture.cases[8].response) as web.AttemptSnapshot;
     (a.payload as unknown as Record<string, unknown>).nativeSession = "private";
@@ -128,5 +130,60 @@ test("should agree on workflow contracts across web and local clients", () => {
     const bad = structuredClone(fixture.cases[0].response) as web.HistoryPage;
     bad.events[0].kind = "RUN_STATE";
     assert.throws(() => contract.projectResponse("read", bad), { code: "UNAVAILABLE" });
+  }
+});
+
+test("should agree on exact input control actions without changing old v1 responses", () => {
+  const id = "00000000-0000-4000-8000-000000000001";
+  const state = {
+    agentId: id,
+    bindingEpoch: 1,
+    revision: 1,
+    paused: false,
+    appliedRevision: null,
+    appliedEpoch: null,
+    appliedAt: null,
+  };
+  const cases: [web.Action, web.Body, unknown][] = [
+    ["input-state", { protocol: 1, roomId: id }, { roomId: id, bindings: [state] }],
+    [
+      "input-control",
+      {
+        protocol: 1,
+        roomId: id,
+        expectedUserId: id,
+        operationId: id,
+        agentId: id,
+        bindingEpoch: 1,
+        expectedRevision: 1,
+        paused: true,
+      },
+      state,
+    ],
+    ["admission", { protocol: 1, agentId: id, bindingEpoch: 1 }, state],
+    [
+      "admission-ack",
+      { protocol: 1, agentId: id, bindingEpoch: 1, revision: 1, paused: false },
+      state,
+    ],
+  ];
+  for (const [action, body, response] of cases)
+    for (const contract of [web, local]) {
+      assert.deepEqual(contract.validateBody(action, body), body);
+      assert.deepEqual(contract.projectResponse(action, response), response);
+      assert.throws(() => contract.validateBody(action, { ...body, actor: id }), {
+        code: "INVALID_BODY",
+      });
+    }
+  for (const contract of [web, local]) {
+    assert.throws(
+      () => contract.projectResponse("input-state", { roomId: id, bindings: [state, state] }),
+      { code: "UNAVAILABLE" },
+    );
+    for (const wrong of [
+      { ...state, appliedAt: new Date().toISOString() },
+      { ...state, appliedRevision: 2, appliedEpoch: 1, appliedAt: new Date().toISOString() },
+    ])
+      assert.throws(() => contract.projectResponse("admission", wrong), { code: "UNAVAILABLE" });
   }
 });

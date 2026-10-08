@@ -20,10 +20,13 @@ test("should admit a human question without a requester device or agent", () => 
 });
 
 test("should preserve paired workflow and peer wire compatibility", () => {
-  assert.deepEqual(
-    readFileSync("src/features/investigation-coordinator/contracts.ts"),
-    readFileSync("packages/local-connector/src/workflow-contracts.ts"),
-  );
+  const webSource = readFileSync("src/features/investigation-coordinator/contracts.ts", "utf8");
+  const localSource = readFileSync("packages/local-connector/src/workflow-contracts.ts", "utf8");
+  const webImport = '"./source-contracts.ts"';
+  const localImport = '"./workflow/source-contracts.ts"';
+  assert.equal(webSource.split(webImport).length, 3);
+  assert.equal(localSource.split(localImport).length, 3);
+  assert.equal(localSource.replaceAll(localImport, webImport), webSource);
   for (const entry of paired.cases) {
     assert.deepEqual(
       web.validateBody(entry.action, entry.body),

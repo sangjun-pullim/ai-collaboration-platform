@@ -1,8 +1,26 @@
+import { projectSourceManifest } from "./workflow/source-manifest.ts";
+import { publishSource } from "./workflow/source-publisher.ts";
+import { ownRuntimeRecord } from "./workflow/record-snapshot.ts";
+import { sourcePublicationGuard } from "./workflow/source-publication-guard.ts";
+import type { SourceSupport, SourceIdentity } from "./workflow/source-contracts.ts";
+import { repositoryMode } from "./workspace/repository-access.ts";
+import {
+  RepositoryTools,
+  repositoryToolReserveBytes,
+  peerEvidenceReserveBytes,
+} from "./workflow/repository-tools.ts";
+import { validateToolArguments, isRepositoryTool } from "./workspace/tool-contracts.ts";
+import { isOriginRoleRequestKind } from "./workspace/tool-contracts.ts";
 import { randomUUID } from "node:crypto";
 import { performance } from "node:perf_hooks";
 import { resolve } from "node:path";
 import type { OwnedContext } from "./runtime-contracts.ts";
-import { ConnectionError, type PublicBinding, type WorkspaceMetadata } from "./contracts.ts";
+import {
+  ConnectionError,
+  isHash,
+  type PublicBinding,
+  type WorkspaceMetadata,
+} from "./contracts.ts";
 import { StateStore, type ConnectorState } from "./state-store.ts";
 import { WorkflowClient } from "./workflow-client.ts";
 import {
@@ -26,6 +44,8 @@ import {
   scopedNamespace,
   type AttemptAuthority,
   type AttemptJournal,
+  claudeInterruptRequest,
+  type NativeInterruption,
   type RequestedSettings,
   type RuntimeAdapter,
   type RuntimeCode,
@@ -33,6 +53,7 @@ import {
   type RuntimeRecord,
   type RuntimeScope,
   type RuntimeSettings,
+  type RuntimeProvider,
   type TerminalEvidence,
   type ToolCall,
   type ToolResult,
@@ -46,7 +67,13 @@ import {
   terminalReserveBytes,
 } from "./runtime-store.ts";
 import { RuntimeFilePolicy, publicText } from "./runtime-file-policy.ts";
-import { selectSettings } from "./codex-adapter.ts";
+import { selectRuntimeSettings } from "./runtime-settings-policy.ts";
+import { InputAdmission } from "./workflow/input-admission.ts";
+import {
+  collectSourceObservation,
+  sourceObservationReserveBytes,
+  type SourceGitExecutor,
+} from "./workflow/source-snapshot.ts";
 import { withLocalRemovalProtection } from "./workflow/local-removal.ts";
 
 export interface RuntimeConnections {
@@ -65,6 +92,7 @@ export interface RuntimeConnections {
   }): Promise<unknown>;
 }
 export interface PrepareRuntime {
+  provider?: RuntimeProvider;
   root?: string;
   choice: RequestedSettings | "default";
   files: string[];
@@ -78,6 +106,7 @@ export interface RunnerOptions {
   drainTimeoutMs?: number;
   /** Deterministic fault seams are constructor-only and have no CLI/environment equivalent. */
   beforeMutation?: (kind: string) => Promise<void>;
+  sourceGitExecutor?: SourceGitExecutor;
 }
 interface CapacityReservationCommit {
   operationId: string;
@@ -143,16 +172,23 @@ function delay(ms: number, signal?: AbortSignal) {
 }
 export class WorkflowRunner {
   private readonly admission = new RuntimeAdmission();
+  private inputAdmission: InputAdmission | undefined;
   private record!: RuntimeRecord;
   private archivedLast: AttemptJournal | undefined;
   private readonly capacityReservations = new Map<string, number>();
   private readonly ordinaryReadiness = new Set<string>();
+  private supportedSourceScope: string | undefined;
   private mutations: Promise<unknown> = Promise.resolve();
+  private readonly interruptionWrites = new Set<Promise<void>>();
   private retired = false;
   private active: AttemptAuthority | undefined;
   private toolOpen = false;
   private readonly secrets = new Set<string>();
-  private readonly calls = new Map<string, { hash: string; result: Promise<ToolResult> }>();
+  private readonly calls = new Map<
+    string,
+    { hash: string; result: Promise<ToolResult>; closed: boolean; intent?: Promise<void> }
+  >();
+  private repositoryTools: RepositoryTools | undefined;
   private lockHeld = false;
   private interruptOnStop: Promise<unknown> | undefined;
   private lossReason: RuntimeCode | null = null;
@@ -190,12 +226,13 @@ export class WorkflowRunner {
       const next = structuredClone(this.record);
       update(next);
       guard();
-      if (this.ordinaryMutation(kind)) this.assertOrdinaryCapacity(next, 0, 0, reservation);
+      const snapshot = ownRuntimeRecord(next);
+      if (this.ordinaryMutation(kind)) this.assertOrdinaryCapacity(snapshot, 0, 0, reservation);
       try {
-        await this.store.write(next, guard);
+        await this.store.write(snapshot, guard);
         guard();
-        this.record = next;
-        this.commitCapacityReservation(next, reservation);
+        this.record = snapshot;
+        this.commitCapacityReservation(snapshot, reservation);
       } catch (error) {
         // A monitor can close after rename/fsync. Re-adopt the owned committed journal before
         // queued terminal/outbox mutations; never submit the pre-commit in-memory snapshot again.
@@ -203,8 +240,8 @@ export class WorkflowRunner {
         const committed = await this.store.read();
         this.storageCheck();
         if (committed) {
-          this.record = committed;
-          this.commitCapacityReservation(committed, reservation);
+          this.record = ownRuntimeRecord(committed);
+          this.commitCapacityReservation(this.record, reservation);
         }
         throw error;
       }
@@ -221,7 +258,10 @@ export class WorkflowRunner {
       "provider-intent",
       "lease",
       "ready",
+      "tool-call-intent",
       "tool-receipt",
+      "native-tool-cancellation",
+      "native-interruption",
       "question-call-intent",
       "question-call-receipt",
     ].includes(kind);
@@ -323,7 +363,7 @@ export class WorkflowRunner {
         this.record.attempts.length > 128 ||
         Buffer.byteLength(JSON.stringify(this.record)) > 256 * 1024;
       if (!needsCompaction) return;
-      this.record = await this.store.compact(this.record, this.check);
+      this.record = ownRuntimeRecord(await this.store.compact(this.record, this.check));
       this.check();
       this.archivedLast = await this.store.lastAttempt(this.record);
       this.check();
@@ -334,11 +374,19 @@ export class WorkflowRunner {
   private async admitExecution() {
     await this.compactJournal();
     try {
-      assertRuntimeCapacity(this.record, true);
+      assertRuntimeCapacity(
+        this.record,
+        true,
+        sourceObservationReserveBytes(this.record.settings?.files ?? []),
+      );
     } catch (error) {
       if (!(error instanceof RuntimeError) || error.code !== "RUNTIME_CAPACITY") throw error;
       await this.compactJournal(true);
-      assertRuntimeCapacity(this.record, true);
+      assertRuntimeCapacity(
+        this.record,
+        true,
+        sourceObservationReserveBytes(this.record.settings?.files ?? []),
+      );
     }
   }
   private async profileState(guard = this.check): Promise<ConnectorState> {
@@ -363,6 +411,28 @@ export class WorkflowRunner {
           if (!state || (state.pending && !ownReplacement) || state.registration)
             throw new RuntimeError("AUTHORITY_LOST");
           scopeOf(state, this.store.agentId, this.client.origin);
+          if (this.record?.version === 2 && this.record.context && !this.record.preparation) {
+            const mapping = state.mappings.find((m) => m.agentId === this.store.agentId)!;
+            const context = this.record.context;
+            if (
+              mapping.formatVersion !== 2 ||
+              mapping.runtime !== this.record.settings?.provider ||
+              mapping.generation !== context.generation ||
+              mapping.root !== context.root.path ||
+              mapping.nativeSessionId !== context.threadId
+            )
+              throw new RuntimeError("CONTEXT_UNCONFIRMED");
+            if (
+              mapping.materialization === "RESERVED" &&
+              context.materialization?.state === "MATERIALIZED"
+            ) {
+              mapping.materialization = "MATERIALIZED";
+              await this.profile.write(state, guard);
+              guard();
+            }
+            if (mapping.materialization !== (context.materialization?.state ?? "MATERIALIZED"))
+              throw new RuntimeError("CONTEXT_UNCONFIRMED");
+          }
           if (state.credential) this.secrets.add(state.credential);
           return state;
         }, guard);
@@ -695,6 +765,38 @@ export class WorkflowRunner {
       this.ordinaryReadiness.delete(operationId);
     }
   }
+  private async refreshInput(guard = this.check) {
+    const scope = this.record.scope;
+    if (
+      !this.inputAdmission ||
+      this.inputAdmission.agentId !== scope.agentId ||
+      this.inputAdmission.bindingEpoch !== scope.bindingEpoch
+    ) {
+      this.inputAdmission?.close();
+      this.inputAdmission = new InputAdmission(scope.agentId, scope.bindingEpoch);
+    }
+    return this.inputAdmission.refresh(
+      async () => {
+        const secret = await this.credential(scope, guard);
+        guard();
+        const value = await this.client.call("admission", this.base(), secret, 2000);
+        guard();
+        return value;
+      },
+      async (state) => {
+        const secret = await this.credential(scope, guard);
+        guard();
+        const value = await this.client.call(
+          "admission-ack",
+          { ...this.base(), revision: state.revision, paused: state.paused },
+          secret,
+          2000,
+        );
+        guard();
+        return value;
+      },
+    );
+  }
   private async refreshReady(guard = this.check) {
     guard();
     while (this.readyWork) {
@@ -703,13 +805,18 @@ export class WorkflowRunner {
     }
     let hasCapacity = true;
     try {
-      assertRuntimeCapacity(this.record, true);
+      assertRuntimeCapacity(
+        this.record,
+        true,
+        sourceObservationReserveBytes(this.record.settings?.files ?? []),
+      );
       this.assertOrdinaryCapacity();
     } catch (error) {
       if (!(error instanceof RuntimeError) || error.code !== "RUNTIME_CAPACITY") throw error;
       hasCapacity = false;
     }
-    const reportedReady = this.roomPoll?.mode === "ACTIVE" && hasCapacity;
+    const reportedReady =
+      this.roomPoll?.mode === "ACTIVE" && hasCapacity && !!this.inputAdmission?.allowed;
     if (this.lastReadyValue === reportedReady && Date.now() - this.lastReadyAt < 15000) return;
     const live = () => {
       guard();
@@ -757,14 +864,14 @@ export class WorkflowRunner {
         const saved = await this.store.read();
         this.check();
         if (saved) {
-          this.record = saved;
+          this.record = ownRuntimeRecord(saved);
           this.archivedLast = await this.store.lastAttempt(saved);
           this.check();
         }
         const state = await this.profileState();
         this.check();
         const scope = scopeOf(state, this.store.agentId, this.client.origin);
-        this.record = saved ?? runtimeRecord(scope);
+        this.record = ownRuntimeRecord(saved ?? runtimeRecord(scope));
         // A replacement receipt can have advanced the profile while its local preparation is unfinished.
         if (
           !same(this.record.scope, scope) &&
@@ -821,14 +928,17 @@ export class WorkflowRunner {
           this.adapter.capabilities(policy.root.path, this.check),
         );
         this.check();
-        const requested = selectSettings(capabilities, input.choice),
+        const provider = input.provider ?? capabilities.runtime ?? "codex";
+        if (provider === "claude" && this.record.version !== 2)
+          throw new RuntimeError("CONTEXT_UNCONFIRMED");
+        const requested = selectRuntimeSettings(capabilities, input.choice, provider),
           handoff = publicText(
             input.handoff,
             [policy.root.path, mapping.nativeSessionId, ...this.secrets],
             true,
           );
         const settings: RuntimeSettings = {
-          provider: "codex",
+          provider,
           requested,
           capabilities,
           files: [...policy.files],
@@ -914,6 +1024,8 @@ export class WorkflowRunner {
     guard();
     await this.admission.wait(() => this.adapter.validate(context, preparation.settings, guard));
     guard();
+    await this.compactJournal(true);
+    guard();
     // Recovery never silently creates another thread after ambiguous provider preparation.
     const state = await this.profileState();
     guard();
@@ -997,11 +1109,12 @@ export class WorkflowRunner {
   }
   private publicStatus() {
     const last = this.record.lastArchive ? this.archivedLast : this.record.attempts.at(-1);
-    return {
+    return structuredClone({
       state: this.record.preparation
         ? "PREPARING"
         : (last?.state ?? (this.record.context ? "PREPARED" : "UNPREPARED")),
-      provider: "codex",
+      provider:
+        this.record.settings?.provider ?? this.record.preparation?.settings.provider ?? null,
       bindingEpoch: this.record.scope.bindingEpoch,
       ready: this.record.ready,
       readinessVerification: "reported",
@@ -1012,12 +1125,12 @@ export class WorkflowRunner {
       textProof: last?.terminal?.textProof ?? null,
       adoption: last?.receipt?.adoption ?? null,
       error: last?.reason ?? null,
-    };
+    });
   }
   async status() {
     const record = await this.store.read();
     if (!record) return { state: "UNPREPARED", ready: false };
-    this.record = record;
+    this.record = ownRuntimeRecord(record);
     this.archivedLast = await this.store.lastAttempt(record);
     return this.publicStatus();
   }
@@ -1044,6 +1157,8 @@ export class WorkflowRunner {
           await this.recover();
           this.check();
           if (unresolvedRuntime(this.record)) return this.publicStatus();
+          await this.ensureSourceSupport();
+          this.check();
           await this.admission.wait(() =>
             this.adapter.validate(this.record.context!, this.record.settings!, this.check),
           );
@@ -1056,9 +1171,13 @@ export class WorkflowRunner {
           )
             throw new RuntimeError("UNKNOWN");
           this.observeRoom(initial);
+          await this.refreshInput();
+          this.check();
           await this.refreshReady();
           this.check();
           for (;;) {
+            this.check();
+            await this.refreshInput();
             this.check();
             const poll = await this.poll();
             this.check();
@@ -1067,7 +1186,7 @@ export class WorkflowRunner {
               await this.refreshReady();
               this.check();
               if (options.once) return this.publicStatus();
-            } else if (poll.queuedRequest) {
+            } else if (poll.queuedRequest && this.inputAdmission?.allowed) {
               await this.execute(poll.queuedRequest);
               if (
                 options.once ||
@@ -1094,17 +1213,65 @@ export class WorkflowRunner {
     const active = this.active;
     if (
       !active ||
+      !same(active.scope, this.record.scope) ||
+      active.context.generation !== this.record.context?.generation ||
+      active.context.threadId !== this.record.context?.threadId ||
+      active.context.epoch !== this.record.scope.bindingEpoch ||
+      !same(active.context.root, this.record.context?.root) ||
       a.scope.bindingEpoch !== this.record.scope.bindingEpoch ||
       a.generation !== this.record.context?.generation ||
       !same(a.scope, this.record.scope) ||
       !a.snapshot ||
       Date.parse(a.snapshot.leaseExpiresAt) <= Date.now() ||
+      Date.parse(active.attempt.leaseExpiresAt) <= Date.now() ||
       Date.parse(a.snapshot.payload.deadline) <= Date.now() ||
       ["UNKNOWN", "TERMINAL", "UPLOADED", "NOT_STARTED"].includes(a.state) ||
       (requireNative && (!this.toolOpen || !a.native))
     )
       throw new RuntimeError("TOOL_REJECTED");
     matchAttempt(a.snapshot, active.attempt);
+  }
+  /** Admission may close before cleanup; only the exact owned input can persist interruption proof. */
+  private interruptionStorage(
+    requestId: string,
+    authority: AttemptAuthority,
+    proof: NativeInterruption,
+  ): "OPEN" | "CLOSED" {
+    this.storageCheck();
+    const a = this.journal(requestId);
+    if (
+      this.active !== authority ||
+      this.record.settings?.provider !== "claude" ||
+      !same(authority.scope, this.record.scope) ||
+      !same(a.scope, this.record.scope) ||
+      a.generation !== this.record.context?.generation ||
+      authority.context.generation !== this.record.context?.generation ||
+      authority.context.threadId !== this.record.context?.threadId ||
+      !same(authority.context.root, this.record.context?.root) ||
+      !a.snapshot ||
+      !a.nativeIntent ||
+      !same(a.nativeIntent, proof.intent) ||
+      authority.context.epoch !== this.record.scope.bindingEpoch ||
+      proof.intent.policyFingerprint !== this.record.context?.materialization?.policyFingerprint ||
+      proof.intentHash !== digest(stableJson(proof.intent)) ||
+      proof.requestHash !== digest(stableJson(claudeInterruptRequest)) ||
+      (a.native &&
+        (a.native.threadId !== proof.intent.sessionId || a.native.turnId !== proof.intent.inputId))
+    )
+      throw new RuntimeError("AUTHORITY_LOST");
+    matchAttempt(a.snapshot, authority.attempt);
+    if (
+      a.nativeInterruption &&
+      (!same(a.nativeInterruption.intent, proof.intent) ||
+        a.nativeInterruption.intentHash !== proof.intentHash ||
+        a.nativeInterruption.requestHash !== proof.requestHash ||
+        (a.nativeInterruption.receipt && !same(a.nativeInterruption.receipt, proof.receipt)))
+    )
+      throw new RuntimeError("AUTHORITY_LOST");
+    if (a.terminal || ["TERMINAL", "UPLOADED"].includes(a.state)) return "CLOSED";
+    if (!["PROVIDER_INTENT", "ACKNOWLEDGED", "RUNNING"].includes(a.state))
+      throw new RuntimeError("AUTHORITY_LOST");
+    return "OPEN";
   }
   private async execute(payload: RequestPayload) {
     this.check();
@@ -1131,9 +1298,16 @@ export class WorkflowRunner {
       }
       throw error;
     }
+    if (!(await this.refreshInput())) return;
+    this.check();
     const requestId = payload.requestId,
       claimOperationId = randomUUID(),
       journalId = claimOperationId;
+    const sourceCapacityKey = `source:${journalId}`;
+    this.capacityReservations.set(
+      sourceCapacityKey,
+      sourceObservationReserveBytes(this.record.settings!.files),
+    );
     await this.mutate("claim-intent", (record) => {
       delete record.lastArchive;
       record.attempts.push({
@@ -1152,7 +1326,16 @@ export class WorkflowRunner {
     });
     try {
       const claim = await this.operation("claim", { requestId }, claimOperationId);
-      const snapshot = (await this.transmit(claim)) as AttemptSnapshot;
+      let snapshot: AttemptSnapshot;
+      try {
+        snapshot = (await this.transmit(claim)) as AttemptSnapshot;
+      } catch (error) {
+        if (error instanceof WorkflowError && error.code === "INPUT_PAUSED") {
+          await this.sealInputPaused(journalId, claim);
+          return;
+        }
+        throw error;
+      }
       if (
         !same(snapshot.payload, payload) ||
         snapshot.state !== "LEASED" ||
@@ -1169,13 +1352,15 @@ export class WorkflowRunner {
         this.check,
         this.snapshotReservation(claim, snapshot, journalId),
       );
+      const interruptionStorageClosed = new AbortController();
       const authority: AttemptAuthority = {
         scope: structuredClone(this.record.scope),
         context: structuredClone(this.record.context!),
         attempt: snapshot,
+        peerTools: isOriginRoleRequestKind(snapshot.payload.requestKind),
         signal: this.admission.signal,
         assertLive: () => this.live(journalId),
-        ack: async (threadId, turnId) => {
+        ack: async (threadId, turnId, initHash) => {
           this.live(journalId);
           if (
             threadId !== authority.context.threadId ||
@@ -1187,6 +1372,20 @@ export class WorkflowRunner {
             (record) => {
               const a = this.journal(journalId, record);
               if (a.state !== "PROVIDER_INTENT") throw new RuntimeError("UNKNOWN");
+              if (record.settings?.provider === "claude") {
+                if (
+                  !a.nativeIntent ||
+                  a.nativeIntent.sessionId !== threadId ||
+                  a.nativeIntent.inputId !== turnId ||
+                  !isHash(initHash) ||
+                  !record.context?.materialization
+                )
+                  throw new RuntimeError("UNKNOWN");
+                if (record.context.materialization.state === "RESERVED") {
+                  record.context.materialization.state = "MATERIALIZED";
+                  record.context.materialization.initHash = initHash;
+                }
+              }
               a.native = { threadId, turnId };
               a.state = "ACKNOWLEDGED";
             },
@@ -1196,8 +1395,67 @@ export class WorkflowRunner {
           this.toolOpen = true;
         },
         tool: async (call) => this.admission.track(() => this.tool(journalId, call)),
+        cancelledTool: async (proof) => {
+          const pending = this.calls.get(`${journalId}:${proof.callId}`);
+          if (pending) {
+            if (pending.hash !== proof.payloadHash) throw new RuntimeError("UNKNOWN");
+            // Close this exact call before waiting for its intent write; never wait for reader I/O.
+            pending.closed = true;
+            await pending.intent;
+          }
+          await this.mutate(
+            "native-tool-cancellation",
+            (record) => {
+              const a = this.journal(journalId, record);
+              if (
+                record.settings?.provider !== "claude" ||
+                !a.nativeIntent ||
+                !a.native ||
+                !a.toolCalls.some(
+                  (call) => call.callId === proof.callId && call.payloadHash === proof.payloadHash,
+                ) ||
+                (a.toolCancellations ?? []).some(
+                  (c) => c.callId === proof.callId || c.controlId === proof.controlId,
+                )
+              )
+                throw new RuntimeError("UNKNOWN");
+              (a.toolCancellations ??= []).push(structuredClone(proof));
+            },
+            () => this.live(journalId),
+          );
+        },
+        interruption: async (proof) => {
+          if (this.interruptionStorage(journalId, authority, proof) === "CLOSED") return "CLOSED";
+          const guard = () => {
+            if (interruptionStorageClosed.signal.aborted) throw new RuntimeError("RUNTIME_CLOSED");
+            if (this.interruptionStorage(journalId, authority, proof) === "CLOSED")
+              throw new RuntimeError("AUTHORITY_LOST");
+          };
+          const write = this.mutate(
+            "native-interruption",
+            (record) => {
+              const a = this.journal(journalId, record);
+              if (proof.receipt && !a.nativeInterruption) throw new RuntimeError("UNKNOWN");
+              a.nativeInterruption = structuredClone(proof);
+            },
+            guard,
+          );
+          this.interruptionWrites.add(write);
+          try {
+            await this.waitInterruptionStorage(write, interruptionStorageClosed.signal);
+            return "SAVED";
+          } finally {
+            this.interruptionWrites.delete(write);
+          }
+        },
       };
       this.active = authority;
+      this.repositoryTools =
+        repositoryMode(this.record.settings!, authority.context) === "AUTO_CODE"
+          ? new RepositoryTools(authority.context, this.record.settings!, () =>
+              this.live(journalId, true),
+            )
+          : undefined;
       const monitorController = new AbortController();
       let publication: Promise<void> | undefined;
       const monitor = this.monitor(authority, monitorController.signal, () => publication).catch(
@@ -1228,17 +1486,50 @@ export class WorkflowRunner {
         );
         authority.attempt = intent;
         const evidence = await this.admission.wait(() =>
-          this.adapter.execute(authority, this.record.settings!, payload, async () => {
+          this.adapter.execute(authority, this.record.settings!, payload, async (intent) => {
             this.live(journalId);
             this.assertOrdinaryCapacity();
+            if (this.journal(journalId).state !== "SERVER_INTENT_CONFIRMED")
+              throw new RuntimeError("UNKNOWN");
+            const sourceObservation = await collectSourceObservation(
+              this.record.context!.root,
+              this.record.settings!.files,
+              () => this.live(journalId),
+              authority.signal,
+              this.options.sourceGitExecutor,
+            );
+            this.live(journalId);
             await this.mutate(
               "provider-intent",
               (record) => {
                 const a = this.journal(journalId, record);
                 if (a.state !== "SERVER_INTENT_CONFIRMED") throw new RuntimeError("UNKNOWN");
+                if (record.settings?.provider === "claude") {
+                  if (
+                    !intent ||
+                    intent.provider !== "claude" ||
+                    record.version !== 2 ||
+                    intent.sessionId !== record.context?.threadId ||
+                    intent.generation !== a.generation ||
+                    !same(intent.scope, a.scope) ||
+                    intent.attemptId !== a.snapshot?.attemptId ||
+                    intent.fence !== a.snapshot?.fence ||
+                    intent.policyFingerprint !== record.context?.materialization?.policyFingerprint
+                  )
+                    throw new RuntimeError("UNKNOWN");
+                  a.nativeIntent = structuredClone(intent);
+                } else if (intent) throw new RuntimeError("INVALID_RUNTIME");
+                a.sourceObservation = sourceObservation;
                 a.state = "PROVIDER_INTENT";
               },
               () => this.live(journalId),
+              {
+                operationId: sourceCapacityKey,
+                remaining: (record) =>
+                  same(this.journal(journalId, record).sourceObservation, sourceObservation)
+                    ? 0
+                    : undefined,
+              },
             );
             this.live(journalId);
           }),
@@ -1253,8 +1544,12 @@ export class WorkflowRunner {
         monitorController.abort();
         await monitor;
         this.toolOpen = false;
+        // Keep owned cleanup authority briefly; unrelated held mutations retain bounded shutdown.
+        await this.boundedMutations(Promise.allSettled([...this.interruptionWrites]));
+        interruptionStorageClosed.abort();
         this.active = undefined;
         this.calls.clear();
+        this.repositoryTools = undefined;
         this.capacityReservations.clear();
       }
     } catch (error) {
@@ -1272,6 +1567,7 @@ export class WorkflowRunner {
     const jobs = [
       () => this.monitorAttempt(authority, signal, publication),
       () => this.monitorReady(authority, signal),
+      () => this.monitorInput(authority, signal),
     ].map((run) =>
       this.admission.wait(run).catch(async (error) => {
         // Ordinary journal growth cannot cancel an already durable terminal's exact outbox.
@@ -1317,6 +1613,31 @@ export class WorkflowRunner {
       matchAttempt(a.snapshot, authority.attempt);
     };
   }
+  private async monitorInput(authority: AttemptAuthority, signal: AbortSignal) {
+    // Input control belongs to the current binding, not the lifetime of its previous attempt.
+    // A normal terminal receipt stops the loop while an already admitted lookup/ACK finishes.
+    const guard = () => {
+      this.check();
+      const context = this.record.context;
+      if (
+        this.active !== authority ||
+        !same(authority.scope, this.record.scope) ||
+        !context ||
+        context.generation !== authority.context.generation ||
+        context.threadId !== authority.context.threadId ||
+        context.epoch !== authority.context.epoch ||
+        !same(context.root, authority.context.root)
+      )
+        throw new RuntimeError("AUTHORITY_LOST");
+    };
+    while (!signal.aborted && !this.admission.closed) {
+      await delay(Math.min(2000, Math.max(100, this.options.pollIntervalMs ?? 2000)), signal);
+      if (signal.aborted || this.admission.closed) return;
+      // Lookup/ACK failure belongs only to new claim admission. Existing authority checks
+      // remain in the original lease/poll monitors, independently of this control channel.
+      await this.refreshInput(guard);
+    }
+  }
   private async monitorReady(authority: AttemptAuthority, signal: AbortSignal) {
     const guard = this.monitorGuard(authority, signal);
     while (!signal.aborted && !this.admission.closed) {
@@ -1326,7 +1647,7 @@ export class WorkflowRunner {
       if (this.attemptJournal(authority.attempt).state === "UPLOADED") return;
       if (
         Date.now() - this.lastReadyAt < 15000 &&
-        this.lastReadyValue === (this.roomPoll?.mode === "ACTIVE")
+        this.lastReadyValue === (this.roomPoll?.mode === "ACTIVE" && !!this.inputAdmission?.allowed)
       )
         continue;
       guard();
@@ -1371,6 +1692,13 @@ export class WorkflowRunner {
         try {
           renewed = (await this.transmit(lease, guard)) as AttemptSnapshot;
         } catch (error) {
+          if (
+            error instanceof WorkflowError &&
+            error.code === "CONFLICT" &&
+            !this.attemptJournal(authority.attempt).terminal &&
+            (await this.interruptLeaseConflict(authority, guard))
+          )
+            return;
           const pending = publication();
           if (
             !(error instanceof WorkflowError && error.code === "CONFLICT") ||
@@ -1435,6 +1763,27 @@ export class WorkflowRunner {
       }
     }
   }
+  private async interruptLeaseConflict(authority: AttemptAuthority, guard: () => void) {
+    guard();
+    const poll = await this.poll();
+    guard();
+    const a = this.attemptJournal(authority.attempt);
+    if (a.terminal) return false;
+    if (!poll.attempt) return false;
+    matchAttempt(poll.attempt, a.snapshot!);
+    if (
+      !["LEASED", "EXECUTING"].includes(poll.attempt.state) ||
+      Date.parse(poll.attempt.leaseExpiresAt) <= Date.now() ||
+      poll.control?.state !== "REQUESTED"
+    )
+      return false;
+    this.observeRoom(poll);
+    guard();
+    this.toolOpen = false;
+    const acknowledged = await this.interrupt(authority, poll.control, guard);
+    guard();
+    return acknowledged;
+  }
   private async interrupt(authority: AttemptAuthority, control: Control, guard = this.check) {
     guard();
     const a = this.attemptJournal(authority.attempt);
@@ -1465,6 +1814,7 @@ export class WorkflowRunner {
       await this.transmit(op, guard);
       guard();
     }
+    return acknowledged;
   }
   private denied(a?: AttemptJournal) {
     return [
@@ -1495,7 +1845,7 @@ export class WorkflowRunner {
     const key = `${requestId}:${call.callId}`;
     const cached = this.calls.get(key);
     if (cached) {
-      if (cached.hash !== hash) throw new RuntimeError("TOOL_REJECTED");
+      if (cached.hash !== hash || cached.closed) throw new RuntimeError("TOOL_REJECTED");
       const result = await cached.result;
       guard();
       return result;
@@ -1505,9 +1855,176 @@ export class WorkflowRunner {
       if (prior.payloadHash !== hash || !prior.result) throw new RuntimeError("TOOL_REJECTED");
       return prior.result;
     }
-    const result = this.performTool(requestId, call, hash, guard);
-    this.calls.set(key, { hash, result });
+    const state = {
+      hash,
+      closed: false,
+      result: undefined as unknown as Promise<ToolResult>,
+      intent: undefined as Promise<void> | undefined,
+    };
+    const callGuard = () => {
+      guard();
+      if (state.closed) throw new RuntimeError("TOOL_REJECTED");
+    };
+    const result = this.repositoryTools
+      ? this.performRepositoryTool(requestId, call, hash, callGuard, guard, state)
+      : this.performTool(requestId, call, hash, callGuard);
+    state.result = result;
+    this.calls.set(key, state);
     return result;
+  }
+  private async performRepositoryTool(
+    requestId: string,
+    call: ToolCall,
+    hash: string,
+    guard: () => void,
+    intentGuard: () => void,
+    pending: { intent?: Promise<void> },
+  ): Promise<ToolResult> {
+    guard();
+    const tools = this.repositoryTools!;
+    const release = tools.reserve();
+    const capacityKey = `tool:${requestId}:${call.callId}`;
+    try {
+      const a = this.journal(requestId),
+        settings = this.record.settings!;
+      const peer =
+        this.active?.peerTools === true &&
+        settings.autoQuestionsConfirmed &&
+        isOriginRoleRequestKind(a.snapshot?.payload.requestKind);
+      validateToolArguments("AUTO_CODE", [], peer, call.tool, call.arguments);
+      if (a.toolCalls.length >= 256) throw new RuntimeError("RUNTIME_CAPACITY");
+      this.capacityReservations.set(
+        capacityKey,
+        call.tool === "ask_peer" ? peerEvidenceReserveBytes : repositoryToolReserveBytes,
+      );
+      this.assertOrdinaryCapacity(this.record, 0, call.tool === "ask_peer" ? 1 : 0);
+      await this.credential(this.record.scope, guard);
+      guard();
+      if (isRepositoryTool(call.tool)) {
+        const repositoryIntent = tools.intent(call.tool, call.arguments);
+        pending.intent = this.mutate(
+          "tool-call-intent",
+          (record) => {
+            this.journal(requestId, record).toolCalls.push({
+              callId: call.callId,
+              payloadHash: hash,
+              operationId: null,
+              result: null,
+              repositoryIntent,
+            });
+          },
+          intentGuard,
+        );
+        await pending.intent;
+        guard();
+        const { result, observation } = await tools.execute(call.tool, call.arguments, guard);
+        guard();
+        await this.credential(this.record.scope, guard);
+        guard();
+        await this.mutate(
+          "tool-receipt",
+          (record) => {
+            const saved = this.journal(requestId, record).toolCalls.find(
+              (item) => item.callId === call.callId,
+            )!;
+            saved.result = result;
+            saved.repositoryObservation = observation;
+          },
+          guard,
+          {
+            operationId: capacityKey,
+            remaining: (record) =>
+              same(
+                this.journal(requestId, record).toolCalls.find(
+                  (item) => item.callId === call.callId,
+                )?.result,
+                result,
+              )
+                ? 0
+                : undefined,
+          },
+        );
+        guard();
+        return result;
+      }
+      const question = publicText(
+        (call.arguments as { question: string }).question,
+        this.denied(a),
+      );
+      const peerEvidenceObservation = await tools.peerEvidence(call.arguments, guard);
+      guard();
+      await this.credential(this.record.scope, guard);
+      guard();
+      const operationId = randomUUID();
+      const body = validateBody("question", {
+        ...this.identity(a),
+        publicText: question,
+        confirmed: true,
+        operationId,
+      });
+      const op: RuntimeOperation = {
+        operationId,
+        action: "question",
+        body,
+        payloadHash: digest(stableJson({ action: "question", body })),
+        state: "PENDING",
+        result: null,
+      };
+      pending.intent = this.mutate(
+        "question-call-intent",
+        (record) => {
+          pruneConfirmedReady(record);
+          record.operations.push(op);
+          this.journal(requestId, record).toolCalls.push({
+            callId: call.callId,
+            payloadHash: hash,
+            operationId,
+            result: null,
+            peerEvidenceObservation,
+          });
+        },
+        intentGuard,
+      );
+      await pending.intent;
+      guard();
+      const receipt = (await this.transmit(op, guard)) as { cycleId: string; accepted: boolean };
+      guard();
+      if (receipt.cycleId !== a.snapshot!.payload.cycleId) throw new RuntimeError("AUTHORITY_LOST");
+      const result: ToolResult = {
+        success: receipt.accepted,
+        contentItems: [
+          {
+            type: "inputText",
+            text: receipt.accepted ? "accepted/pending" : "HUMAN_INPUT_REQUIRED",
+          },
+        ],
+      };
+      await this.mutate(
+        "question-call-receipt",
+        (record) => {
+          this.journal(requestId, record).toolCalls.find(
+            (item) => item.callId === call.callId,
+          )!.result = result;
+        },
+        guard,
+        {
+          operationId: capacityKey,
+          remaining: (record) =>
+            same(
+              this.journal(requestId, record).toolCalls.find((item) => item.callId === call.callId)
+                ?.result,
+              result,
+            )
+              ? 0
+              : undefined,
+        },
+      );
+      guard();
+      return result;
+    } finally {
+      this.capacityReservations.delete(capacityKey);
+      release();
+    }
   }
   private toolReservationBytes(call: ToolCall): number {
     if (call.tool !== "read_workspace_file") return 8192;
@@ -1569,7 +2086,8 @@ export class WorkflowRunner {
       }
       if (
         call.tool !== "ask_peer" ||
-        a.snapshot!.payload.requestKind === "PEER" ||
+        !isOriginRoleRequestKind(a.snapshot!.payload.requestKind) ||
+        this.active?.peerTools !== true ||
         !settings.autoQuestionsConfirmed ||
         !exact(call.arguments, ["question", "evidence"]) ||
         typeof call.arguments.question !== "string" ||
@@ -1653,6 +2171,12 @@ export class WorkflowRunner {
     const a = this.journal(requestId);
     if (!a.native || evidence.threadId !== a.native.threadId || evidence.turnId !== a.native.turnId)
       throw new RuntimeError("UNKNOWN");
+    if (
+      this.record.settings?.provider === "claude" &&
+      (!same(evidence.toolCancellations ?? [], a.toolCancellations ?? []) ||
+        !same(evidence.nativeInterruption ?? null, a.nativeInterruption ?? null))
+    )
+      throw new RuntimeError("UNKNOWN");
     const terminal = structuredClone(evidence);
     if (terminal.terminal === "COMPLETED" && terminal.textProof === "FINAL_ANSWER") {
       try {
@@ -1672,13 +2196,76 @@ export class WorkflowRunner {
           terminal.textProof === "UNCONFIRMED" && terminal.terminal === "COMPLETED"
             ? "PUBLIC_TEXT_REJECTED"
             : null;
-        if (!record.context!.ownedTurns.some((t) => t.turnId === terminal.turnId))
-          record.context!.ownedTurns.push({ turnId: terminal.turnId, terminal: terminal.terminal });
+        if (!record.context!.ownedTurns.some((t) => t.turnId === terminal.turnId)) {
+          const proof =
+            record.settings!.provider === "claude"
+              ? {
+                  ...(a.nativeIntent!.toolPolicy
+                    ? { toolPolicy: structuredClone(a.nativeIntent!.toolPolicy) }
+                    : {}),
+                  promptHash: a.nativeIntent!.promptHash,
+                  resultHash: terminal.finalItems[0]?.hash,
+                  ...(terminal.nativeHistory
+                    ? { nativeHistory: structuredClone(terminal.nativeHistory) }
+                    : {}),
+                  toolCancellations: structuredClone(a.toolCancellations ?? []),
+                  ...(a.nativeInterruption
+                    ? { nativeInterruption: structuredClone(a.nativeInterruption) }
+                    : {}),
+                  toolReceipts: a.toolCalls
+                    .filter((call) => call.result !== null)
+                    .map((call) => ({
+                      callId: call.callId,
+                      payloadHash: call.payloadHash,
+                      responseHash: digest(
+                        stableJson({
+                          content: call.result!.contentItems.map((item) => ({
+                            type: "text",
+                            text: item.text,
+                          })),
+                          isError: !call.result!.success,
+                        }),
+                      ),
+                    })),
+                }
+              : {};
+          record.context!.ownedTurns.push({
+            turnId: terminal.turnId,
+            terminal: terminal.terminal,
+            ...proof,
+          });
+        }
         record.context!.level = "L2";
       },
       guard,
     );
     guard();
+  }
+  private async ensureSourceSupport() {
+    this.check();
+    const scope = structuredClone(this.record.scope),
+      key = stableJson(scope);
+    if (this.supportedSourceScope === key) return;
+    const support = projectResponse(
+      "source-support",
+      await this.workflow(
+        "source-support",
+        {
+          protocol: 1,
+          agentId: scope.agentId,
+          bindingEpoch: scope.bindingEpoch,
+        },
+        scope,
+      ),
+    ) as SourceSupport;
+    this.check();
+    if (
+      stableJson(this.record.scope) !== key ||
+      support.agentId !== scope.agentId ||
+      support.bindingEpoch !== scope.bindingEpoch
+    )
+      throw new RuntimeError("AUTHORITY_LOST");
+    this.supportedSourceScope = key;
   }
   private async publish(requestId: string, action: "complete" | "observe", received?: () => void) {
     const a = this.journal(requestId);
@@ -1690,6 +2277,33 @@ export class WorkflowRunner {
         o.body.attemptId === a.snapshot?.attemptId &&
         o.body.fence === a.snapshot?.fence,
     );
+    if (!prior && a.state !== "UPLOADED") {
+      const source = projectSourceManifest(this.record, a);
+      if (source) {
+        const scope = structuredClone(a.scope),
+          identity: SourceIdentity = {
+            agentId: a.scope.agentId,
+            bindingEpoch: a.scope.bindingEpoch,
+            requestId: a.requestId,
+            attemptId: a.snapshot!.attemptId,
+            fence: a.snapshot!.fence,
+          };
+        const check = sourcePublicationGuard(
+          { record: this.record, journal: a },
+          source,
+          this.check,
+          () => ({ record: this.record, journal: this.journal(requestId) }),
+        );
+        await publishSource(
+          identity,
+          source.bytes,
+          source.manifestHash,
+          (sourceAction, body) => this.workflow(sourceAction, body, scope, check),
+          check,
+        );
+        check();
+      }
+    }
     const op =
       prior ??
       (await this.operation(action, {
@@ -1737,6 +2351,68 @@ export class WorkflowRunner {
         )
           o.state = "CLOSED";
     });
+  }
+  private async sealInputPaused(key: string, claim: RuntimeOperation, guard = this.check) {
+    let closedAttempt: AttemptJournal | undefined;
+    let closedClaim: RuntimeOperation | undefined;
+    try {
+      await this.mutate(
+        "unstarted-closure",
+        (record) => {
+          const a = this.journal(key, record);
+          const op = record.operations.find((o) => o.operationId === claim.operationId);
+          if (
+            !op ||
+            op.action !== "claim" ||
+            op.state !== "TRANSMITTED" ||
+            op.result !== null ||
+            a.claimOperationId !== op.operationId ||
+            !same(a.scope, record.scope) ||
+            op.body.agentId !== a.scope.agentId ||
+            op.body.bindingEpoch !== a.scope.bindingEpoch ||
+            op.body.requestId !== a.requestId ||
+            a.snapshot ||
+            a.nativeIntent ||
+            a.native ||
+            a.terminal ||
+            a.receipt ||
+            a.toolCalls.length
+          )
+            throw new RuntimeError("UNKNOWN");
+          a.unstartedClosure = { kind: "SERVER_INPUT_PAUSED", claimOperationId: op.operationId };
+          a.state = "NOT_STARTED";
+          a.reason = null;
+          op.state = "CLOSED";
+          closedAttempt = structuredClone(a);
+          closedClaim = structuredClone(op);
+        },
+        guard,
+        {
+          operationId: claim.operationId,
+          remaining: (record) =>
+            record.operations.find((o) => o.operationId === claim.operationId)?.state === "CLOSED"
+              ? 0
+              : undefined,
+        },
+      );
+    } finally {
+      // mutate adopts only a successful write or the verified owned disk after a write failure.
+      // A denied input needs no future observation space once that exact closure is retained.
+      this.commitCapacityReservation(this.record, {
+        operationId: `source:${key}`,
+        remaining: (record) => {
+          if (!closedAttempt || !closedClaim) return undefined;
+          const attempts = record.attempts.filter((a) => this.journalKey(a) === key);
+          const claims = record.operations.filter((o) => o.operationId === claim.operationId);
+          return attempts.length === 1 &&
+            claims.length === 1 &&
+            same(attempts[0], closedAttempt) &&
+            same(claims[0], closedClaim)
+            ? 0
+            : undefined;
+        },
+      });
+    }
   }
   private async recoverUnstarted() {
     for (const original of [...this.record.attempts]) {
@@ -1841,10 +2517,25 @@ export class WorkflowRunner {
       } else {
         if (!["TRANSMITTED", "CONFIRMED"].includes(claim.state)) continue;
         // Always obtain a fresh original claim receipt, including for locally confirmed claims.
-        const observed = projectResponse(
-          "claim",
-          await this.workflow("claim", claim.body, a.scope, guard),
-        ) as unknown as AttemptSnapshot;
+        let observed: AttemptSnapshot;
+        try {
+          observed = projectResponse(
+            "claim",
+            await this.workflow("claim", claim.body, a.scope, guard),
+          ) as AttemptSnapshot;
+        } catch (error) {
+          if (
+            !sealed &&
+            error instanceof WorkflowError &&
+            error.code === "INPUT_PAUSED" &&
+            claim.state === "TRANSMITTED" &&
+            claim.result === null
+          ) {
+            await this.sealInputPaused(key, claim, guard);
+            continue;
+          }
+          throw error;
+        }
         guard();
         if (
           observed.requestId !== a.requestId ||
@@ -1936,7 +2627,7 @@ export class WorkflowRunner {
     this.storageCheck();
     const disk = await this.store.read();
     this.storageCheck();
-    if (disk) this.record = disk;
+    if (disk) this.record = ownRuntimeRecord(disk);
     if (
       !this.record.attempts.some(
         (a) => !["TERMINAL", "UPLOADED", "UNKNOWN", "NOT_STARTED"].includes(a.state),
@@ -1951,9 +2642,10 @@ export class WorkflowRunner {
         a.reason = reason;
       }
     if (this.admission.closed) {
-      await this.store.write(next, this.storageCheck);
+      const snapshot = ownRuntimeRecord(next);
+      await this.store.write(snapshot, this.storageCheck);
       this.storageCheck();
-      this.record = next;
+      this.record = snapshot;
     } else
       await this.mutate(
         "unknown",
@@ -1973,18 +2665,45 @@ export class WorkflowRunner {
           const a = this.record.attempts.find(
             (a) => a.state === "UNKNOWN" || a.state === "TERMINAL",
           );
-          if (!a?.native) return this.publicStatus();
+          if (a?.reason === "CLEANUP_INCOMPLETE") return this.publicStatus();
+          if (!a || (!a.native && !a.nativeIntent)) return this.publicStatus();
           if (!a.terminal) {
             const evidence = await this.admission.wait(() =>
               this.adapter.observe(
                 this.record.context!,
                 this.record.settings!,
-                a.native!,
+                a.nativeIntent
+                  ? {
+                      threadId: a.nativeIntent.sessionId,
+                      turnId: a.nativeIntent.inputId,
+                      intent: a.nativeIntent,
+                      toolCalls: a.toolCalls,
+                      toolCancellations: a.toolCancellations,
+                      ...(a.nativeInterruption ? { nativeInterruption: a.nativeInterruption } : {}),
+                    }
+                  : a.native!,
                 this.check,
               ),
             );
             this.check();
             if (!evidence) return this.publicStatus();
+            if (!a.native) {
+              if (
+                !a.nativeIntent ||
+                evidence.threadId !== a.nativeIntent.sessionId ||
+                evidence.turnId !== a.nativeIntent.inputId ||
+                !isHash(evidence.nativeInitHash)
+              )
+                throw new RuntimeError("UNKNOWN");
+              await this.mutate("native-observed", (record) => {
+                const journal = this.journal(this.journalKey(a), record);
+                journal.native = { threadId: evidence.threadId, turnId: evidence.turnId };
+                if (record.context?.materialization?.state === "RESERVED") {
+                  record.context.materialization.state = "MATERIALIZED";
+                  record.context.materialization.initHash = evidence.nativeInitHash!;
+                }
+              });
+            }
             await this.persistTerminal(this.journalKey(a), evidence);
           }
           const poll = await this.poll();
@@ -2002,16 +2721,30 @@ export class WorkflowRunner {
     });
   }
   stop() {
+    this.inputAdmission?.close();
     this.toolOpen = false;
     this.admission.close();
     if (this.active && !this.interruptOnStop)
       this.interruptOnStop = this.adapter.interrupt(this.active).catch(() => false);
   }
-  private async boundedMutations() {
+  private async waitInterruptionStorage(write: Promise<void>, signal: AbortSignal) {
+    let abort!: () => void;
+    const closed = new Promise<never>((_resolve, reject) => {
+      abort = () => reject(new RuntimeError("RUNTIME_CLOSED"));
+      if (signal.aborted) abort();
+      else signal.addEventListener("abort", abort, { once: true });
+    });
+    try {
+      await Promise.race([write, closed]);
+    } finally {
+      signal.removeEventListener("abort", abort);
+    }
+  }
+  private async boundedMutations(pending = this.mutations) {
     let timer: ReturnType<typeof setTimeout> | undefined;
     try {
       await Promise.race([
-        this.mutations,
+        pending,
         new Promise<void>((resolve) => {
           timer = setTimeout(resolve, this.options.drainTimeoutMs ?? 2000);
         }),
@@ -2046,9 +2779,10 @@ export class WorkflowRunner {
       await this.markUnresolvedUnknown(drained ? "UNKNOWN" : "CLEANUP_INCOMPLETE");
       const next = structuredClone(this.record);
       next.ready = false;
-      await this.store.write(next, this.storageCheck);
+      const snapshot = ownRuntimeRecord(next);
+      await this.store.write(snapshot, this.storageCheck);
       this.storageCheck();
-      this.record = next;
+      this.record = snapshot;
     }
   }
   async assertReplaceable() {

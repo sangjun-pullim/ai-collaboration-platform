@@ -14,3 +14,5 @@ experiments/claude-code-runtime/dist/
 
 .workflow-artifacts/
 .DS_Store
+
+public/local-connection/

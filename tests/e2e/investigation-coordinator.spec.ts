@@ -51,7 +51,7 @@ async function login(page: Page, person: BrowserPerson) {
   await enterTeam(page, person, () => broker<BrowserEntry>("code", { id: person.id }));
 }
 
-function sceneName(info: TestInfo, kind: "history" | "control") {
+function sceneName(info: TestInfo, kind: "history" | "control" | "input-pause") {
   return `${info.project.name.includes("mobile") ? "mobile" : "desktop"}-${kind}`;
 }
 test("should display an owned investigation and restore public history for an observer", async ({
@@ -141,9 +141,13 @@ test("should distinguish reported execution unknown and confirmed pause in the b
     await pause.focus();
     await page.keyboard.press("Enter");
     await page.keyboard.press("Escape");
-    await expect(region.getByRole("status")).toContainText("중단 확인 대기");
+    await expect(region.getByRole("status", { name: "방 상태", exact: true })).toContainText(
+      "중단 확인 대기",
+    );
     await broker("drive", { scene, step: "ack" });
-    await expect(region.getByRole("status")).toContainText("중단 확인 대기");
+    await expect(region.getByRole("status", { name: "방 상태", exact: true })).toContainText(
+      "중단 확인 대기",
+    );
     await broker("drive", { scene, step: "unknown" });
     await expect(region.getByLabel("공개 실행 보고")).toContainText(
       "종결 미확인 · 사람 확인 필요",
@@ -154,13 +158,18 @@ test("should distinguish reported execution unknown and confirmed pause in the b
     await expect(resume).toBeDisabled();
     await page.keyboard.press("Escape");
     await broker("drive", { scene, step: "terminal" });
-    await expect(region.getByRole("status")).toContainText("일시정지 확인", { timeout: 45000 });
+    await expect(region.getByRole("status", { name: "방 상태", exact: true })).toContainText(
+      "일시정지 확인",
+      { timeout: 45000 },
+    );
     await region.getByRole("button", { name: "공동 조사", exact: true }).click();
     await expect(resume).toBeEnabled();
     await resume.focus();
     await page.keyboard.press("Enter");
     await page.keyboard.press("Escape");
-    await expect(region.getByRole("status")).toContainText("활성");
+    await expect(region.getByRole("status", { name: "방 상태", exact: true })).toContainText(
+      "활성",
+    );
     await region.getByLabel("보낼 곳").selectOption("speak");
     await region.getByLabel("공동 발언", { exact: true }).fill(" ");
     await expect(
@@ -357,8 +366,6 @@ test("should show a direct question form without an own AI connection", async ({
         .getByRole("listitem")
         .filter({ hasText: "한국어 키보드 직접 질문 😀" })
         .first();
-      await expect(questionRecord).toContainText("저장된 대상:");
-      await expect(questionRecord).toContainText("당시 저장소 정보 없음");
       if (variant === "single") {
         await expect(
           region.getByRole("button", { name: "새 메시지 · 아래로 이동", exact: true }),
@@ -370,6 +377,13 @@ test("should show a direct question form without an own AI connection", async ({
         );
         await region.getByRole("button", { name: "새 메시지 · 아래로 이동", exact: true }).click();
       }
+      await questionRecord.getByRole("button", { name: "저장소·자료", exact: true }).click();
+      const questionSources = questionRecord.getByRole("region", { name: "당시 저장소·자료" });
+      await expect(questionSources).toContainText("당시 공유 저장소:");
+      await expect(questionRecord).toContainText(
+        "당시 대상은 저장되어 있으나 파일 관찰 자료는 없습니다.",
+      );
+      await questionRecord.getByRole("button", { name: "저장소·자료 닫기", exact: true }).click();
       if (variant === "single") {
         process.stdout.write("010_DIRECT_STAGE RECOVERY_VISIBLE_BEFORE\n");
         await expect(
@@ -416,7 +430,9 @@ test("should show a direct question form without an own AI connection", async ({
         await stop.focus();
         await page.keyboard.press("Enter");
         await expect(
-          region.getByRole("status").filter({ hasText: "조사: 사람 확인 필요" }),
+          region
+            .getByRole("status", { name: "방 상태", exact: true })
+            .filter({ hasText: "조사: 사람 확인 필요" }),
         ).toBeVisible(pollingWait);
         process.stdout.write("010_DIRECT_STAGE CANCEL_ACK_BEFORE\n");
         await broker("direct-drive", { scene, step: "ack" });
@@ -616,11 +632,21 @@ test("should retain saved direct identity through completed replacement and deta
     const question = list
       .getByRole("listitem")
       .filter({ has: page.getByText("질문", { exact: true }) });
-    const stored = await question.locator("p").filter({ hasText: "저장된 대상:" }).textContent();
-    check(stored && stored.includes(data.targetAgentIds[0]));
-    const epoch = stored.match(/epoch\s+(\d+)/)?.[1];
-    check(epoch && Number(epoch) > 0);
-    await expect(question).toContainText("당시 저장소 정보 없음");
+    const sourceResponse = page.waitForResponse(
+      (response) =>
+        response.request().method() === "POST" &&
+        response.url().endsWith("/api/investigations/source-read"),
+    );
+    await question.getByRole("button", { name: "저장소·자료", exact: true }).click();
+    const sourceEnvelope = await (await sourceResponse).json();
+    const storedTarget = sourceEnvelope.data?.target;
+    check(
+      sourceEnvelope.ok &&
+        storedTarget?.agentId === data.targetAgentIds[0] &&
+        storedTarget.bindingEpoch > 0,
+    );
+    const epoch = storedTarget.bindingEpoch;
+    await expect(question).toContainText("당시 대상은 저장되어 있으나 파일 관찰 자료는 없습니다.");
 
     const draft = "답변을 읽으며 쓰는 다음 질문";
     await input.fill(draft);
@@ -657,20 +683,31 @@ test("should retain saved direct identity through completed replacement and deta
     check(askCount() === 1);
 
     async function savedHistory() {
-      const records = list.getByRole("listitem").filter({ hasText: "저장된 대상:" });
+      const records = list.getByRole("listitem").filter({ has: page.getByText(/^(질문|답변)$/) });
       await expect(records.filter({ has: page.getByText(/^(질문|답변)$/) })).toHaveCount(2);
       for (const record of await records.all()) {
-        const metadata = await record
-          .locator("p")
-          .filter({ hasText: "저장된 대상:" })
-          .textContent();
-        check(
-          metadata &&
-            metadata.includes(data.targetAgentIds[0]) &&
-            metadata.match(/epoch\s+(\d+)/)?.[1] === epoch,
-        );
+        const detail = record.getByRole("button", { name: "저장소·자료", exact: true });
+        if (await detail.count()) {
+          const response = page.waitForResponse(
+            (value) =>
+              value.request().method() === "POST" &&
+              value.url().endsWith("/api/investigations/source-read"),
+          );
+          await detail.click();
+          const source = await (await response).json();
+          check(
+            source.ok &&
+              source.data?.target?.agentId === data.targetAgentIds[0] &&
+              source.data.target.bindingEpoch === epoch,
+          );
+        }
+        await expect(record).toContainText(storedTarget.ownerAlias);
+        await expect(record).toContainText(storedTarget.repositoryAlias);
+        await expect(record).toContainText(storedTarget.sessionAlias);
         await expect(record).toContainText("현재 같은 연결 없음");
-        await expect(record).toContainText("당시 저장소 정보 없음");
+        await expect(record).toContainText(
+          "당시 대상은 저장되어 있으나 파일 관찰 자료는 없습니다.",
+        );
         await expect(record).not.toContainText("완료 뒤 새 저장소");
       }
       await expect(
@@ -698,5 +735,85 @@ test("should retain saved direct identity through completed replacement and deta
     check(await page.locator("body").evaluate((element) => element.scrollWidth <= innerWidth + 1));
   } finally {
     await owned.close();
+  }
+});
+
+test("should distinguish owner input request from connector application and restore exact retry after refresh", async ({
+  browser,
+}, info) => {
+  const a = await context(browser, info),
+    b = await context(browser, info);
+  try {
+    const scene = sceneName(info, "input-pause");
+    const data = await broker<{ roomId: string; owner: BrowserPerson; observer: BrowserPerson }>(
+      "setup",
+      { scene },
+    );
+    const page = await a.newPage(),
+      observer = await b.newPage();
+    await login(page, data.owner);
+    await login(observer, data.observer);
+    await page.goto(`/app/rooms/${data.roomId}`);
+    await observer.goto(`/app/rooms/${data.roomId}`);
+    const region = page.getByRole("region", { name: "실제 공동 조사" }),
+      own = region.getByLabel("내 AI 새 답변 제어", { exact: true });
+    await expect(observer.getByLabel("내 AI 새 답변 제어", { exact: true })).toHaveCount(0);
+    const bodies: unknown[] = [];
+    await page.route("**/api/investigations/input-control", async (route) => {
+      bodies.push(route.request().postDataJSON());
+      const response = await route.fetch();
+      if (bodies.length === 1) await route.abort("failed");
+      else await route.fulfill({ response });
+    });
+    const pauseInput = own.getByRole("button", { name: /.+ · .+ 새 답변 일시정지$/ });
+    await expect(pauseInput).toHaveCount(1);
+    const targetName = (await pauseInput.getAttribute("aria-label"))!.replace(
+      / 새 답변 일시정지$/,
+      "",
+    );
+    const describedBy = await pauseInput.getAttribute("aria-describedby");
+    check(!!describedBy);
+    const inputStatus = own.getByRole("status", { name: targetName, exact: true });
+    await expect(inputStatus).toHaveAttribute("id", describedBy!);
+    await pauseInput.click();
+    await expect(own.getByRole("button", { name: "같은 요청 확인", exact: true })).toBeVisible();
+    await page.reload();
+    await own.getByRole("button", { name: "같은 요청 확인", exact: true }).click();
+    await expect(own.getByRole("button", { name: "같은 요청 확인", exact: true })).toHaveCount(0);
+    check(bodies.length === 2 && JSON.stringify(bodies[0]) === JSON.stringify(bodies[1]));
+    await expect(own.getByText("요청됨 · 연결 프로그램 대기", { exact: true })).toBeVisible();
+    await expect(own.getByText("일시정지 적용 보고", { exact: true })).toHaveCount(0);
+    await broker("input-drive", { scene, step: "ack-pause" });
+    await expect(own.getByText("일시정지 적용 보고", { exact: true })).toBeVisible({
+      timeout: 45000,
+    });
+    await region.getByRole("button", { name: "공동 조사", exact: true }).click();
+    await page
+      .getByRole("dialog", { name: "공동 조사", exact: true })
+      .getByRole("button", { name: "방 일시정지 요청", exact: true })
+      .click();
+    await page.keyboard.press("Escape");
+    await expect(region.getByRole("status", { name: "방 상태", exact: true })).toContainText(
+      "일시정지 확인",
+      { timeout: 45000 },
+    );
+    const resumeInput = own.getByRole("button", {
+      name: `${targetName} 새 답변 재개`,
+      exact: true,
+    });
+    await expect(resumeInput).toHaveAttribute("aria-describedby", describedBy!);
+    await resumeInput.click();
+    await expect(own.getByText("요청됨 · 연결 프로그램 대기", { exact: true })).toBeVisible();
+    await broker("input-drive", { scene, step: "ack-resume" });
+    await expect(own.getByText("재개 적용 보고", { exact: true })).toBeVisible({ timeout: 45000 });
+    await expect(region.getByRole("status", { name: "방 상태", exact: true })).toContainText(
+      "일시정지 확인",
+    );
+    await expect(
+      own.getByText("이미 실행 준비를 시작한 답변은 계속됩니다.", { exact: true }),
+    ).toBeVisible();
+  } finally {
+    await a.close();
+    await b.close();
   }
 });

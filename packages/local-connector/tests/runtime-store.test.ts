@@ -12,6 +12,7 @@ import {
   type FileHandle,
 } from "node:fs/promises";
 import { chmodSync, linkSync, renameSync, symlinkSync, writeFileSync } from "node:fs";
+import { capabilityHash } from "../src/settings/contracts.ts";
 import { RuntimeArchive } from "../src/runtime-archive.ts";
 import { join } from "node:path";
 import {
@@ -1308,5 +1309,65 @@ test("should preserve previous and next archive relationships before committing 
     assert.equal(await f.store.read(), undefined);
   } finally {
     await f.close();
+  }
+});
+
+test("should persist immutable SERVER_INPUT_PAUSED closure and reject forged prior claim states", async () => {
+  for (const version of [1, 2] as const) {
+    const f = await runnerFixture({}, (record) => {
+      record.version = version;
+      if (version === 2) {
+        const cap = { ...record.settings!.capabilities, runtime: "codex" as const };
+        cap.snapshotHash = capabilityHash({
+          runtime: "codex",
+          version: cap.version,
+          models: cap.models,
+          defaultSettings: cap.defaultSettings,
+          policy: "verified",
+        });
+        record.settings!.capabilities = cap;
+      }
+    });
+    try {
+      f.queue();
+      f.faults.before = async (action) => {
+        if (action === "claim") f.pauseInput(true);
+      };
+      f.faults.after = async (action, _body, _result, response) => {
+        if (action === "claim") response.destroy();
+      };
+      await f.runner().run({ once: true });
+      const before = (await f.store.read())!,
+        key = before.attempts[0].claimOperationId!;
+      for (const invalid of ["pending", "confirmed", "wrong-op", "native-intent", "snapshot"]) {
+        const forged = structuredClone(before),
+          a = forged.attempts[0],
+          op = forged.operations.find((o) => o.operationId === key)!;
+        a.state = "NOT_STARTED";
+        a.reason = null;
+        a.unstartedClosure = { kind: "SERVER_INPUT_PAUSED", claimOperationId: key };
+        op.state = "CLOSED";
+        if (invalid === "pending") op.state = "PENDING";
+        if (invalid === "confirmed") op.result = {};
+        if (invalid === "wrong-op") a.unstartedClosure.claimOperationId = uuid();
+        if (invalid === "native-intent")
+          a.nativeIntent = { provider: "claude", sessionId: uuid(), inputId: uuid() } as never;
+        if (invalid === "snapshot") a.snapshot = {} as never;
+        await assert.rejects(async () => f.store.write(forged), { code: "UNSAFE_STORAGE" });
+      }
+      const valid = structuredClone(before),
+        a = valid.attempts[0];
+      a.state = "NOT_STARTED";
+      a.reason = null;
+      a.unstartedClosure = { kind: "SERVER_INPUT_PAUSED", claimOperationId: key };
+      valid.operations.find((o) => o.operationId === key)!.state = "CLOSED";
+      await f.store.write(valid);
+      assert.deepEqual((await f.store.read())!.attempts[0].unstartedClosure, a.unstartedClosure);
+      const changed = structuredClone(valid);
+      changed.attempts[0].unstartedClosure!.claimOperationId = uuid();
+      await assert.rejects(async () => f.store.write(changed), { code: "UNSAFE_STORAGE" });
+    } finally {
+      await f.close();
+    }
   }
 });

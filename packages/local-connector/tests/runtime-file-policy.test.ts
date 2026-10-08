@@ -122,3 +122,145 @@ test("should read only selected unchanged text files through scoped tools", asyn
     await g.close();
   }
 });
+
+test("should retain selected BOM decoding and preserve authority errors after descriptor cleanup", async (t) => {
+  const f = await runtimeFixture();
+  const original = fsPromises.open;
+  let opened: FileHandle | undefined;
+  let lost = false;
+  try {
+    await writeFile(join(f.root, "bom.txt"), Buffer.from("\uFEFFSelected BOM evidence.\n"));
+    const policy = await RuntimeFilePolicy.select(f.root, ["bom.txt"]);
+    assert.equal(await policy.read("bom.txt"), "Selected BOM evidence.\n");
+    const authority = Object.assign(new Error("authority test"), { code: "AUTHORITY_LOST" });
+    const mocked = t.mock.method(
+      fsPromises,
+      "open",
+      async (...args: Parameters<typeof fsPromises.open>) => {
+        opened = await original(...args);
+        lost = true;
+        return opened;
+      },
+    );
+    syncBuiltinESMExports();
+    try {
+      await assert.rejects(
+        policy.read("bom.txt", () => {
+          if (lost) throw authority;
+        }),
+        (error) => error === authority,
+      );
+      await assert.rejects(opened!.stat(), { code: "EBADF" });
+    } finally {
+      mocked.mock.restore();
+      syncBuiltinESMExports();
+    }
+  } finally {
+    await f.close();
+  }
+});
+
+test("should refuse short reads without changing selected snapshots", async (t) => {
+  const f = await runtimeFixture();
+  const original = fsPromises.open;
+  let opened: FileHandle | undefined;
+  const mocked = t.mock.method(
+    fsPromises,
+    "open",
+    async (...args: Parameters<typeof fsPromises.open>) => {
+      opened = await original(...args);
+      t.mock.method(opened, "read", async () => ({ bytesRead: 0, buffer: Buffer.alloc(0) }));
+      return opened;
+    },
+  );
+  syncBuiltinESMExports();
+  try {
+    await assert.rejects(f.policy.read("public.txt"), { code: "TOOL_REJECTED" });
+    await assert.rejects(opened!.stat(), { code: "EBADF" });
+  } finally {
+    mocked.mock.restore();
+    syncBuiltinESMExports();
+    await f.close();
+  }
+});
+
+test("should reject foreign current-user ownership before opening a selected file", async (t) => {
+  const f = await runtimeFixture();
+  const foreignUid = process.getuid!() + 1;
+  const originalLstat = fsPromises.lstat;
+  let opened = 0;
+  const mockedStat = t.mock.method(
+    fsPromises,
+    "lstat",
+    async (...args: Parameters<typeof fsPromises.lstat>) => {
+      const info = await originalLstat(...args);
+      if ([f.root, join(f.root, "public.txt")].includes(String(args[0])))
+        Object.defineProperty(info, "uid", { value: foreignUid });
+      return info;
+    },
+  );
+  const originalOpen = fsPromises.open;
+  const mockedOpen = t.mock.method(
+    fsPromises,
+    "open",
+    async (...args: Parameters<typeof fsPromises.open>) => {
+      opened++;
+      return originalOpen(...args);
+    },
+  );
+  syncBuiltinESMExports();
+  try {
+    const policy = new RuntimeFilePolicy({ ...f.policy.root, uid: foreignUid }, f.policy.files);
+    await assert.rejects(policy.read("public.txt"), { code: "TOOL_REJECTED" });
+    assert.equal(opened, 0);
+  } finally {
+    mockedStat.mock.restore();
+    mockedOpen.mock.restore();
+    syncBuiltinESMExports();
+    await f.close();
+  }
+});
+
+test("should retain selected per-file and combined byte limits", async () => {
+  const f = await runtimeFixture();
+  try {
+    const paths = Array.from({ length: 9 }, (_, index) => `boundary${index}.txt`);
+    for (const path of paths)
+      await writeFile(join(f.root, path), "x".repeat(65536), { mode: 0o644 });
+    const policy = await RuntimeFilePolicy.select(f.root, paths.slice(0, 8));
+    assert.equal((await policy.read(paths[0])).length, 65536);
+    await assert.rejects(RuntimeFilePolicy.select(f.root, paths), { code: "TOOL_REJECTED" });
+  } finally {
+    await f.close();
+  }
+});
+
+test("should retain legacy quoted-key text behavior independently from automatic content checks", async () => {
+  const f = await runtimeFixture();
+  try {
+    const text = '{"password":"synthetic-private-value"}';
+    await writeFile(join(f.root, "configuration.json"), text, { mode: 0o644 });
+    const selected = await RuntimeFilePolicy.select(f.root, ["configuration.json"]);
+    assert.equal(await selected.read("configuration.json"), text);
+    assert.equal(publicText(text), text);
+  } finally {
+    await f.close();
+  }
+});
+
+test("should retain legacy escaped-key and template text behavior without automatic inspection", async () => {
+  const f = await runtimeFixture();
+  try {
+    for (const [path, text] of [
+      ["escaped.json", '{"pass\\u0077ord":"tiny"}'],
+      ["template.ts", 'const object = { "credential": `tiny` };'],
+    ]) {
+      await writeFile(join(f.root, path), text, { mode: 0o644 });
+      const policy = await RuntimeFilePolicy.select(f.root, [path]);
+      assert.equal(await policy.read(path), text);
+      assert.equal(publicText(text), text);
+    }
+  } finally {
+    await f.close();
+  }
+});

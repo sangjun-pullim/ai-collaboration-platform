@@ -1,10 +1,13 @@
 "use client";
 import Link from "next/link";
-import { useRef, useState, type FormEvent } from "react";
+import { useEffect, useRef, useState, type FormEvent } from "react";
 import { useRouter } from "next/navigation";
 import { messages, type ConnectionErrorCode, type OwnedDevice } from "./contracts";
 import { Button } from "../../components/ui/button";
 import { Input } from "../../components/ui/input";
+import { RuntimeSettingsForm } from "../runtime-settings/runtime-settings-form";
+import { LocalConnectionGuide } from "./local-connection-guide";
+import { consumeConnectionFragment } from "./local-connection-command";
 import styles from "../room-access/access.module.css";
 type RoomOption = {
   roomId: string;
@@ -15,16 +18,74 @@ type RoomOption = {
 export function ConnectionManager({
   devices,
   rooms,
+  origin,
+  userId,
 }: {
   devices: OwnedDevice[];
   rooms: RoomOption[];
+  origin: string;
+  userId: string;
 }) {
   const router = useRouter();
   const alert = useRef<HTMLParagraphElement>(null);
+  const confirmation = useRef<HTMLInputElement>(null);
+  // StrictMode repeats effect setup after the fragment has already left the URL.
+  const pendingFragment = useRef<{ hash: string } | null>(null);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<ConnectionErrorCode | null>(null);
   const [notice, setNotice] = useState("");
   const [roomId, setRoomId] = useState(rooms[0]?.roomId ?? "");
+  const [pairingCode, setPairingCode] = useState("");
+  useEffect(() => {
+    let active = true;
+    const consume = () => {
+      if (window.location.hash) {
+        const hash = window.location.hash;
+        window.history.replaceState(
+          window.history.state,
+          "",
+          window.location.pathname + window.location.search,
+        );
+        pendingFragment.current = { hash };
+      }
+      const pending = pendingFragment.current;
+      if (!pending) return;
+      const pairing = consumeConnectionFragment(pending.hash, rooms);
+      if (confirmation.current) confirmation.current.checked = false;
+      queueMicrotask(() => {
+        if (!active || pendingFragment.current !== pending) return;
+        pendingFragment.current = null;
+        if (pairing) setRoomId(pairing.roomId);
+        setPairingCode(pairing?.code ?? "");
+        setNotice("");
+        setError(null);
+      });
+    };
+    consume();
+    window.addEventListener("hashchange", consume);
+    return () => {
+      active = false;
+      window.removeEventListener("hashchange", consume);
+    };
+  }, [rooms]);
+  const [settingsRoomId, setSettingsRoomId] = useState(
+    devices.find((device) => device.state === "active")?.roomId ?? rooms[0]?.roomId ?? "",
+  );
+  const [settingsDeviceId, setSettingsDeviceId] = useState("");
+  const [now, setNow] = useState(() => Date.now());
+  useEffect(() => {
+    const timer = setInterval(() => setNow(Date.now()), 5000);
+    return () => clearInterval(timer);
+  }, []);
+  const availableDevices = devices.filter(
+    (device) =>
+      device.state === "active" &&
+      device.roomId === settingsRoomId &&
+      device.expiresAt !== null &&
+      Date.parse(device.expiresAt) > now,
+  );
+  const settingsDevice =
+    availableDevices.find((device) => device.deviceId === settingsDeviceId) ?? availableDevices[0];
   async function send(action: string, body: unknown) {
     setBusy(true);
     setError(null);
@@ -45,7 +106,7 @@ export function ConnectionManager({
       }
       setNotice(
         action === "approve"
-          ? `기기 ${result.data.deviceAlias} 승인을 완료했습니다. 로컬에서 소유 계정과 방을 확인한 뒤 교환하세요.`
+          ? `기기 ${result.data.deviceAlias} 승인을 완료했습니다. 실행 중인 터미널에서 내 계정과 방을 확인한 뒤 아래 AI 설정을 진행하세요. 수동 연결은 펼침 안내를 확인하세요.`
           : "연결을 취소했습니다. 다시 연결하려면 새 승인이 필요합니다.",
       );
       router.refresh();
@@ -71,8 +132,10 @@ export function ConnectionManager({
         roomId: room.roomId,
         confirmed: fields.get("confirmed") === "on",
       })
-    )
+    ) {
       form.reset();
+      setPairingCode("");
+    }
   }
   return (
     <main className={styles.shell}>
@@ -82,32 +145,36 @@ export function ConnectionManager({
       </header>
       <div className={styles.content}>
         <p className={styles.notice}>
-          내 AI 연결은 선택 사항입니다. 질문만 하는 참가자는 이 단계를 건너뛰세요. 현재는 Codex CLI
-          등록과 로컬 실행 준비를 지원합니다. Claude 및 웹에서의 경로·모델·effort 적용은 아직
-          지원하지 않습니다.
+          내 AI 연결은 선택 사항입니다. 질문만 하는 참가자는 AI 설정 없이 AI 채팅방에 들어갈 수
+          있습니다. AI를 제공할 때만 본인 기기를 승인하고 자기 PC에서 설정을 확인하세요.
         </p>
-        <section className={styles.panel}>
-          <h2 className="font-semibold">연결 순서</h2>
-          <ol className="list-decimal space-y-2 pl-5 text-sm text-neutral-600">
-            <li>AI 소유자가 자기 PC의 로컬 연결 프로그램에서 기기 연결 코드를 생성합니다.</li>
-            <li>아래에서 연결할 방을 고르고 코드를 입력해 승인합니다. 기기 등록이 완료됩니다.</li>
-            <li>같은 PC에서 저장소·작업 영역의 공개 별칭을 등록합니다.</li>
-            <li>
-              로컬 프로그램의 runtime-prepare로 Codex 모델·effort와 공유 파일을 선택합니다. 준비
-              보고를 받은 뒤 질문 대상이 됩니다.
-            </li>
-          </ol>
-          <p className="text-xs text-neutral-500">
-            등록만으로 응답 준비가 완료되지는 않습니다. 로컬 경로와 공급자 인증 정보는 자기 PC에만
-            보관하세요.
+        <Link href="/app" className="text-sm underline">
+          질문만 하기
+        </Link>
+        <LocalConnectionGuide
+          origin={origin}
+          userId={userId}
+          rooms={rooms}
+          roomId={roomId}
+          onRoomChange={setRoomId}
+        />
+        <details className={styles.panel}>
+          <summary className="cursor-pointer text-sm">기존 수동 연결을 사용하는 경우</summary>
+          <p className="mt-2 text-sm text-neutral-600">
+            기존 pair 명령의 코드를 아래에서 승인한 뒤, 자기 PC에서 계정·방을 확인하고 exchange를
+            실행하세요. 같은 프로필로 manage를 실행하면 아래 AI 설정을 사용할 수 있습니다.
           </p>
-        </section>
+        </details>
         {error && (
           <p role="alert" aria-label="기기 연결 오류" tabIndex={-1} ref={alert}>
             {messages[error]}
           </p>
         )}
-        {notice && <p role="status">{notice}</p>}
+        {notice && (
+          <p role="status" aria-label="기기 연결 결과">
+            {notice}
+          </p>
+        )}
         <section className={styles.panel}>
           <h2>새 기기 승인</h2>
           {rooms.length ? (
@@ -135,6 +202,8 @@ export function ConnectionManager({
                 기기 연결 코드
                 <Input
                   name="code"
+                  value={pairingCode}
+                  onChange={(event) => setPairingCode(event.target.value)}
                   required
                   minLength={64}
                   maxLength={64}
@@ -143,8 +212,8 @@ export function ConnectionManager({
                 />
               </label>
               <label>
-                <input name="confirmed" type="checkbox" required /> 내 계정·선택한 방·기기 별칭과
-                공개 정보 범위를 확인했습니다
+                <input ref={confirmation} name="confirmed" type="checkbox" required /> 내
+                계정·선택한 방·기기 별칭과 공개 정보 범위를 확인했습니다
               </label>
               <Button disabled={busy}>기기 승인</Button>
             </form>
@@ -208,6 +277,62 @@ export function ConnectionManager({
             </ul>
           ) : (
             <p>연결된 기기가 없습니다. 로컬 프로그램에서 새 코드를 만들고 승인하세요.</p>
+          )}
+        </section>
+        <section className={styles.panel} aria-label="본인 기기 AI 설정">
+          <h2 className="font-semibold">AI 설정</h2>
+          <label className={styles.field}>
+            설정할 AI 채팅방
+            <select
+              value={settingsRoomId}
+              disabled={busy}
+              onChange={(event) => {
+                setSettingsRoomId(event.target.value);
+                setSettingsDeviceId("");
+              }}
+            >
+              {rooms.map((room) => (
+                <option key={room.roomId} value={room.roomId}>
+                  {room.organizationName} · {room.roomTitle}
+                </option>
+              ))}
+            </select>
+          </label>
+          {availableDevices.length ? (
+            <>
+              <label className={styles.field}>
+                설정할 본인 기기
+                <select
+                  value={settingsDevice?.deviceId ?? ""}
+                  disabled={busy}
+                  onChange={(event) => setSettingsDeviceId(event.target.value)}
+                >
+                  {availableDevices.map((device) => (
+                    <option key={device.deviceId} value={device.deviceId}>
+                      {device.deviceAlias}
+                    </option>
+                  ))}
+                </select>
+              </label>
+              {settingsDevice && (
+                <RuntimeSettingsForm
+                  key={settingsDevice.deviceId}
+                  deviceId={settingsDevice.deviceId}
+                  deviceAlias={settingsDevice.deviceAlias}
+                  disabled={busy}
+                />
+              )}
+            </>
+          ) : (
+            <p className="text-sm text-neutral-600">
+              이 방에 인증이 유효한 본인 기기가 없습니다. 기기를 승인한 뒤 자기 PC에서 scope 확인과
+              exchange를 완료하세요.
+            </p>
+          )}
+          {settingsRoomId && (
+            <Link href={`/app/rooms/${settingsRoomId}`} className="text-sm underline">
+              이 AI 채팅방에서 질문만 하기
+            </Link>
           )}
         </section>
       </div>

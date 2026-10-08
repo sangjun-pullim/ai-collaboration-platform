@@ -21,7 +21,9 @@ risk-surface: auth, permission, db-schema, public-api
 - 웹의 요청한 설정과 PC의 실제 적용·응답 준비를 구분한다. 미확정 적용·전송·종결은 동일 operation과 owned native ID로 확인하고 새 맥락이나 새 입력을 자동 생성하지 않는다.
 - 기존 구독 로그인과 개인 지침/설정 파일은 유지하며 공동 실행에는 승인된 읽기 전용 도구와 검증된 설정 우선순위만 적용한다.
 
-실제 Claude 부분의 선행 조건은 009에 명시된 추가 실제 입력 승인과 정상 도구·동일 ID 재개·중단 수용이다. 009의 승인/예산/root/state 제한은 이 계획 승인으로 해제되지 않는다. 선행 조건을 충족할 때까지 새 실제 Claude 실행은 하지 않고 합성 계약·설정 queue·Codex 호환 검사는 독립적으로 진행한다. 두 PC의 실제 외부 설치/접속은 별도 현장 수용이며 한 PC·fake provider 결과로 완료 표시하지 않는다.
+공식 Claude의 실행 정책·정상 도구·동일 UUID 후속 질문·중단 수용은 [030 보정](030-native-claude-chat-and-follow-up.md)에서 검증한다. 대체된009의 당시 승인·예산·UNKNOWN은 역사적 기록으로 보존하며 이 계획 승인으로 해제하지 않는다. 실제 입력은 실행 시점의 명시적 상한과 정확한 준비 리뷰 안에서만 수행한다. 두 Mac의 외부 설치·접속은 별도 현장 수용이며 한 Mac·가짜 공급자 결과로 완료 표시하지 않는다.
+
+2026-10-06 구현은 사용자의 전체 목표에서 계획 작성·구현·감독을 위임한 기존 승인으로 진행한다. 별도 구현 승인 대기로 둔 이전 해석은 보정했다. 당시 실행 환경에서 Git metadata 쓰기와 Docker socket 접근이 제한돼 소스·합성 검사와 독립 리뷰를 진행했다. 2026-10-07 사용자의 커밋 요청에서는 `git add`와 `git commit`이 성공해 검토한 소스를 로컬 커밋으로 기록했다. 실제 DB·native·두 Mac 수용과 원격 PR 작업은 가능한 환경과 기존 승인 경계에서 확인한다. 실행 제한을 우회하지 않는다.
 
 ## Affected Files
 
@@ -45,6 +47,8 @@ risk-surface: auth, permission, db-schema, public-api
 ## Implementation Steps
 
 ### [ ] Step 1: 공급자 공통 계약과 실제 Claude adapter
+> 실제 수용 미완료: 도구 없는 중단 복구 HIGH는023의 합성 검사와 독립 리뷰로 해소했다. 제품 CLI의 Claude 생성3곳은024의 공통 정책·정확한 소유 이력 공급에 연결했다. 기본 factory의 공식 설치·설정 검증과 같은 대화 후속 질문은 [030 보정](030-native-claude-chat-and-follow-up.md)에서 진행한다. 추가 사용자 결정을 기본 채팅의 선행 조건으로 요구하지 않는다. 실제 Claude·DB·두 Mac의 실행 조건과 검증 결과는 [진행 정본](../planning/delivery-and-validation.md#현재-진행-상태)을 따른다.
+
 **File**: runtime 계약/검증/runner, claude 내부 모듈, contract mirror, migration runtime 부분
 
 - provider는 codex 또는 claude, 설치 version은 adapter가 실제 관찰한 값이다. RequestedSettings effort는 null 또는 지원 문자열이다. 기존 v1 Codex 기록의 decoding·역사·outbox는 보존하고 신규 provider-aware 설정만 명시적인 local format version으로 쓴다. null effort를 과거 Codex 요청으로 해석하지 않는다.
@@ -53,9 +57,11 @@ risk-surface: auth, permission, db-schema, public-api
 - Claude의 session UUID는 host가 spawn 전에 예약·fsync한다. 최초 RESERVED 준비에서는 내구 예약·policy·capability만 확정한다. initialize의 control 응답과 실제 system/init은 별개이며 system/init은 첫 입력 뒤에 늦게 올 수 있다. 실제 system/init의 session/root/도구 identity를 예약과 대조하기 전에는 assistant·도구·종결 증거를 승인하지 않는다. 이 예약과 실제 native history 생성은 구분한다. OwnedContext에 materialization 상태와 증거를 저장한다. 최초 입력 전에는 한 번 예약한 UUID와 동일 root로 시작하고 최초 제출을 내구 기록한다. 첫 실행의 ACK/종결이 미확인이면 새 session-id/새 입력/재예약으로 보정하지 않는다. 실제 생성 후에는 exact owned history만 재개/관찰한다. --resume을 쓸 실제 history가 없는 초기 상태를 정상 재개로 처리하지 않는다.
 - 최초 Claude spawn 전에 host session UUID/root/generation/policy fingerprint를 준비 저널에 fsync한다. 각 stdin 전송 전에는 input UUID·정확한 serialized prompt hash·authority(scope/fence/epoch)·generation을 `nativeIntent`로 fsync한다. beforeSubmit 접점을 descriptor를 받도록 확장하며 Claude는 필수 descriptor, 기존 Codex 경로는 기존 계약을 유지한다. 저장 실패 시 spawn/입력 write는 0회다. ACK의 실제 ID는 이 intent와 대조하고 대체하지 않는다.
 - 전송 뒤 ACK 유실에서는 `journal.native=null`이어도 `nativeIntent`의 exact session/input UUID로 읽기 전용 observe를 수행한다. 같은 root의 정확한 소유 이력·입력 UUID/prompt hash·종결 연결 증거가 없으면 UNKNOWN을 유지한다. host 예약만으로 ACK/종결을 만들지 않고 새 입력·다른 session 탐색·자동 재전송은 0회다. Codex 기존 ACK 기반 관측과 저장 v1은 보존한다.
-- 009의 검증된 native policy/버전/설정 우선순위 근거가 있어야 실제 Claude admission을 열 수 있다. 일반 개인 설정 파일을 변경하거나 credentials를 복사하지 않는다. 시작 inventory·실행 중 설정 drift·읽기 전용 allowlist·소유 child 정리 실패를 기존 미확인 계약에 연결한다.
+- 030의 검증된 실제 설치·버전·native policy와 설정 우선순위 근거가 있어야 공식 Claude 실행을 열 수 있다. 일반 개인 설정 파일을 변경하거나 credentials를 복사하지 않는다. 시작 inventory·실행 중 설정 drift·읽기 전용 allowlist·소유 child 정리 실패를 기존 미확인 계약에 연결한다.
 
-### [ ] Step 2: 소유자 전용 설정 명령과 영수증
+### [x] Step 2: 소유자 전용 설정 명령과 영수증
+> 2026-10-08 실제 설정 DB·HTTP·소유자 권한과 SQL011 warm upgrade를 검증했다. 기존 데이터·receipt·동일 본문 재전송과 설정 계약을 보존했고, 적용 영수증의 SQL016 보정은 별도 실제 회귀와 독립 리뷰를 통과했다. 검사 수치와 근거는 [진행 정본](../planning/delivery-and-validation.md#현재-진행-상태)에 유지한다. 이 단계의 DB·API 완료가 실제 Mac 폴더 창·공식 AI 답변·두 Mac 수용의 완료를 뜻하지 않는다.
+
 **File**: 새 migration, runtime-settings web/connector contracts/client/service/store
 
 - 인간 action은 list/select-folder/select-runtime/apply/cancel, 기기 action은 poll/receipt로 고정한다. cookie는 admitted current user, device bearer는 기존 live credential·owner·room membership을 재검사한다. 방 owner라도 다른 사람의 기기 설정을 바꾸지 못한다.
@@ -67,7 +73,9 @@ risk-surface: auth, permission, db-schema, public-api
 - 취소는 COMMITTED 전에만 가능하며 cancel/commit은 같은 예약·room 잠금으로 직렬화한다. 취소가 먼저면 native 후보는 소유 정리하고 교체하지 않는다. commit이 먼저면 취소는 CONFLICT이며 동일 receipt로 로컬 확정을 복구한다. DB commit 뒤 PC의 current generation pointer/profile mapping을 fsync한 다음에만 APPLIED를 보고한다. 두 단계를 동시에 성공한 것으로 쓰지 않는다.
 - catalog는 실제 adapter initialize에서 받은 모델/effort만 사용한다. 버전/hash/selection을 같이 검증하고 전체 응답 16KiB·모델 256개·effort 12개 한도를 지킨다. 한도를 넘으면 전체 catalog unsupported를 명시하고 조용히 일부를 자르지 않는다. 초기 단계에서 512KiB pagination과 양쪽 AI activation은 추가하지 않는다.
 
-### [ ] Step 3: Mac 폴더 선택과 로컬 설정 관리 루프
+### [x] Step 3: Mac 폴더 선택과 로컬 설정 관리 루프
+> 2026-10-08 실제 Mac의 지정 폴더 선택·취소와 공식 Claude 기본 factory의 설정 COMMITTED→로컬 APPLIED→서버 응답 준비를 확인했다. AI 입력0·소유 child 정리와 검증 데이터 제거도 통과했다. 설정 수용은 완료했으며 실제 답변·후속 답변·중단은 Step5와030에서 별도로 확인한다. 상세 근거는 [진행 정본](../planning/delivery-and-validation.md#현재-진행-상태)을 따른다.
+
 **File**: settings manager/folder-picker/store, CLI 및 runner idle 접점
 
 - 승인된 기존 위치에서 동일 기기의 outbound polling 루프를 실행한다. 한 프로세스가 기기 설정과 runner life-cycle을 소유하며 같은 profile의 이중 manager/runner는 기존 잠금과 별도 설정 잠금으로 거절한다. shell 문자열을 중앙에서 받지 않는다.
@@ -79,7 +87,9 @@ risk-surface: auth, permission, db-schema, public-api
 - CLI runtime-prepare/register/replace/run 및 revoke-local은 settings device 잠금→기존 binding/session/profile 잠금 순서를 따르며 active operation/UNKNOWN/미확정 journal을 검사한다. settings manager와 raw CLI가 같은 PC profile을 동시에 변경할 수 없다. remove-local-profile은 새 settings journal·generation 기록의 소유권과 unresolved/lock을 확인하고 준비 후보·이력을 무조건 삭제하지 않는다. settings 기록 없는 기존 CLI profile의 호환은 유지한다.
 - 새 명령은 기존 begin/approval/exchange/등록 contract를 재사용한다. 연결 승인과 PC의 room scope 확인을 생략하지 않는다. PC를 켜고 connector를 실행해 둔 답변 제공자는 매 질문에 수동 입력할 필요가 없다.
 
-### [ ] Step 4: 웹 내 AI 설정과 실제 적용 상태
+### [x] Step 4: 웹 내 AI 설정과 실제 적용 상태
+> 2026-10-08 실제 Auth·DB·HTTP와 desktop/mobile 설정 화면을 검증했다. 요청·실제 적용·응답 준비의 구분, Claude/Codex 모델·effort 선택, 타인 설정 거절과 질문자 AI 생략을 확인했다. 현재 검증 근거는 개발·검증 상태를 따른다.
+
 **File**: connection-manager, connections page, runtime-settings-form
 
 - 대시보드의 내 AI 연결에서 참가 방·본인 기기를 고르고 폴더 선택을 요청한다. 질문만 하는 사용자는 돌아가기를 통해 설정 없이 방에 들어간다. 기존 pairing은 해당 방에 묶이며 방 대화 화면을 먼저 열 필요가 없다.
@@ -88,11 +98,13 @@ risk-surface: auth, permission, db-schema, public-api
 - 동일 agent/epoch의 현재 공개 별칭과 실제 provider만 대상 카드에 표시한다. 과거 질문의 당시 저장소/모델 snapshot이 없는 v1 기록은 현재 값으로 채우지 않는다. model/effort의 상세 역사 snapshot은 후속 계약이며 초기 DIRECT 기본 질문의 전제조건이 아니다.
 
 ### [ ] Step 5: 권한·장애·실제 연결 검증과 종료
+> 실제 수용 미완료: DB·HTTP·설정 화면·Mac 폴더 선택/취소·공식 Claude 설정 적용·정상/후속 답변은 검증했다. 실제 중단은 UNKNOWN이며030의 입력 상한·실행 리뷰 경계에서 보정한다. 로컬 실제 중단과 종료 검토까지 마친 뒤 이 계획을 종료할 수 있다. 동료가 나중에 참여하는 두 Mac 검사는 별도 현장 수용으로 유지한다. 원래 구현 리뷰3과 실패 증거는 보존한다.
+
 **File**: test와 관련 정본 문서
 
-- Tests를 실행하며 009 선행 조건을 통과한 실제 Claude/개인 설정 결과와 합성 결과를 분리한다. 실제 CLI 없거나 승인되지 않으면 실제 항목은 미완료로 남긴다.
+- Tests를 실행하며030의 실제 Claude·개인 설정 검증 결과와 합성 결과를 분리한다. 실제 CLI 없거나 승인되지 않으면 실제 항목은 미완료로 남긴다.
 - 새 독립 reviewer가 인증·기기 소유권·API/mirror·SQL·로컬 설정·native 입력/ACK/도구/종결과 cleanup를 검토한다.
-- 구현한 범위와 동작만 정본에 반영하고 전 단계/필수 테스트/리뷰가 끝나면 이 명세를 보관한다. 원래 008의 큰 양쪽 activation/v2/역사 snapshot은 후속 항목으로 이관하고 실제 구현 승인 전에 deprecated 상태와 링크를 정리한다. 009는 자체 실제 수용 기준으로 종료한다.
+- 구현한 범위와 동작만 정본에 반영하고 전 단계/필수 테스트/리뷰가 끝나면 이 명세를 보관한다. 원래 008의 큰 양쪽 activation/v2/역사 snapshot은 후속 항목으로 이관하고 실제 구현 승인 전에 deprecated 상태와 링크를 정리한다. 대체된009는030으로 이관한 역사적 계획으로 보관하며 미완료 원본을 완료로 변경하지 않는다.
 
 ## Tests
 
@@ -102,7 +114,7 @@ risk-surface: auth, permission, db-schema, public-api
 - manager/runner: 이중 lock 거절, 재시작 같은 receipt, crash 지점별 전송/생성/replace/receipt UNKNOWN 보존, 진행 중/UNKNOWN 설정 금지, idle 인계, late old-epoch receipt/answer 거절, 원래 Codex v1 decoding·history/outbox 보존.
 - Claude adapter 합성 stdio: 실제형 initialize/ACK·native input UUID·product authority 도구·연결 없는 assistant tool-use 거부·typed terminal·observe exact full history·held tool interrupt·normal completion race·child/descendant cleanup 실패·drift·실제 stderr/usage/credential 공개 금지. 실험 3회 budget을 제품에 복사하지 않았는지 확인한다.
 - 웹 browser actual Auth/DB + fake runtime: 질문-only 입장, Mac 요청/적용 상태, 실제 catalog/null effort, stale selection/capability/revision, 다른 사람 설정 편집 금지, room-scoped pairing, 지정 한 AI만 답변·재시작/단일 답변·현재/과거 metadata 구분. mock만으로 actual provider라고 주장하지 않는다.
-- 009 수용 후 실제 CLI: 한 Mac owned fixture에서 제품 Claude의 선택 파일 읽기·정상 답변·정확한 대화 재개·중단과 개인 설정 불변을 bounded 실행으로 검증한다. 실제 추가 모델 입력의 구체 상한/맥락은 앞서 승인된 009 입력 범위와 구분하여 실행 전 확정한다. 구독 API key를 중앙에 저장하지 않는다.
+- 030의 실제 CLI 수용: 한 Mac의 소유 합성 폴더에서 제품 Claude의 자동 코드 탐색·읽기·정상 답변·정확한 대화 재개·중단과 개인 설정 불변을 제한된 입력으로 검증한다. 기존 선택 파일 방식은 격리 회귀로 유지한다. 실제 추가 모델 입력의 구체 상한/맥락은 앞서 승인된 009 입력 범위와 구분하여 실행 전 확정한다. 구독 API key를 중앙에 저장하지 않는다.
 - 실제 두 번째 Mac 질문-only→Claude 지정 답변은 별도 외부 설치·owner 접속 수용으로 기록한다. 그 환경이 없으면 로컬 구현 검증과 남은 현장 검증을 구분한다.
 
 ## Risks
@@ -131,11 +143,25 @@ risk-surface: auth, permission, db-schema, public-api
 - `tests/e2e/owner-local-ai-setup.spec.ts`: actual Auth/DB + fake runtime owner setup/cancel/requested-versus-applied/null effort/stale capability; question-only skip; target-only question/reply. New browser parent exposes only owned fixed actions and uses the existing artifact/env policy.
 - owned migration preparation/upgrade helper extends the existing namespace/proof checks. Fresh local installation and legacy001–009 upgrade both run `owner-local-ai-setup.test.ts`; no shared DB reset and no test admission bypass.
 
-Additional execution: compile `tsconfig.integration.json`, then explicitly run `node --test --test-concurrency=1 .integration-build/tests/integration/owner-local-ai-setup.test.js .integration-build/tests/integration/claude-product-runtime.test.js`. Add a bounded settings browser parent runner to execute `playwright --config playwright.settings.config.ts` with private DB/admin held only by its parent. New test file/config/script paths are part of the implementation inventory. Existing root integration scripts are not claimed to discover these new files automatically.
+Additional execution: `npm run test:integration:settings` builds the connector, compiles `tsconfig.integration.json`, and sequentially runs `owner-local-ai-setup.test.js`, `claude-product-runtime.test.js`, `own-ai-input-pause.test.js`, and `shared-input-source-history.test.js`. The last two suites cover the required025/027 regression paths on the same installed010–013 fixture. Separate SQL011 and SQL013 warm-upgrade tests require owned001–010 and owned001–012 stacks respectively and are not run on an already upgraded database. The bounded settings browser parent runs `playwright --config playwright.settings.config.ts` with private DB/admin held only by its parent. New test file/config/script paths are part of the implementation inventory. The default `test:integration` command still selects only the base room-access suite.
+
+실제 DB 준비의 후속 실행 범위: `scripts/apply-local-ai-settings.mjs`와 `tests/unit/local-settings-upgrade.test.ts`로 지정한 OrbStack 개발 DB에 미설치010–013을 한 transaction으로 적용하는 운영 명령과 격리 검사를 추가한다. 컨테이너 고정 ID·프로젝트·loopback port·소유 workdir와 SQL hash를 확인한다. 기존001–009의 필수 함수, SQL005의 receipt 외래키 3개의 shape·지연 검사 설정, SQL008의 actor·public wrapper 원문과 설정을 읽기 전용으로 확인하고 같은 transaction guard에서도 검사한다. 기존 필수 조건이 없거나 새 schema가 이미 존재하면 적용을 거절한다. 원본 SQL 파일은 변경하지 않으며010/013의 바깥 transaction만 묶음 실행 안에서 제거한다.011/012도 같은 transaction에 포함해 부분 적용을 방지한다. 응답 유실은 미확정으로 보존하고 자동 재적용하지 않는다. 이 준비·독립 검토는 실제 DB·upgrade·HTTP·브라우저 검증을 대신하지 않는다.
+
+웹 실행 준비의 후속 범위: `scripts/dev-local-web.mjs`와 `tests/unit/local-web-environment.test.ts`를 추가한다. 기존 DB 점검을 읽기 전용으로 재사용하고 같은 프로젝트·workdir·로컬 API 포트의 게이트웨이를 확인한다. 확인한 workdir에서 공식 Supabase `status`를 실행하고 API URL을 대조한 뒤 공개 anon 키만 웹에 전달한다. PATH의 CLI가 없으면 설치·캐시의 CLI를 offline·no-install로 사용한다. 상태 응답의 비공개 값은 출력·파일 저장·웹 전달하지 않는다. Next 개발 환경 파일은 metadata로만 검사하고 존재하면 시작을 거절한다. 세 필수 웹 설정을 채워 현재 웹 코드를 실행하며 inherited 관리자/DB/AI 키와 임의 서버 설정은 전달하지 않는다. 원본 DB·프로필·대기 연결과 사용자 소유 웹 프로세스를 변경하지 않는다. 독립 검토와 격리 검사 후 운영자가 기존 웹 터미널을 종료하고 새 명령으로 실행한다. 실제 HTTP·브라우저·native 수용은 그 결과로 별도 확인한다.
 
 ## Review Notes
 
-Round 1: C0/H4/M2/L0/INFO1. All six corrections ACCEPTED; native-input authorization INFO preserved. Round 2: C0/H1/M1/L0/INFO1. Both corrections ACCEPTED; native-input authorization INFO preserved. Round 3: PASS, C0/H0/M0/L0/INFO1. The final nonretired AI_PAIR resumption versus proof-closed terminal DIRECT distinction was confirmed against actual SQL. Native authorization INFO is retained. Implementation approval remains pending.
+웹 실행 준비의 실패 보정 범위: CLI 조회 실패를 `LOCAL_STATUS_UNAVAILABLE`로만 합쳐 원인이 사라지는 문제를 고정 진단 분류와 숫자 종료 코드로 보완한다. 원문 오류·키·개인 경로는 출력하지 않는다. `--check`는 같은 읽기 전용 준비 검사를 수행하고 Next를 시작하지 않는다. 실제 차단 해소는 사용자 Mac의 진단 결과로 확인하며 기존 사전 검사·공개 키 검증·권한·DB·대기 연결은 변경하지 않는다.
+
+후속 공개 진단은 `npx`·`CLI_FAILED`·종료 코드1이었다. 버전 없는 요청과 설치된 `supabase@2.118.0`이 다른 npm 캐시를 사용하는 결함, npm의 `npx canceled due to missing packages` 문구를 진단에서 놓치는 결함을 보정한다. 기존 오프라인·설치 금지 조건과 조회 범위는 유지한다. 실제 사용자 실패의 원문을 확인한 것은 아니므로 이 두 결함의 재현과 사용자 웹 차단 해소는 구분한다.
+
+이후 사용자 점검은 CLI의 `DOCKER_UNAVAILABLE`로 진행됐다. 현재 보정은 CLI 상태 조회를 검증한 실행 게이트웨이의 공개 키 조회로 대체한다. DB·프로젝트·고정 ID·포트·작업 위치 사전 검사 뒤 컨테이너 ID로 실행 설정을 메모리에서만 읽는다. 지정한 자격증명 필드에 있는 단일 `anon` JWT만 선택하고 설정 원문·관리자 키를 출력·저장·웹 전달하지 않는다. 설정 최대64KiB·공개 키 최대4096자·중복 키 거절을 유지하며 새 도구 설치·개인 설정·DB·AI 실행은 포함하지 않는다. 이전 CLI 진단과 캐시 보정은 이력이며 현재 웹 실행 준비 경로에서 제거한다. 실제 사용자 오류 원문과 웹 접속 성공은 후속 결과로 확인한다.
+
+게이트웨이 보정의 첫 독립 리뷰는 YAML의 여러 줄 설명을 자격증명으로 오인하는 HIGH 1건을 발견했다. 실패 검사3개로 설명 문자열·관련 없는 중첩 필드·키 앞뒤의 다른 문자열 채택을 재현한 뒤 구조를 읽도록 보정한다. 이미 설치된 `js-yaml`4.3.2를 직접 개발 의존성으로 명시하고 같은 버전의 기존 lock 항목을 재사용한다. 다운로드·추가 도구 설치는 하지 않는다. `anon` consumer와 활성 `request-transformer`의 공식 자격증명 경로만 검사하며 YAML 오류·중복 필드·다중 문서·24단계 초과 중첩은 원문 없이 거절한다. 변환 표현식을 실행하지 않고 공식 반환 형식의 전체 문자열만 확인한다. 사용자 `CHECKED`는 첫 게이트웨이 보정의 실행 준비 성공 보고이며 실제 웹 시작·접속 검증은 별도다.
+
+구조 보정의 독립 리뷰에서 `enabled:False/FALSE`를 비활성으로 처리하지 못하는 HIGH 1건을 확인했다. 새 실패 검사로 재현한 뒤 `enabled` 누락 또는 `true`·`True`·`TRUE`만 허용하도록 보정한다. 비활성·null·배열·객체·알 수 없는 값은 거절하며 나머지 공개 키 선택·실행 경계를 유지한다.
+
+Round 1: C0/H4/M2/L0/INFO1. All six corrections ACCEPTED; native-input authorization INFO preserved. Round 2: C0/H1/M1/L0/INFO1. Both corrections ACCEPTED; native-input authorization INFO preserved. Round 3: PASS, C0/H0/M0/L0/INFO1. The final nonretired AI_PAIR resumption versus proof-closed terminal DIRECT distinction was confirmed against actual SQL. Native authorization INFO is retained. 기존 전체 목표 승인에 따라 구현 중이다. 실제 native/DB 검증은 별도 실행 조건을 유지한다.
 
 | Finding | Severity | Disposition | Rationale |
 |---------|----------|-------------|-----------|
@@ -148,3 +174,27 @@ Round 1: C0/H4/M2/L0/INFO1. All six corrections ACCEPTED; native-input authoriza
 
 | Resumable HUMAN_INPUT_REQUIRED versus room mode | HIGH | ACCEPTED | Step2 uses actual cycle states and deadline/run/peer budget conditions in ACTIVE and PAUSED rooms, with empty-poll and finished-request regressions. |
 | Delayed system/init identity versus control initialization | MEDIUM | ACCEPTED | Step1 separates durable RESERVED preparation/control capabilities from delayed actual system/init; exact identity is required before assistant/tool/terminal approval and product tests cover delayed/missing/mismatched init. |
+
+### 구현 리뷰 3과 후속 보정
+
+2026-10-06 구현 리뷰 3은 REVISE, C0/H1/M0/L0/INFO2다. 위 Round 3 PASS는 구현 전 계획 리뷰 결과이며 이 구현 리뷰 결과와 구분한다. [impl-execute](/Users/pullim/.codex/agent-skills/impl-execute/SKILL.md)의 리뷰 3회 상한에 따라 당시 소스를 동결하고 HIGH를 미해결로 남겼다. `status: active`와 Step 미완료 표시는 유지한다.
+
+계속 진행하는 전체 목표의 기존 위임으로 [중단 복구 국소 보정 계획](archive/023-claude-interrupt-recovery.md)을 작성한다. 후속 계획은 이 명세를 대체하지 않는다. 원래 리뷰3의 REVISE 기록은 보존한다. 후속023의 구현·필수 검사·새 독립 리뷰2 PASS가 완료되어 아래 HIGH를 해소 처리했다. 계획 검토만으로 해소 처리한 결과가 아니다.
+
+| Finding | Severity | Disposition | Rationale |
+|---------|----------|-------------|-----------|
+| 도구 없는 Claude 중단의 UNKNOWN 복구 | HIGH | ACCEPTED / RESOLVED by023 | `claude/history-proof.ts:208`은 닫힌 INTERRUPTED 기록이나 도구 취소 증거가 있어야 중단 의도를 복원한다. 종결 저장 전 장애가 난 도구 없는 입력에는 둘 다 없어 `claude/input-proof.ts:529`가 같은 `aborted_streaming`을 FAILED로 채택한다. `workflow-runner.ts:2101`의 관찰에도 정확한 입력의 내구 중단 의도·영수증이 전달되지 않는다. 독립 리뷰의 순수 메모리 재현 2회에서 live INTERRUPTED와 복구 FAILED를 확인했다. 정확한 입력에 묶인 중단 증거의 내구 저장·관찰 전달, 증거 없는 typed 중단의 UNKNOWN 보존과 도구 없는 중단·종결 저장 실패·재시작 회귀 검사가 필요하다. 원래 재현의 실제 native 입력·DB·HTTP·브라우저·native 파일 이력 접근은0회다. 후속023은 전체 입력 descriptor/hash의 내구 중단 증거를 전달하고 새 실제 ClaudeAdapter+실행기의 같은 합성 이력 복구, archive 후 검증, 증거 없는 abort의 UNKNOWN 보존을 검사했다. 대상47/47·전체connector410/410·독립 구현 리뷰2 C0/H0/M0/L0/INFO2로 해소했다. 실제 공식CLI·DB·두 Mac 수용은 남아 있다. |
+
+
+## Implementation Review
+
+2026-10-06 소스 구현과 합성 검증을 진행했다. 실제 수용을 포함한 Step 완료 표시는 유지한다. 검사 수치와 환경별 미완료 범위는 [진행 정본](../planning/delivery-and-validation.md#현재-진행-상태)에 둔다.
+
+- 구현 리뷰 1: backend C0/H3/M1/L0/INFO1. 설정 receipt 이전의 currentBinding, Codex effort 검증, 취소 후 PC 정리 예약, receipt state 타입을 소스·회귀 검사로 보정했다.
+- 구현 리뷰 2: 전체 운영 소스 C0/H4/M1/L0/INFO2. 완료 operation 정확 조회, 같은 pointer의 동기화 재확인, 중단한 읽기 도구의 내구 취소 증거와 전체 이력 검증, 제거한 profile의 재연결 정책, 확정 거절 요청의 화면 예약 해제를 보정했다. 관련 실패를 먼저 재현했으며 전체 합성 검사를 다시 통과했다.
+- 구현 리뷰 3: REVISE, C0/H1/M0/L0/INFO2. 고정 소스 62개의 SHA가 모두 일치하고 리뷰 2와 같은 34개 파일의 근거를 재사용했다. 도구 취소 보정은 확인했으나 도구 없는 중단의 UNKNOWN 복구에서 별도 HIGH 1건을 순수 메모리로 재현했다. 리뷰 3회 상한에 도달해 위 Review Notes에 UNRESOLVED로 남겼다. 이 소스 리뷰는 실제 SQL 설치·upgrade·Auth HTTP·브라우저·Mac 폴더 창·공식 Claude·두 Mac 수용을 대신하지 않는다.
+
+023 후속 보정: 원래 구현 리뷰3의 중단 복구 HIGH와 보정 중 드러난 종료 대기 회귀를 별도 국소 구현·검사·독립 리뷰로 해소했다. 원래022 전체 구현 리뷰3의 REVISE는 역사적 결과로 유지하며022의 실제 수용과 native 운영 공급 미완료는 계속 이 명세의 범위다.
+
+
+024 후속 연결 기록: [Claude 정책·이력 연결 기록](archive/024-claude-native-policy-and-history.md)의 공통 생성 함수와 exact owned history 공급, 설정/환경 변경·effort 고정·profile catalog 실행 차단을 소스에 연결했다. 당시 합성 전체443/443과 독립 구현 리뷰1 PASS C0/H0/M0/L0/INFO0을 확인했으며 공식 설치 admission은 없었다. 2026-10-07의 native 기본 정책·후속 질문 보정은030에서 진행한다. 009의 추가 최대3회·합계 최대6회 사용자 승인은 재사용하며 현재 실행 조건은009와 검증 정본을 따른다.

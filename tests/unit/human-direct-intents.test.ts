@@ -73,6 +73,7 @@ async function restore(
       if (
         [
           "./chat-timeline",
+          "./own-input-controls",
           "./chat-composer",
           "./advanced-controls",
           "../../components/ui/button",

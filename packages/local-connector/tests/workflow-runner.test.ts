@@ -19,6 +19,7 @@ import { RuntimeFilePolicy } from "../src/runtime-file-policy.ts";
 import { CodexAdapter } from "../src/codex-adapter.ts";
 import { FakeProvider } from "./fake-provider.ts";
 import { WorkflowError, type AttemptSnapshot } from "../src/workflow-contracts.ts";
+import { WorkflowClient } from "../src/workflow-client.ts";
 
 function callback(
   authority: AttemptAuthority,
@@ -4053,3 +4054,617 @@ test("should keep monitoring through a maximum continuation lease receipt and pu
     await f.close();
   }
 });
+
+test("should report paused readiness on restart without claiming or submitting new native input", async () => {
+  const f = await runnerFixture();
+  try {
+    f.pauseInput(true);
+    f.queue();
+    await f.runner().run({ once: true });
+    assert.equal(f.adapter.starts, 0);
+    assert.equal(
+      f.requests.some((r) => r.action === "claim"),
+      false,
+    );
+    assert.equal(f.requests.find((r) => r.action === "ready")?.body.reportedReady, false);
+    assert.equal(f.inputState().appliedRevision, 2);
+    assert.equal(
+      (await f.store.read())!.operations.some((op) =>
+        ["admission", "admission-ack"].includes(op.action),
+      ),
+      false,
+    );
+  } finally {
+    await f.close();
+  }
+});
+test("should seal only a transmitted claim explicitly denied by input pause", async () => {
+  const f = await runnerFixture();
+  try {
+    f.queue();
+    f.faults.before = async (action) => {
+      if (action === "claim") f.pauseInput(true);
+    };
+    await f.runner().run({ once: true });
+    const record = (await f.store.read())!,
+      a = record.attempts[0];
+    assert.equal(f.adapter.starts, 0);
+    assert.equal(a.state, "NOT_STARTED");
+    assert.deepEqual(a.unstartedClosure, {
+      kind: "SERVER_INPUT_PAUSED",
+      claimOperationId: a.claimOperationId,
+    });
+    assert.equal(
+      record.operations.find((op) => op.operationId === a.claimOperationId)?.state,
+      "CLOSED",
+    );
+    assert.equal(a.snapshot, null);
+  } finally {
+    await f.close();
+  }
+});
+test("should recover exact lost denial after resume and never replay its sealed operation", async () => {
+  const f = await runnerFixture();
+  try {
+    f.queue();
+    f.faults.before = async (action) => {
+      if (action === "claim") f.pauseInput(true);
+    };
+    f.faults.after = async (action, _body, _result, response) => {
+      if (action === "claim") response.destroy();
+    };
+    await f.runner().run({ once: true });
+    const uncertain = (await f.store.read())!,
+      claim = uncertain.operations.find((op) => op.action === "claim")!;
+    assert.equal(uncertain.attempts[0].state, "UNKNOWN");
+    assert.equal(claim.state, "TRANSMITTED");
+    f.faults.before = undefined;
+    f.faults.after = undefined;
+    f.pauseInput(false);
+    await f.runner(new SyntheticAdapter()).run({ once: true });
+    const recovered = (await f.store.read())!;
+    assert.equal(recovered.attempts[0].unstartedClosure?.kind, "SERVER_INPUT_PAUSED");
+    assert.equal(recovered.attempts[1].state, "UPLOADED");
+    assert.notEqual(recovered.attempts[1].claimOperationId, claim.operationId);
+    const exact = f.requests.filter(
+      (r) => r.action === "claim" && r.body.operationId === claim.operationId,
+    );
+    assert.equal(exact.length, 2);
+    assert.deepEqual(exact[0].body, exact[1].body);
+    await f.runner(new SyntheticAdapter()).run({ once: true });
+    assert.equal(f.requests.filter((r) => r.body.operationId === claim.operationId).length, 2);
+  } finally {
+    await f.close();
+  }
+});
+test("should preserve admitted native tools and terminal publication when input pause or ACK lookup fails", async () => {
+  for (const failure of ["pause", "offline", "stale-ack"]) {
+    const f = await runnerFixture({ pollIntervalMs: 5, leaseIntervalMs: 10 });
+    try {
+      f.queue();
+      f.adapter.executeHook = async (authority) => {
+        const reads = f.requests.filter((r) => r.action === "admission").length;
+        if (failure === "pause") f.pauseInput(true);
+        else if (failure === "stale-ack") {
+          f.pauseInput(true);
+          f.faults.before = async (action) => {
+            if (action === "admission-ack") f.pauseInput(false);
+          };
+        } else
+          f.faults.before = async (action) => {
+            if (action === "admission" || action === "admission-ack") throw new Error(failure);
+          };
+        await waitForSynthetic(
+          () => f.requests.filter((r) => r.action === "admission").length > reads,
+          "active input read did not run",
+        );
+        const turn = (await f.store.read())!.attempts[0].native!.turnId;
+        const result = await authority.tool(
+          callback(
+            authority,
+            turn,
+            "read_workspace_file",
+            { path: "public.txt" },
+            "paused-file-read",
+          ),
+        );
+        assert.equal(result.success, true);
+      };
+      await f.runner().run({ once: true });
+      assert.equal(f.adapter.starts, 1);
+      assert.equal((await f.store.read())!.attempts[0].state, "UPLOADED");
+      assert.equal(
+        f.requests.some((r) => r.action === "complete"),
+        true,
+      );
+    } finally {
+      await f.close();
+    }
+  }
+});
+test("should keep prior successful claim recovery while paused without submitting a new native input", async () => {
+  const f = await runnerFixture();
+  try {
+    f.queue();
+    f.faults.after = async (action, _body, _result, response) => {
+      if (action === "claim") response.destroy();
+    };
+    await f.runner().run({ once: true });
+    const original = (await f.store.read())!.operations.find((op) => op.action === "claim")!;
+    f.faults.after = undefined;
+    f.pauseInput(true);
+    const adapter = new SyntheticAdapter();
+    await f.runner(adapter).run({ once: true });
+    const next = (await f.store.read())!;
+    assert.equal(next.attempts[0].state, "UNKNOWN");
+    assert.equal(next.attempts[0].unstartedClosure, undefined);
+    assert.equal(adapter.starts, 0);
+    assert.deepEqual(
+      f.requests.filter((r) => r.action === "claim").map((r) => r.body),
+      [original.body, original.body],
+    );
+  } finally {
+    await f.close();
+  }
+});
+
+test("should retain UNKNOWN before denial proof commit and adopt immutable closure after committed write failure", async () => {
+  for (const boundary of ["before", "after"]) {
+    const f = await runnerFixture();
+    try {
+      f.queue();
+      f.faults.before = async (action) => {
+        if (action === "claim") f.pauseInput(true);
+      };
+      const originalWrite = f.store.write.bind(f.store);
+      let injected = false;
+      if (boundary === "after")
+        f.store.write = async (value, guard) => {
+          await originalWrite(value, guard);
+          if (
+            !injected &&
+            value.attempts.at(-1)?.unstartedClosure?.kind === "SERVER_INPUT_PAUSED"
+          ) {
+            injected = true;
+            throw new RuntimeError("UNKNOWN");
+          }
+        };
+      await f
+        .runner(f.adapter, {
+          beforeMutation: async (kind) => {
+            if (boundary === "before" && kind === "unstarted-closure")
+              throw new RuntimeError("UNKNOWN");
+          },
+        })
+        .run({ once: true });
+      const saved = (await f.store.read())!;
+      assert.equal(f.adapter.starts, 0);
+      assert.equal(saved.attempts[0].state, boundary === "before" ? "UNKNOWN" : "NOT_STARTED");
+      assert.equal(
+        saved.operations.find((o) => o.action === "claim")!.state,
+        boundary === "before" ? "TRANSMITTED" : "CLOSED",
+      );
+      f.store.write = originalWrite;
+      f.faults.before = undefined;
+      await f.runner(new SyntheticAdapter()).run({ once: true });
+      assert.equal(
+        (await f.store.read())!.attempts[0].unstartedClosure?.kind,
+        "SERVER_INPUT_PAUSED",
+      );
+    } finally {
+      await f.close();
+    }
+  }
+});
+test("should never seal denial proof for a different action or malformed claim envelope", async () => {
+  for (const failure of ["other-action", "malformed-envelope"]) {
+    const f = await runnerFixture();
+    try {
+      f.queue();
+      const runtime = f.runner();
+      if (failure === "other-action") {
+        const original = runtime.client.call.bind(runtime.client);
+        runtime.client.call = async (action, ...args) => {
+          if (action === "start-intent") throw new WorkflowError("INPUT_PAUSED");
+          return original(action, ...args);
+        };
+      } else
+        f.faults.after = async (action, _body, result) => {
+          if (action === "claim") Object.assign(result as object, { claimDenied: "INPUT_PAUSED" });
+        };
+      await runtime.run({ once: true });
+      const saved = (await f.store.read())!;
+      assert.equal(saved.attempts[0].state, "UNKNOWN");
+      assert.equal(saved.attempts[0].unstartedClosure, undefined);
+      assert.equal(f.adapter.starts, 0);
+    } finally {
+      await f.close();
+    }
+  }
+});
+
+for (const controlCase of [
+  "exact",
+  "missing",
+  "other-attempt",
+  "other-fence",
+  "expired",
+] as const) {
+  test(
+    `should preserve held lease-boundary cancellation authority for ${controlCase} control`,
+    { timeout: 10000 },
+    async (t) => {
+      t.mock.timers.enable({ apis: ["Date"], now: 1790848000000 });
+      const f = await runnerFixture({ pollIntervalMs: 5, leaseIntervalMs: 200 }),
+        providerEntered = deferred(),
+        providerRelease = deferred(),
+        pollEntered = deferred(),
+        pollRelease = deferred(),
+        leaseEntered = deferred(),
+        leaseRelease = deferred();
+      const runtime = f.runner();
+      let run: Promise<unknown> | undefined,
+        heldPoll = false,
+        leaseCalls = 0,
+        controlPolls = 0,
+        ownedInterrupts = 0;
+      const call = runtime.client.call.bind(runtime.client);
+      const conflictingLease = new WorkflowClient(runtime.client.origin, async () => {
+        leaseCalls++;
+        leaseEntered.resolve();
+        await leaseRelease.promise;
+        // DIRECT human_required rejects renewal while the exact control remains pollable.
+        // The shared fixture has no cycle-state column; only this HTTP response is replaced.
+        return Response.json({ ok: false, error: { code: "CONFLICT" } }, { status: 409 });
+      });
+      t.mock.method(runtime.client, "call", async (...args: Parameters<typeof call>) => {
+        if (args[0] === "lease") return conflictingLease.call(...args);
+        const result = await call(...args);
+        if (args[0] === "poll" && f.adapter.starts && !heldPoll) {
+          heldPoll = true;
+          pollEntered.resolve();
+          await pollRelease.promise;
+        } else if (args[0] === "poll" && leaseCalls && f.poll().control) controlPolls++;
+        return result;
+      });
+      t.mock.method(f.adapter, "interrupt", async (authority: AttemptAuthority) => {
+        f.adapter.interrupts++;
+        // Shutdown also interrupts. Count every live delivery so a mismatched control cannot hide.
+        try {
+          authority.assertLive();
+          ownedInterrupts++;
+          f.adapter.terminal = "INTERRUPTED";
+        } catch {
+          // Best-effort shutdown cannot provide an adopted typed terminal.
+        }
+        providerRelease.resolve();
+        return true;
+      });
+      try {
+        const request = f.queue("PEER");
+        f.adapter.executeHook = async () => {
+          providerEntered.resolve();
+          await providerRelease.promise;
+        };
+        run = runtime.run({ once: true });
+        await providerEntered.promise;
+        await pollEntered.promise;
+        assert.equal(f.poll().control, null);
+        t.mock.timers.setTime(Date.now() + 200);
+        pollRelease.resolve();
+        await leaseEntered.promise;
+        const attempt = f.poll().attempt!;
+        assert.equal(attempt.state, "EXECUTING");
+        assert.equal(attempt.requestId, request.requestId);
+        assert.equal(f.poll().roomMode, "ACTIVE");
+        if (controlCase !== "missing") {
+          const control = f.control();
+          if (controlCase === "other-attempt") control.attemptId = uuid();
+          if (controlCase === "other-fence") control.fence++;
+          assert.equal(control.state, "REQUESTED");
+          if (controlCase === "exact" || controlCase === "expired") {
+            assert.equal(control.requestId, attempt.requestId);
+            assert.equal(control.attemptId, attempt.attemptId);
+            assert.equal(control.fence, attempt.fence);
+          }
+        }
+        if (controlCase === "expired") t.mock.timers.setTime(Date.now() + 30000);
+        leaseRelease.resolve();
+        const outcome = await run.then(
+          (result) => ({ result, error: null }),
+          (error: unknown) => ({ result: null, error }),
+        );
+        const saved = (await f.store.read())!,
+          journal = saved.attempts[0];
+        t.diagnostic(
+          JSON.stringify({
+            controlCase,
+            leaseCalls,
+            controlPolls,
+            ownedInterrupts,
+            rawInterrupts: f.adapter.interrupts,
+            state: journal.state,
+            terminal: journal.terminal?.terminal ?? null,
+            receipt: journal.receipt,
+            error: outcome.error instanceof Error ? outcome.error.message : null,
+            starts: f.adapter.starts,
+            questions: f.questionCount(),
+          }),
+        );
+        assert.equal(leaseCalls, 1);
+        assert.equal(f.adapter.starts, 1);
+        assert.equal(f.questionCount(), 0);
+        assert.equal(f.requests.filter((r) => r.action === "question").length, 0);
+        assert.equal(saved.attempts.length, 1);
+        if (controlCase === "exact") {
+          assert.equal(
+            ownedInterrupts,
+            1,
+            "exact requested control must reach the live held provider",
+          );
+          assert.ok(controlPolls >= 1);
+          assert.equal(outcome.error, null);
+          assert.equal((outcome.result as { state: string }).state, "UPLOADED");
+          assert.equal(journal.state, "UPLOADED");
+          assert.equal(journal.terminal?.terminal, "INTERRUPTED");
+          assert.equal(journal.terminal?.textProof, "FINAL_ANSWER");
+          assert.deepEqual(journal.terminal?.finalItems, [
+            { id: "final", hash: digest("Selected public conclusion.") },
+          ]);
+          assert.equal(journal.receipt?.terminal, "INTERRUPTED");
+          assert.equal(journal.receipt?.requestId, request.requestId);
+          assert.equal(journal.receipt?.attemptId, attempt.attemptId);
+          assert.equal(f.poll().control?.state, "ACKNOWLEDGED");
+          assert.equal(f.requests.filter((r) => r.action === "interrupt-ack").length, 1);
+        } else {
+          assert.equal(ownedInterrupts, 0);
+          assert.equal(journal.state, "UNKNOWN");
+          assert.equal(journal.terminal, null);
+          assert.equal(journal.receipt, null);
+          assert.equal(outcome.error, null);
+          assert.equal((outcome.result as { state: string }).state, "UNKNOWN");
+          assert.equal(f.requests.filter((r) => r.action === "interrupt-ack").length, 0);
+          assert.equal(f.requests.filter((r) => r.action === "complete").length, 0);
+          assert.equal(f.requests.filter((r) => r.action === "observe").length, 0);
+        }
+      } finally {
+        runtime.stop();
+        providerRelease.resolve();
+        pollRelease.resolve();
+        leaseRelease.resolve();
+        await run?.catch(() => {});
+        await f.close();
+      }
+    },
+  );
+}
+
+async function heldLeaseBoundary(t: import("node:test").TestContext) {
+  t.mock.timers.enable({ apis: ["Date"], now: 1790848000000 });
+  const f = await runnerFixture({ pollIntervalMs: 5, leaseIntervalMs: 200 });
+  const providerEntered = deferred(),
+    providerRelease = deferred(),
+    pollEntered = deferred(),
+    pollRelease = deferred(),
+    leaseEntered = deferred(),
+    leaseRelease = deferred();
+  const runtime = f.runner();
+  const call = runtime.client.call.bind(runtime.client);
+  let heldPoll = false;
+  const leaseClient = new WorkflowClient(runtime.client.origin, async () => {
+    leaseEntered.resolve();
+    await leaseRelease.promise;
+    return Response.json({ ok: false, error: { code: "CONFLICT" } }, { status: 409 });
+  });
+  t.mock.method(runtime.client, "call", async (...args: Parameters<typeof call>) => {
+    if (args[0] === "lease") return leaseClient.call(...args);
+    const result = await call(...args);
+    if (args[0] === "poll" && f.adapter.starts && !heldPoll) {
+      heldPoll = true;
+      pollEntered.resolve();
+      await pollRelease.promise;
+    }
+    return result;
+  });
+  f.queue("PEER");
+  f.adapter.executeHook = async () => {
+    providerEntered.resolve();
+    await providerRelease.promise;
+  };
+  const run = runtime.run({ once: true });
+  const close = async () => {
+    runtime.stop();
+    providerRelease.resolve();
+    pollRelease.resolve();
+    leaseRelease.resolve();
+    await run.catch(() => {});
+    await f.close();
+  };
+  try {
+    await providerEntered.promise;
+    await pollEntered.promise;
+    t.mock.timers.setTime(Date.now() + 200);
+    pollRelease.resolve();
+    await leaseEntered.promise;
+    return { f, runtime, run, providerRelease, leaseRelease, close };
+  } catch (error) {
+    await close();
+    throw error;
+  }
+}
+
+for (const boundary of [
+  "confirmed",
+  "interrupt-denied",
+  "other-request",
+  "expired-poll",
+  "foreign-poll",
+  "terminal-poll",
+  "ack-error",
+  "ack-foreign",
+] as const) {
+  test(
+    `should require confirmed held lease-boundary cancellation for ${boundary}`,
+    { timeout: 10000 },
+    async (t) => {
+      const fixture = await heldLeaseBoundary(t);
+      const { f, runtime, run, providerRelease, leaseRelease } = fixture;
+      let liveInterrupts = 0,
+        ackCalls = 0;
+      const call = runtime.client.call.bind(runtime.client);
+      const failedAck = new WorkflowClient(runtime.client.origin, async () =>
+        Response.json({ ok: false, error: { code: "UNAVAILABLE" } }, { status: 503 }),
+      );
+      t.mock.method(runtime.client, "call", async (...args: Parameters<typeof call>) => {
+        if (args[0] === "interrupt-ack") {
+          ackCalls++;
+          if (boundary === "ack-error") return failedAck.call(...args);
+        }
+        const result = await call(...args);
+        if (args[0] === "interrupt-ack" && boundary === "ack-foreign")
+          return { ...(result as object), controlId: uuid() };
+        if (
+          args[0] === "poll" &&
+          ["expired-poll", "foreign-poll", "terminal-poll"].includes(boundary)
+        ) {
+          const poll = structuredClone(result) as ReturnType<typeof f.poll>;
+          assert.ok(poll.attempt);
+          if (boundary === "expired-poll")
+            poll.attempt.leaseExpiresAt = new Date(Date.now()).toISOString();
+          if (boundary === "foreign-poll") poll.attempt.attemptId = uuid();
+          if (boundary === "terminal-poll") poll.attempt.state = "INTERRUPTED";
+          return poll;
+        }
+        return result;
+      });
+      t.mock.method(f.adapter, "interrupt", async (authority: AttemptAuthority) => {
+        try {
+          authority.assertLive();
+        } catch {
+          providerRelease.resolve();
+          return true;
+        }
+        liveInterrupts++;
+        if (boundary === "interrupt-denied") return false;
+        f.adapter.terminal = "INTERRUPTED";
+        return true;
+      });
+      try {
+        const control = f.control();
+        if (boundary === "other-request") control.requestId = uuid();
+        const originalLeaseExpiry = f.poll().attempt!.leaseExpiresAt;
+        if (boundary === "confirmed") {
+          f.faults.after = async (action) => {
+            if (action === "interrupt-ack") providerRelease.resolve();
+          };
+        }
+        leaseRelease.resolve();
+        const status = await run;
+        const saved = (await f.store.read())!,
+          journal = saved.attempts[0];
+        assert.equal(f.adapter.starts, 1);
+        assert.equal(f.questionCount(), 0);
+        assert.equal(saved.attempts.length, 1);
+        assert.equal(journal.snapshot!.leaseExpiresAt, originalLeaseExpiry);
+        if (boundary === "confirmed") {
+          assert.equal(status.state, "UPLOADED");
+          assert.equal(liveInterrupts, 1);
+          assert.equal(ackCalls, 1);
+          assert.equal(journal.terminal?.terminal, "INTERRUPTED");
+          assert.equal(journal.receipt?.terminal, "INTERRUPTED");
+          assert.equal(journal.receipt?.requestId, control.requestId);
+          assert.equal(journal.receipt?.attemptId, control.attemptId);
+          const lease = saved.operations.find((o) => o.action === "lease")!;
+          const complete = saved.operations.find((o) => o.action === "complete")!;
+          assert.equal(lease.state, "CLOSED");
+          assert.equal(lease.result, null);
+          assert.equal(complete.state, "CONFIRMED");
+          assert.deepEqual(complete.result, journal.receipt);
+        } else {
+          assert.equal(status.state, "UNKNOWN");
+          assert.equal(journal.state, "UNKNOWN");
+          assert.equal(journal.terminal, null);
+          assert.equal(journal.receipt, null);
+          assert.equal(
+            liveInterrupts,
+            ["interrupt-denied", "ack-error", "ack-foreign"].includes(boundary) ? 1 : 0,
+          );
+          assert.equal(ackCalls, ["ack-error", "ack-foreign"].includes(boundary) ? 1 : 0);
+          assert.equal(
+            f.requests.filter((r) => r.action === "complete" || r.action === "observe").length,
+            0,
+          );
+        }
+      } finally {
+        await fixture.close();
+      }
+    },
+  );
+}
+
+test(
+  "should preserve exact pending publication when a held lease-conflict poll observes a local terminal",
+  { timeout: 10000 },
+  async (t) => {
+    const fixture = await heldLeaseBoundary(t);
+    const { f, runtime, run, providerRelease, leaseRelease } = fixture;
+    const completionEntered = deferred(),
+      completionRelease = deferred();
+    const call = runtime.client.call.bind(runtime.client);
+    let liveInterrupts = 0,
+      terminalPolls = 0;
+    t.mock.method(runtime.client, "call", async (...args: Parameters<typeof call>) => {
+      if (args[0] === "poll") {
+        providerRelease.resolve();
+        await completionEntered.promise;
+        assert.equal((await f.store.read())!.attempts[0].state, "TERMINAL");
+        terminalPolls++;
+        const result = await call(...args);
+        completionRelease.resolve();
+        return result;
+      }
+      return call(...args);
+    });
+    t.mock.method(f.adapter, "interrupt", async (authority: AttemptAuthority) => {
+      try {
+        authority.assertLive();
+        liveInterrupts++;
+      } catch {
+        /* Shutdown is not owned delivery. */
+      }
+      providerRelease.resolve();
+      return true;
+    });
+    try {
+      f.control();
+      f.faults.after = async (action) => {
+        if (action === "complete") {
+          completionEntered.resolve();
+          await completionRelease.promise;
+        }
+      };
+      leaseRelease.resolve();
+      const status = await run;
+      const saved = (await f.store.read())!,
+        journal = saved.attempts[0];
+      assert.equal(terminalPolls, 1);
+      assert.equal(liveInterrupts, 0);
+      assert.equal(status.state, "UPLOADED");
+      assert.equal(journal.terminal?.terminal, "COMPLETED");
+      assert.equal(journal.receipt?.terminal, "COMPLETED");
+      assert.equal(saved.operations.find((o) => o.action === "lease")!.state, "CLOSED");
+      assert.deepEqual(
+        saved.operations.find((o) => o.action === "complete")!.result,
+        journal.receipt,
+      );
+      assert.equal(f.requests.filter((r) => r.action === "complete").length, 1);
+      assert.equal(f.requests.filter((r) => r.action === "interrupt-ack").length, 0);
+      assert.equal(f.adapter.starts, 1);
+      assert.equal(f.questionCount(), 0);
+    } finally {
+      completionEntered.resolve();
+      completionRelease.resolve();
+      await fixture.close();
+    }
+  },
+);

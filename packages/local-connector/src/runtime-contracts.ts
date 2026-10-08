@@ -9,8 +9,10 @@ import type {
 } from "./workflow-contracts.ts";
 
 export const runtimeVersion = 1 as const;
+export const providerRuntimeVersion = 2 as const;
 export const codexVersion = "0.159.1";
 export const scopedNamespace = "ai_collaboration_scoped";
+export type RuntimeProvider = "codex" | "claude";
 export type RuntimeCode =
   | "RUNTIME_CAPACITY"
   | "INVALID_RUNTIME"
@@ -51,17 +53,18 @@ export interface RuntimeScope {
 }
 export interface RequestedSettings {
   model: string;
-  effort: string;
+  effort: string | null;
 }
 export interface ModelCapability {
   id: string;
   model: string;
   efforts: string[];
-  defaultEffort: string;
+  defaultEffort: string | null;
   isDefault: boolean;
 }
 export interface Capabilities {
-  version: typeof codexVersion;
+  runtime?: RuntimeProvider;
+  version: string;
   models: ModelCapability[];
   defaultSettings: RequestedSettings | null;
   snapshotHash: string;
@@ -72,7 +75,7 @@ export interface SettingsObservation {
   thread: { model: string | null; provider: string; effort: string | null };
   turn: {
     requestedModel: string;
-    requestedEffort: string;
+    requestedEffort: string | null;
     model: string | null;
     rerouted: boolean;
     effortVerification: "UNVERIFIED";
@@ -84,6 +87,60 @@ export interface RootIdentity {
   ino: number;
   uid: number;
 }
+export type RepositoryMode = "SELECTED" | "AUTO_CODE";
+export interface RepositoryAccess {
+  version: 1;
+  mode: "AUTO_CODE";
+  generation: string;
+  localRootReference: string;
+  confirmationOperationId: string;
+  approvedAt: string;
+  rootIdentityHash: string;
+  sharePathHashConfirmed: true;
+}
+export interface RepositoryToolPolicy {
+  version: 1;
+  mode: RepositoryMode;
+  peerAllowed: boolean;
+}
+export interface RepositoryToolIntent {
+  version: 1;
+  kind: "REPOSITORY_TOOL_INTENT";
+  generation: string;
+  approvalHash: string;
+  tool: "list_workspace_files" | "search_workspace" | "read_workspace_file";
+  argumentsHash: string;
+  createdAt: string;
+  intentHash: string;
+}
+export interface RepositoryExcerpt {
+  path: string;
+  hash: string;
+  readAt: string;
+  byteStart: number;
+  byteEnd: number;
+  excerptHash: string;
+}
+export interface RepositoryToolObservation {
+  version: 1;
+  kind: "REPOSITORY_TOOL_OBSERVATION";
+  generation: string;
+  approvalHash: string;
+  tool: RepositoryToolIntent["tool"];
+  resultHash: string;
+  files: RepositoryExcerpt[];
+  observationHash: string;
+}
+export interface PeerEvidenceObservation {
+  version: 1;
+  kind: "PEER_EVIDENCE_OBSERVATION";
+  generation: string;
+  approvalHash: string;
+  purpose: "VERIFIED_FOR_PEER_QUESTION";
+  /** Requested lines and verified fragment bytes are distinct; this is pre-send evidence. */
+  files: (RepositoryExcerpt & { startLine: number; endLine: number; lineCount: number })[];
+  observationHash: string;
+}
 export interface FileSnapshot {
   path: string;
   dev: number;
@@ -93,6 +150,35 @@ export interface FileSnapshot {
   ctimeMs: number;
   hash: string;
 }
+export interface NativeToolCancellation {
+  callId: string;
+  controlId: string;
+  payloadHash: string;
+  cancelHash: string;
+}
+export const claudeInterruptRequest = Object.freeze({
+  subtype: "interrupt",
+  cancel_queued: true,
+} as const);
+export interface NativeInterruptionReceipt {
+  stillQueued: [];
+  cancelled: string[];
+  responseHash: string;
+}
+export interface NativeInterruption {
+  intent: NativeInputIntent;
+  intentHash: string;
+  requestHash: string;
+  receipt?: NativeInterruptionReceipt;
+}
+export type NativeHistoryEvidence =
+  | {
+      state: "VERIFIED";
+      format: "claude-jsonl-v1";
+      recordCount: number;
+      prefixHash: string;
+    }
+  | { state: "UNVERIFIED"; reason: "MISSING_HISTORY" | "HISTORY_REJECTED" };
 export interface OwnedContext {
   ownership: "CONNECTOR_CREATED";
   generation: string;
@@ -100,16 +186,34 @@ export interface OwnedContext {
   root: RootIdentity;
   epoch: number;
   level: "L1" | "L2";
-  ownedTurns: { turnId: string; terminal: Terminal }[];
+  ownedTurns: {
+    turnId: string;
+    terminal: Terminal;
+    promptHash?: string;
+    resultHash?: string;
+    toolReceipts?: { callId: string; payloadHash: string; responseHash: string }[];
+    toolCancellations?: NativeToolCancellation[];
+    nativeInterruption?: NativeInterruption;
+    toolPolicy?: RepositoryToolPolicy;
+    nativeHistory?: NativeHistoryEvidence;
+  }[];
+  provider?: RuntimeProvider;
+  materialization?: {
+    state: "RESERVED" | "MATERIALIZED";
+    version: string;
+    policyFingerprint: string;
+    initHash: string | null;
+  };
 }
 export interface RuntimeSettings {
-  provider: "codex";
+  provider: RuntimeProvider;
   requested: RequestedSettings;
   capabilities: Capabilities;
   files: FileSnapshot[];
   handoff: string;
   publicScopeConfirmed: true;
   autoQuestionsConfirmed: boolean;
+  repositoryAccess?: RepositoryAccess;
 }
 export type JournalState =
   | "CLAIM_PENDING"
@@ -132,6 +236,10 @@ export interface TerminalEvidence {
   finalItems: { id: string; hash: string }[];
   textProof: "FINAL_ANSWER" | "UNCONFIRMED";
   observation: SettingsObservation;
+  nativeInitHash?: string;
+  toolCancellations?: NativeToolCancellation[];
+  nativeInterruption?: NativeInterruption;
+  nativeHistory?: NativeHistoryEvidence;
 }
 export interface RuntimeOperation {
   operationId: string;
@@ -141,6 +249,18 @@ export interface RuntimeOperation {
   state: "PENDING" | "TRANSMITTED" | "CONFIRMED" | "CLOSED";
   result: unknown | null;
 }
+export interface SourceObservation {
+  version: 1;
+  kind: "INPUT_SOURCE_OBSERVATION";
+  git: { observedAt: string; commit: string | null; ref: string | null; dirty: "unknown" };
+  files: {
+    validatedAt: string;
+    pathBase: "SELECTED_ROOT";
+    entries: { path: string; hash: string }[];
+    manifestHash: string;
+  };
+  observationHash: string;
+}
 export interface AttemptJournal {
   requestId: string;
   scope: RuntimeScope;
@@ -149,9 +269,14 @@ export interface AttemptJournal {
   claimOperationId?: string;
   unstartedClosure?:
     | { kind: "LOCAL_NOT_TRANSMITTED"; claimOperationId: string }
+    | { kind: "SERVER_INPUT_PAUSED"; claimOperationId: string }
     | { kind: "SERVER_ABANDONED"; claimOperationId: string; snapshot: AttemptSnapshot };
   snapshot: AttemptSnapshot | null;
   native: { threadId: string; turnId: string } | null;
+  nativeIntent?: NativeInputIntent;
+  sourceObservation?: SourceObservation;
+  toolCancellations?: NativeToolCancellation[];
+  nativeInterruption?: NativeInterruption;
   terminal: TerminalEvidence | null;
   receipt: TerminalReceipt | null;
   reason: RuntimeCode | null;
@@ -160,6 +285,9 @@ export interface AttemptJournal {
     payloadHash: string;
     operationId: string | null;
     result: ToolResult | null;
+    repositoryIntent?: RepositoryToolIntent;
+    repositoryObservation?: RepositoryToolObservation;
+    peerEvidenceObservation?: PeerEvidenceObservation;
   }[];
 }
 export interface PreparationJournal {
@@ -179,7 +307,7 @@ export interface RuntimeLastArchive {
   attemptId: string;
 }
 export interface RuntimeRecord {
-  version: 1;
+  version: 1 | 2;
   scope: RuntimeScope;
   settings: RuntimeSettings | null;
   context: OwnedContext | null;
@@ -208,9 +336,33 @@ export interface AttemptAuthority {
   attempt: AttemptSnapshot;
   signal: AbortSignal;
   assertLive(): void;
-  ack(threadId: string, turnId: string): Promise<void>;
+  ack(threadId: string, turnId: string, initHash?: string): Promise<void>;
   tool(call: ToolCall): Promise<ToolResult>;
+  cancelledTool?(proof: NativeToolCancellation): Promise<void>;
+  interruption?(proof: NativeInterruption): Promise<"SAVED" | "CLOSED">;
+  peerTools?: boolean;
 }
+/** Claude's host reservation is not evidence that an input reached the native runtime. */
+export interface NativeInputIntent {
+  provider: "claude";
+  sessionId: string;
+  inputId: string;
+  promptHash: string;
+  generation: string;
+  scope: RuntimeScope;
+  attemptId: string;
+  fence: number;
+  policyFingerprint: string;
+  toolPolicy?: RepositoryToolPolicy;
+}
+export type NativeObservation = {
+  threadId: string;
+  turnId: string;
+  intent?: NativeInputIntent;
+  toolCalls?: AttemptJournal["toolCalls"];
+  toolCancellations?: NativeToolCancellation[];
+  nativeInterruption?: NativeInterruption;
+};
 export interface RuntimeAdapter {
   capabilities(root: string, assertLive: () => void): Promise<Capabilities>;
   prepare(
@@ -230,13 +382,13 @@ export interface RuntimeAdapter {
     authority: AttemptAuthority,
     settings: RuntimeSettings,
     payload: RequestPayload,
-    beforeSubmit: () => Promise<void>,
+    beforeSubmit: (intent?: NativeInputIntent) => Promise<void>,
   ): Promise<TerminalEvidence>;
   interrupt(authority: AttemptAuthority): Promise<boolean>;
   observe(
     context: OwnedContext,
     settings: RuntimeSettings,
-    native: { threadId: string; turnId: string },
+    native: NativeObservation,
     assertLive: () => void,
   ): Promise<TerminalEvidence | null>;
   close(): Promise<void>;

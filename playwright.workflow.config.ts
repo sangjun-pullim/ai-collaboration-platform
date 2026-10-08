@@ -1,7 +1,7 @@
 import { defineConfig, devices } from "@playwright/test";
 export default defineConfig({
   testDir: "./tests/e2e",
-  testMatch: "investigation-coordinator.spec.ts",
+  testMatch: ["investigation-coordinator.spec.ts", "shared-input-source-history.spec.ts"],
   fullyParallel: false,
   workers: 1,
   retries: 0,

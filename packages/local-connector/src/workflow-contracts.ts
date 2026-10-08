@@ -1,5 +1,23 @@
+import {
+  validPacketJson,
+  sourceHash,
+  sourceUint,
+  validSourceResponse,
+} from "./workflow/source-contracts.ts";
+export type {
+  SourceReadPage,
+  SourceTarget,
+  SourceSummary,
+  SourceFileRow,
+  SourceConfirmation,
+  SourceAcknowledgement,
+  SourceSupport,
+} from "./workflow/source-contracts.ts";
 export const humanActions = [
   "read",
+  "source-read",
+  "input-state",
+  "input-control",
   "speak",
   "start",
   "interrupt",
@@ -10,6 +28,11 @@ export const humanActions = [
 ] as const;
 export const deviceActions = [
   "ready",
+  "source-support",
+  "source-upload",
+  "source-confirm",
+  "admission",
+  "admission-ack",
   "poll",
   "claim",
   "start-intent",
@@ -30,6 +53,7 @@ export const errorStatus = {
   UNAUTHENTICATED: 401,
   NOT_FOUND: 404,
   CONFLICT: 409,
+  INPUT_PAUSED: 409,
   QUOTA: 429,
   UNAVAILABLE: 503,
 } as const;
@@ -89,7 +113,7 @@ export type RunState = (typeof runStates)[number];
 export type Terminal = (typeof terminals)[number];
 export type RequestKind = (typeof requestKinds)[number];
 export type Adoption = (typeof adoptions)[number];
-export type Body = Record<string, string | number | boolean>;
+export type Body = Record<string, string | number | boolean | null>;
 export interface PublicEvent {
   eventId: string;
   roomId: string;
@@ -131,7 +155,7 @@ export interface PublicBinding {
   ownerAlias: string;
   sessionAlias: string;
   repositoryAlias: string;
-  runtime: "codex";
+  runtime: "codex" | "claude";
   bindingEpoch: number;
   owned: boolean;
   reportedReady: boolean;
@@ -197,6 +221,19 @@ export interface AttemptSnapshot {
   leaseExpiresAt: string;
   startIntentAt: string | null;
   payload: RequestPayload;
+}
+export interface InputState {
+  agentId: string;
+  bindingEpoch: number;
+  revision: number;
+  paused: boolean;
+  appliedRevision: number | null;
+  appliedEpoch: number | null;
+  appliedAt: string | null;
+}
+export interface InputStates {
+  roomId: string;
+  bindings: InputState[];
 }
 export interface Control {
   controlId: string;
@@ -308,6 +345,29 @@ const pair: Shape = {
 };
 const bodies: Record<Action, Shape> = {
   read: { roomId: id, afterSequence: uint },
+  "source-read": { roomId: id, eventId: id, afterIndex: nullable((v) => sourceUint(v, 4095)) },
+  "source-support": { agentId: id, bindingEpoch: positive },
+  "source-upload": { ...identity, packetJson: validPacketJson },
+  "source-confirm": {
+    agentId: id,
+    bindingEpoch: positive,
+    requestId: id,
+    attemptId: id,
+    fence: positive,
+    manifestHash: sourceHash,
+  },
+  "input-state": { roomId: id },
+  "input-control": {
+    roomId: id,
+    expectedUserId: id,
+    operationId: id,
+    agentId: id,
+    bindingEpoch: positive,
+    expectedRevision: positive,
+    paused: bool,
+  },
+  admission: { agentId: id, bindingEpoch: positive },
+  "admission-ack": { agentId: id, bindingEpoch: positive, revision: positive, paused: bool },
   speak: { roomId: id, operationId: id, publicText: text },
   start: { roomId: id, operationId: id, ...pair },
   ask: {
@@ -455,7 +515,7 @@ const binding: Shape = {
   ownerAlias: alias,
   sessionAlias: alias,
   repositoryAlias: alias,
-  runtime: one(["codex"]),
+  runtime: one(["codex", "claude"]),
   bindingEpoch: positive,
   owned: bool,
   reportedReady: bool,
@@ -694,7 +754,31 @@ const receipt: Shape = {
   adoption: one(adoptions.slice(1)),
   continuationRequestId: nullable(id),
 };
+const inputState: Shape = {
+  agentId: id,
+  bindingEpoch: positive,
+  revision: positive,
+  paused: bool,
+  appliedRevision: nullable(positive),
+  appliedEpoch: nullable(positive),
+  appliedAt: nullable(date),
+};
+const validInputState: Check = (v) =>
+  matches(v, inputState) &&
+  (v.appliedRevision === null
+    ? v.appliedEpoch === null && v.appliedAt === null
+    : v.appliedRevision === v.revision &&
+      v.appliedEpoch === v.bindingEpoch &&
+      v.appliedAt !== null);
 const responses: Record<Action, Shape> = {
+  "source-read": {},
+  "source-support": {},
+  "source-upload": {},
+  "source-confirm": {},
+  "input-state": { roomId: id, bindings: list(validInputState, 20) },
+  "input-control": inputState,
+  admission: inputState,
+  "admission-ack": inputState,
   read: history,
   speak: { eventId: id, sequence: positive },
   start: admission,
@@ -734,12 +818,28 @@ const responses: Record<Action, Shape> = {
   observe: receipt,
 };
 export function projectResponse(action: Action, value: unknown): unknown {
+  if (
+    action === "source-read" ||
+    action === "source-support" ||
+    action === "source-upload" ||
+    action === "source-confirm"
+  ) {
+    if (!validSourceResponse(action, value)) throw new WorkflowError("UNAVAILABLE");
+    return value;
+  }
   if (!matches(value, responses[action])) throw new WorkflowError("UNAVAILABLE");
   if (
     new TextEncoder().encode(JSON.stringify(value)).length >
     (humanActions.includes(action as HumanAction) ? 262144 : 65536)
   )
     throw new WorkflowError("UNAVAILABLE");
+  if (["input-control", "admission", "admission-ack"].includes(action) && !validInputState(value))
+    throw new WorkflowError("UNAVAILABLE");
+  if (action === "input-state") {
+    const state = value as unknown as InputStates;
+    if (new Set(state.bindings.map((binding) => binding.agentId)).size !== state.bindings.length)
+      throw new WorkflowError("UNAVAILABLE");
+  }
   if (action === "read") {
     const h = value as unknown as HistoryPage;
     if (

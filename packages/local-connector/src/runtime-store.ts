@@ -1,3 +1,4 @@
+import { isOriginRoleRequestKind } from "./workspace/tool-contracts.ts";
 import { constants, type Stats } from "node:fs";
 import {
   lstat,
@@ -13,14 +14,18 @@ import { dirname, join, parse, resolve } from "node:path";
 import { tmpdir } from "node:os";
 import { randomUUID } from "node:crypto";
 import { isId, isHash } from "./contracts.ts";
+import { projectCapability } from "./settings/contracts.ts";
+import { supportsEffort } from "./runtime-settings-policy.ts";
 import { serviceOrigin } from "./central-client.ts";
 import { validateBody, projectResponse, type DeviceAction } from "./workflow-contracts.ts";
 import {
   codexVersion,
+  claudeInterruptRequest,
   digest,
   RuntimeError,
   stableJson,
   type AttemptJournal,
+  type NativeInterruption,
   type RuntimeRecord,
   type RuntimeOperation,
   type RuntimeScope,
@@ -32,6 +37,21 @@ import {
   archiveRequestLimit,
 } from "./runtime-archive.ts";
 import { isSelectedPath } from "./runtime-file-policy.ts";
+
+import {
+  repositoryMode,
+  validRepositoryAccess,
+  validToolPolicy,
+} from "./workspace/repository-access.ts";
+import {
+  validRepositoryIntent,
+  validRepositoryObservation,
+  validPeerEvidenceObservation,
+  validRepositoryCalls,
+  validRepositoryCallChange,
+} from "./workspace/repository-observation.ts";
+
+import { sourceEntries, validSourceObservation } from "./workflow/source-snapshot.ts";
 
 type Check = (value: unknown) => boolean;
 type Shape = Record<string, Check>;
@@ -188,42 +208,103 @@ const codes = one(
 );
 const closure: Check = (v) =>
   exact({ kind: one("LOCAL_NOT_TRANSMITTED"), claimOperationId: isId })(v) ||
+  exact({ kind: one("SERVER_INPUT_PAUSED"), claimOperationId: isId })(v) ||
   exact({ kind: one("SERVER_ABANDONED"), claimOperationId: isId, snapshot: projected("claim") })(v);
-const journal = optionalExact(
+const nativeIntent = optionalExact(
   {
-    requestId: isId,
-    scope,
+    provider: one("claude"),
+    sessionId: isId,
+    inputId: isId,
+    promptHash: isHash,
     generation: isId,
-    state: one(
-      "CLAIM_PENDING",
-      "CLAIMED",
-      "SERVER_INTENT_PENDING",
-      "SERVER_INTENT_CONFIRMED",
-      "PROVIDER_INTENT",
-      "ACKNOWLEDGED",
-      "RUNNING",
-      "TERMINAL",
-      "UPLOADED",
-      "UNKNOWN",
-      "NOT_STARTED",
-    ),
-    snapshot: nullable(projected("claim")),
-    native: nullable(exact({ threadId: string, turnId: string })),
-    terminal: nullable(evidence),
-    receipt: nullable(projected("complete")),
-    reason: nullable(codes),
-    toolCalls: list(
-      exact({
-        callId: string,
-        payloadHash: isHash,
-        operationId: nullable(isId),
-        result: nullable(toolResult),
-      }),
-      256,
-    ),
+    scope,
+    attemptId: isId,
+    fence: positive,
+    policyFingerprint: isHash,
   },
-  { claimOperationId: isId, unstartedClosure: closure },
+  { toolPolicy: validToolPolicy },
 );
+const nativeToolCancellation = exact({
+  callId: (v) => typeof v === "string" && v.length > 0 && Buffer.byteLength(v) <= 200,
+  controlId: (v) => typeof v === "string" && v.length > 0 && Buffer.byteLength(v) <= 200,
+  payloadHash: isHash,
+  cancelHash: isHash,
+});
+const nativeInterruption = optionalExact(
+  { intent: nativeIntent, intentHash: isHash, requestHash: isHash },
+  {
+    receipt: exact({ stillQueued: list(isId, 0), cancelled: list(isId, 1), responseHash: isHash }),
+  },
+);
+function validInterruption(proof: NativeInterruption): boolean {
+  return (
+    nativeInterruption(proof) &&
+    proof.intentHash === digest(stableJson(proof.intent)) &&
+    proof.requestHash === digest(stableJson(claudeInterruptRequest)) &&
+    (!proof.receipt ||
+      (proof.receipt.cancelled.every((id) => id === proof.intent.inputId) &&
+        proof.receipt.responseHash ===
+          digest(
+            stableJson({
+              still_queued: [],
+              cancelled: proof.receipt.cancelled,
+            }),
+          )))
+  );
+}
+const journalSchema = (terminalEvidence: Check, allowNativeIntent = false) =>
+  optionalExact(
+    {
+      requestId: isId,
+      scope,
+      generation: isId,
+      state: one(
+        "CLAIM_PENDING",
+        "CLAIMED",
+        "SERVER_INTENT_PENDING",
+        "SERVER_INTENT_CONFIRMED",
+        "PROVIDER_INTENT",
+        "ACKNOWLEDGED",
+        "RUNNING",
+        "TERMINAL",
+        "UPLOADED",
+        "UNKNOWN",
+        "NOT_STARTED",
+      ),
+      snapshot: nullable(projected("claim")),
+      native: nullable(exact({ threadId: string, turnId: string })),
+      terminal: nullable(terminalEvidence),
+      receipt: nullable(projected("complete")),
+      reason: nullable(codes),
+      toolCalls: list(
+        optionalExact(
+          {
+            callId: string,
+            payloadHash: isHash,
+            operationId: nullable(isId),
+            result: nullable(toolResult),
+          },
+          allowNativeIntent
+            ? {
+                repositoryIntent: validRepositoryIntent,
+                repositoryObservation: validRepositoryObservation,
+                peerEvidenceObservation: validPeerEvidenceObservation,
+              }
+            : {},
+        ),
+        256,
+      ),
+    },
+    {
+      sourceObservation: validSourceObservation,
+      claimOperationId: isId,
+      unstartedClosure: closure,
+      ...(allowNativeIntent
+        ? { nativeIntent, nativeInterruption, toolCancellations: list(nativeToolCancellation, 64) }
+        : {}),
+    },
+  );
+const journal = journalSchema(evidence);
 const preparation = exact({
   operationId: isId,
   previousEpoch: positive,
@@ -268,27 +349,155 @@ const operation: Check = (v) => {
     return false;
   }
 };
-const schema = optionalExact(
+const recordSchema = (
+  version: 1 | 2,
+  settingsSchema: Check,
+  contextSchema: Check,
+  preparationSchema: Check,
+  attemptSchema: Check,
+) =>
+  optionalExact(
+    {
+      version: one(version),
+      scope,
+      settings: nullable(settingsSchema),
+      context: nullable(contextSchema),
+      ready: bool,
+      preparation: nullable(preparationSchema),
+      attempts: list(attemptSchema, 256),
+      operations: list(operation, 1024),
+    },
+    {
+      archives: list(
+        exact({
+          hash: isHash,
+          requestIds: (v) => list(isId, 4096)(v) && (v as unknown[]).length > 0,
+        }),
+        64,
+      ),
+      lastArchive: exact({ hash: isHash, attemptId: isId }),
+    },
+  );
+const legacySchema = recordSchema(1, settings, context, preparation, journal);
+const providerRequested = exact({ model: string, effort: nullable(string) });
+const providerCapabilities = exact({
+  runtime: one("codex", "claude"),
+  version: string,
+  models: list(
+    exact({
+      id: string,
+      model: string,
+      efforts: list(string, 12),
+      defaultEffort: nullable(string),
+      isDefault: bool,
+    }),
+    256,
+  ),
+  defaultSettings: nullable(providerRequested),
+  snapshotHash: isHash,
+  policy: one("CONFIRMED"),
+});
+const providerSettings = optionalExact(
   {
-    version: one(1),
-    scope,
-    settings: nullable(settings),
-    context: nullable(context),
-    ready: bool,
-    preparation: nullable(preparation),
-    attempts: list(journal, 256),
-    operations: list(operation, 1024),
+    provider: one("codex", "claude"),
+    requested: providerRequested,
+    capabilities: providerCapabilities,
+    files: list(file, 32),
+    handoff: text,
+    publicScopeConfirmed: one(true),
+    autoQuestionsConfirmed: bool,
   },
+  { repositoryAccess: validRepositoryAccess },
+);
+const nativeHistoryEvidence: Check = (value) =>
+  exact({
+    state: one("VERIFIED"),
+    format: one("claude-jsonl-v1"),
+    recordCount: (v) => Number.isSafeInteger(v) && Number(v) >= 1 && Number(v) <= 4096,
+    prefixHash: isHash,
+  })(value) ||
+  exact({ state: one("UNVERIFIED"), reason: one("MISSING_HISTORY", "HISTORY_REJECTED") })(value);
+const providerContext = optionalExact(
   {
-    archives: list(
-      exact({
-        hash: isHash,
-        requestIds: (v) => list(isId, 4096)(v) && (v as unknown[]).length > 0,
-      }),
-      64,
+    ownership: one("CONNECTOR_CREATED"),
+    generation: isId,
+    threadId: string,
+    root,
+    epoch: positive,
+    level: one("L1", "L2"),
+    ownedTurns: list(
+      optionalExact(
+        { turnId: string, terminal },
+        {
+          toolPolicy: validToolPolicy,
+          promptHash: isHash,
+          resultHash: isHash,
+          nativeInterruption,
+          nativeHistory: nativeHistoryEvidence,
+          toolCancellations: list(nativeToolCancellation, 64),
+          toolReceipts: list(
+            exact({ callId: string, payloadHash: isHash, responseHash: isHash }),
+            64,
+          ),
+        },
+      ),
+      256,
     ),
-    lastArchive: exact({ hash: isHash, attemptId: isId }),
   },
+  {
+    provider: one("codex", "claude"),
+    materialization: exact({
+      state: one("RESERVED", "MATERIALIZED"),
+      version: string,
+      policyFingerprint: isHash,
+      initHash: nullable(isHash),
+    }),
+  },
+);
+const providerObservation = exact({
+  requested: providerRequested,
+  thread: exact({ model: nullable(string), provider: string, effort: nullable(string) }),
+  turn: exact({
+    requestedModel: string,
+    requestedEffort: nullable(string),
+    model: nullable(string),
+    rerouted: bool,
+    effortVerification: one("UNVERIFIED"),
+  }),
+});
+const providerEvidence = optionalExact(
+  {
+    threadId: string,
+    turnId: string,
+    terminal,
+    privateText: text,
+    publicText: (v) =>
+      typeof v === "string" && Buffer.byteLength(v) <= 8192 && Array.from(v).length <= 4000,
+    finalItems: list(exact({ id: string, hash: isHash }), 256),
+    textProof: one("FINAL_ANSWER", "UNCONFIRMED"),
+    observation: providerObservation,
+  },
+  {
+    nativeInitHash: isHash,
+    nativeInterruption,
+    nativeHistory: nativeHistoryEvidence,
+    toolCancellations: list(nativeToolCancellation, 64),
+  },
+);
+const providerPreparation = exact({
+  operationId: isId,
+  previousEpoch: positive,
+  generation: isId,
+  settings: providerSettings,
+  candidate: nullable(providerContext),
+  state: one("PROVIDER_PENDING", "PROVIDER_CREATED", "CANDIDATE", "REPLACE_PENDING"),
+});
+const providerSchema = recordSchema(
+  2,
+  providerSettings,
+  providerContext,
+  providerPreparation,
+  journalSchema(providerEvidence, true),
 );
 function unsafe(): never {
   throw new RuntimeError("UNSAFE_STORAGE");
@@ -332,6 +541,22 @@ function closureValid(a: AttemptJournal, v: RuntimeRecord) {
       (claim && (!["PENDING", "CLOSED"].includes(claim.state) || claim.result !== null))
     )
       unsafe();
+  } else if (proof.kind === "SERVER_INPUT_PAUSED") {
+    if (
+      !claim ||
+      claim.state !== "CLOSED" ||
+      claim.result !== null ||
+      a.snapshot ||
+      a.nativeIntent ||
+      v.operations.some(
+        (o) =>
+          o.body.requestId === a.requestId &&
+          o.body.bindingEpoch === a.scope.bindingEpoch &&
+          o.action !== "claim" &&
+          !v.attempts.some((other) => other !== a && attemptMatches(other, o)),
+      )
+    )
+      unsafe();
   } else {
     const p = proof.snapshot;
     if (
@@ -371,7 +596,7 @@ function closureValid(a: AttemptJournal, v: RuntimeRecord) {
     unsafe();
 }
 function validate(value: unknown): asserts value is RuntimeRecord {
-  if (!schema(value)) unsafe();
+  if (!legacySchema(value) && !providerSchema(value)) unsafe();
   const v = value as RuntimeRecord;
   const archivedIds = (v.archives ?? []).flatMap((ref) => ref.requestIds);
   if (
@@ -426,23 +651,135 @@ function validate(value: unknown): asserts value is RuntimeRecord {
   for (const s of [v.settings, v.preparation?.settings]) {
     if (!s) continue;
     if (
+      s.repositoryAccess &&
+      (v.version !== 2 || s.files.length !== 0 || !validRepositoryAccess(s.repositoryAccess))
+    )
+      unsafe();
+    if (
       new Set(s.files.map((f) => f.path)).size !== s.files.length ||
       s.files.reduce((sum, f) => sum + f.size, 0) > 512 * 1024 ||
       !s.capabilities.models.some(
-        (m) => m.model === s.requested.model && m.efforts.includes(s.requested.effort),
+        (m) => m.model === s.requested.model && supportsEffort(s.provider, m, s.requested.effort),
       ) ||
       s.capabilities.models.some(
         (m) =>
-          !m.efforts.length ||
-          !m.efforts.includes(m.defaultEffort) ||
+          (!(s.provider === "claude" && m.defaultEffort === null) &&
+            !supportsEffort(s.provider, m, m.defaultEffort)) ||
           new Set(m.efforts).size !== m.efforts.length,
       )
+    )
+      unsafe();
+    if (v.version === 2) {
+      if (s.capabilities.runtime !== s.provider) unsafe();
+      try {
+        projectCapability({ ...s.capabilities, runtime: s.provider, policy: "verified" });
+      } catch {
+        unsafe();
+      }
+    }
+    if (s.provider === "codex" && s.capabilities.version !== codexVersion) unsafe();
+  }
+  for (const [c, s] of [
+    [v.context, v.settings],
+    [v.preparation?.candidate, v.preparation?.settings],
+  ] as const) {
+    if (!c || !s) continue;
+    try {
+      repositoryMode(s, c);
+    } catch {
+      unsafe();
+    }
+    if (s.provider === "claude") {
+      const m = c.materialization;
+      if (
+        v.version !== 2 ||
+        c.provider !== "claude" ||
+        !isId(c.threadId) ||
+        !m ||
+        m.version !== s.capabilities.version ||
+        (m.state === "RESERVED"
+          ? m.initHash !== null || c.ownedTurns.length > 0
+          : !isHash(m.initHash))
+      )
+        unsafe();
+      if (
+        c.ownedTurns.some(
+          (turn) =>
+            !isHash(turn.promptHash) ||
+            !isHash(turn.resultHash) ||
+            !turn.toolReceipts ||
+            new Set(turn.toolReceipts.map((receipt) => receipt.callId)).size !==
+              turn.toolReceipts.length ||
+            (turn.toolCancellations &&
+              ((turn.terminal !== "INTERRUPTED" && turn.toolCancellations.length > 0) ||
+                new Set(turn.toolCancellations.map((c) => c.callId)).size !==
+                  turn.toolCancellations.length ||
+                new Set(turn.toolCancellations.map((c) => c.controlId)).size !==
+                  turn.toolCancellations.length)),
+        )
+      )
+        unsafe();
+      for (const turn of c.ownedTurns) {
+        const descriptor = v.attempts.find(
+          (attempt) =>
+            attempt.generation === c.generation && attempt.nativeIntent?.inputId === turn.turnId,
+        )?.nativeIntent;
+        if (
+          (s.repositoryAccess && !turn.toolPolicy) ||
+          (descriptor?.toolPolicy &&
+            stableJson(descriptor.toolPolicy) !== stableJson(turn.toolPolicy)) ||
+          (turn.toolPolicy &&
+            (turn.toolPolicy.mode !== repositoryMode(s, c) ||
+              (turn.toolPolicy.peerAllowed && !s.autoQuestionsConfirmed)))
+        )
+          unsafe();
+        const owningJournal = v.attempts.find(
+          (a) => a.generation === c.generation && a.nativeIntent?.inputId === turn.turnId,
+        );
+        if (
+          owningJournal?.terminal &&
+          stableJson(owningJournal.terminal.nativeHistory ?? null) !==
+            stableJson(turn.nativeHistory ?? null)
+        )
+          unsafe();
+        const proof = turn.nativeInterruption;
+        if (!proof) continue;
+        const intent = proof.intent;
+        const journal = v.attempts.find(
+          (a) => a.generation === c.generation && a.nativeIntent?.inputId === turn.turnId,
+        );
+        if (
+          !validInterruption(proof) ||
+          intent.sessionId !== c.threadId ||
+          intent.inputId !== turn.turnId ||
+          intent.promptHash !== turn.promptHash ||
+          intent.generation !== c.generation ||
+          intent.scope.bindingEpoch !== c.epoch ||
+          stableJson(intent.scope) !== stableJson(v.scope) ||
+          intent.policyFingerprint !== m.policyFingerprint ||
+          (journal && stableJson(journal.nativeInterruption) !== stableJson(proof))
+        )
+          unsafe();
+      }
+    } else if (
+      c.provider === "claude" ||
+      c.materialization ||
+      c.ownedTurns.some((turn) => turn.nativeInterruption || turn.nativeHistory)
     )
       unsafe();
   }
   if (v.preparation) {
     const p = v.preparation,
       c = p.candidate;
+    if (p.settings.repositoryAccess) {
+      const approvedRoot = c?.root ?? v.context?.root;
+      if (!approvedRoot) unsafe();
+      try {
+        repositoryMode(p.settings, { generation: p.generation, root: approvedRoot });
+      } catch {
+        unsafe();
+      }
+    }
     if (
       p.previousEpoch !== v.scope.bindingEpoch ||
       (p.state === "PROVIDER_PENDING" ? c !== null : c === null) ||
@@ -456,6 +793,24 @@ function validate(value: unknown): asserts value is RuntimeRecord {
       unsafe();
   }
   for (const a of v.attempts) {
+    if (
+      a.sourceObservation &&
+      (a.unstartedClosure ||
+        [
+          "CLAIM_PENDING",
+          "CLAIMED",
+          "SERVER_INTENT_PENDING",
+          "SERVER_INTENT_CONFIRMED",
+          "NOT_STARTED",
+        ].includes(a.state) ||
+        !a.snapshot?.startIntentAt ||
+        (a.generation === v.context?.generation &&
+          (a.scope.bindingEpoch !== v.context.epoch ||
+            !v.settings ||
+            stableJson(a.sourceObservation.files.entries) !==
+              stableJson(sourceEntries(v.settings.files)))))
+    )
+      unsafe();
     if (a.state === "NOT_STARTED") closureValid(a, v);
     else if (a.unstartedClosure) unsafe();
     const claim = v.operations.find((o) => o.operationId === a.claimOperationId);
@@ -490,6 +845,59 @@ function validate(value: unknown): asserts value is RuntimeRecord {
       a.native &&
       (!a.snapshot ||
         (v.context?.generation === a.generation && a.native.threadId !== v.context.threadId))
+    )
+      unsafe();
+    if (!validRepositoryCalls(a, v.settings, v.context, v.operations)) unsafe();
+    if (v.settings?.repositoryAccess && a.nativeIntent && !a.nativeIntent.toolPolicy) unsafe();
+    if (a.nativeIntent?.toolPolicy) {
+      if (
+        !v.settings ||
+        !v.context ||
+        a.nativeIntent.toolPolicy.mode !== repositoryMode(v.settings, v.context) ||
+        (a.nativeIntent.toolPolicy.peerAllowed &&
+          (!v.settings.autoQuestionsConfirmed ||
+            !isOriginRoleRequestKind(a.snapshot?.payload.requestKind)))
+      )
+        unsafe();
+    }
+    if (a.nativeIntent) {
+      const intent = a.nativeIntent;
+      if (
+        v.version !== 2 ||
+        !a.snapshot ||
+        stableJson(intent.scope) !== stableJson(a.scope) ||
+        intent.generation !== a.generation ||
+        intent.attemptId !== a.snapshot.attemptId ||
+        intent.fence !== a.snapshot.fence ||
+        (a.native &&
+          (a.native.threadId !== intent.sessionId || a.native.turnId !== intent.inputId)) ||
+        (v.context?.generation === a.generation &&
+          (intent.sessionId !== v.context.threadId ||
+            intent.policyFingerprint !== v.context.materialization?.policyFingerprint))
+      )
+        unsafe();
+    }
+    if (
+      a.nativeInterruption &&
+      (v.version !== 2 ||
+        !a.nativeIntent ||
+        !validInterruption(a.nativeInterruption) ||
+        stableJson(a.nativeInterruption.intent) !== stableJson(a.nativeIntent))
+    )
+      unsafe();
+    if (
+      a.terminal &&
+      stableJson(a.terminal.nativeInterruption ?? null) !== stableJson(a.nativeInterruption ?? null)
+    )
+      unsafe();
+    if (a.terminal?.nativeHistory && (v.version !== 2 || a.nativeIntent?.provider !== "claude"))
+      unsafe();
+    if (
+      v.settings?.provider === "claude" &&
+      a.generation === v.context?.generation &&
+      (["PROVIDER_INTENT", "ACKNOWLEDGED", "RUNNING", "TERMINAL", "UPLOADED"].includes(a.state) ||
+        a.native) &&
+      !a.nativeIntent
     )
       unsafe();
     if (
@@ -535,6 +943,25 @@ function validate(value: unknown): asserts value is RuntimeRecord {
     )
       unsafe();
     if (new Set(a.toolCalls.map((c) => c.callId)).size !== a.toolCalls.length) unsafe();
+    if (a.toolCancellations) {
+      if (
+        v.version !== 2 ||
+        !a.nativeIntent ||
+        !a.native ||
+        new Set(a.toolCancellations.map((c) => c.callId)).size !== a.toolCancellations.length ||
+        new Set(a.toolCancellations.map((c) => c.controlId)).size !== a.toolCancellations.length ||
+        a.toolCancellations.some(
+          (c) =>
+            !a.toolCalls.some(
+              (tool) => tool.callId === c.callId && tool.payloadHash === c.payloadHash,
+            ),
+        ) ||
+        (a.terminal && a.terminal.terminal !== "INTERRUPTED" && a.toolCancellations.length > 0) ||
+        (a.terminal &&
+          stableJson(a.terminal.toolCancellations ?? []) !== stableJson(a.toolCancellations))
+      )
+        unsafe();
+    }
   }
   for (const o of v.operations)
     if (
@@ -626,6 +1053,7 @@ export function pruneConfirmedReady(value: RuntimeRecord): void {
   value.operations = value.operations.filter((o) => !removable.has(o.operationId));
 }
 function validateChange(previous: RuntimeRecord, next: RuntimeRecord) {
+  if (previous.version !== next.version) unsafe();
   if (stableJson(previous.archives ?? []) !== stableJson(next.archives ?? [])) unsafe();
   const added = next.attempts.slice(previous.attempts.length);
   if (
@@ -686,17 +1114,54 @@ function validateChange(previous: RuntimeRecord, next: RuntimeRecord) {
     (next.preparation.state !== "PROVIDER_PENDING" || next.preparation.candidate !== null)
   )
     unsafe();
+  if (
+    !prepared &&
+    !invalidated &&
+    (previous.settings?.repositoryAccess || next.settings?.repositoryAccess) &&
+    stableJson(previous.settings) !== stableJson(next.settings)
+  )
+    unsafe();
   if (previous.context && !prepared && !invalidated) {
     const current = next.context;
-    const { level: oldLevel, ownedTurns: oldTurns, ...oldIdentity } = previous.context;
+    const {
+      level: oldLevel,
+      ownedTurns: oldTurns,
+      materialization: oldMaterialization,
+      ...oldIdentity
+    } = previous.context;
     if (!current) unsafe();
-    const { level: newLevel, ownedTurns: newTurns, ...newIdentity } = current;
+    const {
+      level: newLevel,
+      ownedTurns: newTurns,
+      materialization: newMaterialization,
+      ...newIdentity
+    } = current;
     if (
       stableJson(oldIdentity) !== stableJson(newIdentity) ||
       (oldLevel === "L2" && newLevel !== "L2") ||
       stableJson(oldTurns) !== stableJson(newTurns.slice(0, oldTurns.length))
     )
       unsafe();
+    if (stableJson(oldMaterialization ?? null) !== stableJson(newMaterialization ?? null)) {
+      if (
+        !oldMaterialization ||
+        !newMaterialization ||
+        oldMaterialization.state !== "RESERVED" ||
+        newMaterialization.state !== "MATERIALIZED" ||
+        stableJson({
+          ...oldMaterialization,
+          state: "MATERIALIZED",
+          initHash: newMaterialization.initHash,
+        }) !== stableJson(newMaterialization) ||
+        !next.attempts.some(
+          (a) =>
+            a.nativeIntent?.sessionId === current.threadId &&
+            a.native?.threadId === current.threadId &&
+            a.native.turnId === a.nativeIntent.inputId,
+        )
+      )
+        unsafe();
+    }
   }
   // Intent order determines the latest receipt; compaction must never reorder surviving intents.
   const positions = new Map(previous.operations.map((o, index) => [o.operationId, index]));
@@ -726,6 +1191,25 @@ function validateChange(previous: RuntimeRecord, next: RuntimeRecord) {
   }
   for (const [index, old] of previous.attempts.entries()) {
     const current = next.attempts[index];
+    if (!current || !validRepositoryCallChange(old, current)) unsafe();
+    if (
+      old.sourceObservation &&
+      stableJson(old.sourceObservation) !== stableJson(current?.sourceObservation)
+    )
+      unsafe();
+    if (
+      !old.sourceObservation &&
+      current?.sourceObservation &&
+      (old.state !== "SERVER_INTENT_CONFIRMED" ||
+        current.state !== "PROVIDER_INTENT" ||
+        !old.snapshot?.startIntentAt ||
+        !next.context ||
+        !next.settings ||
+        old.generation !== next.context.generation ||
+        old.scope.bindingEpoch !== next.context.epoch ||
+        stableJson(old.scope) !== stableJson(next.scope))
+    )
+      unsafe();
     if (old.state === "UPLOADED" && stableJson(old) !== stableJson(current)) unsafe();
     if (
       !current ||
@@ -758,6 +1242,21 @@ function validateChange(previous: RuntimeRecord, next: RuntimeRecord) {
       )
     )
       unsafe();
+    if (!old.unstartedClosure && current.unstartedClosure?.kind === "SERVER_INPUT_PAUSED") {
+      const claim = previous.operations.find((o) => claimMatches(current, o));
+      if (
+        !claim ||
+        claim.state !== "TRANSMITTED" ||
+        claim.result !== null ||
+        old.snapshot ||
+        old.nativeIntent ||
+        old.native ||
+        old.terminal ||
+        old.receipt ||
+        old.toolCalls.length
+      )
+        unsafe();
+    }
     if (current.unstartedClosure && stableJson(old.snapshot) !== stableJson(current.snapshot))
       unsafe();
     if (
@@ -766,6 +1265,7 @@ function validateChange(previous: RuntimeRecord, next: RuntimeRecord) {
       old.generation !== current.generation ||
       (old.state !== current.state && !transitions[old.state].includes(current.state)) ||
       (old.native && stableJson(old.native) !== stableJson(current.native)) ||
+      (old.nativeIntent && stableJson(old.nativeIntent) !== stableJson(current.nativeIntent)) ||
       (old.terminal && stableJson(old.terminal) !== stableJson(current.terminal))
     )
       unsafe();
@@ -783,6 +1283,32 @@ function validateChange(previous: RuntimeRecord, next: RuntimeRecord) {
     )
       unsafe();
     if (old.receipt && stableJson(old.receipt) !== stableJson(current.receipt)) unsafe();
+    if (
+      old.nativeInterruption &&
+      (!current.nativeInterruption ||
+        stableJson(old.nativeInterruption.intent) !==
+          stableJson(current.nativeInterruption.intent) ||
+        old.nativeInterruption.intentHash !== current.nativeInterruption.intentHash ||
+        old.nativeInterruption.requestHash !== current.nativeInterruption.requestHash ||
+        (old.nativeInterruption.receipt &&
+          stableJson(old.nativeInterruption.receipt) !==
+            stableJson(current.nativeInterruption.receipt)))
+    )
+      unsafe();
+    const interruptionAdded = !old.nativeInterruption && current.nativeInterruption;
+    const receiptAdded = !old.nativeInterruption?.receipt && current.nativeInterruption?.receipt;
+    if (
+      ((interruptionAdded || receiptAdded) &&
+        !["PROVIDER_INTENT", "ACKNOWLEDGED", "RUNNING"].includes(old.state)) ||
+      (!old.nativeInterruption && current.nativeInterruption?.receipt)
+    )
+      unsafe();
+    if (
+      (old.toolCancellations ?? []).some(
+        (c, index) => stableJson(c) !== stableJson(current.toolCancellations?.[index]),
+      )
+    )
+      unsafe();
   }
   for (const appended of next.attempts.slice(previous.attempts.length)) {
     if ((previous.archives ?? []).some((ref) => ref.requestIds.includes(appended.requestId)))
@@ -798,6 +1324,9 @@ function validateChange(previous: RuntimeRecord, next: RuntimeRecord) {
       appended.snapshot ||
       appended.unstartedClosure ||
       appended.native ||
+      appended.nativeIntent ||
+      appended.sourceObservation ||
+      appended.nativeInterruption ||
       appended.terminal ||
       appended.receipt ||
       appended.toolCalls.length
@@ -1042,7 +1571,13 @@ export class RuntimeStore {
         if ((e as NodeJS.ErrnoException).code !== "ENOENT") throw e;
       }
       check();
-      if (!previous && ((snapshot.archives ?? []).length || snapshot.lastArchive)) unsafe();
+      if (
+        !previous &&
+        ((snapshot.archives ?? []).length ||
+          snapshot.lastArchive ||
+          snapshot.attempts.some((a) => a.sourceObservation !== undefined))
+      )
+        unsafe();
       const bytes = await this.archive.withVerifiedContents(
         previous?.archives ?? [],
         (contents) => {
@@ -1360,9 +1895,12 @@ export class RuntimeStore {
     }
   }
 }
-export function runtimeRecord(scope: RuntimeScope): RuntimeRecord {
+export function runtimeRecord(
+  scope: RuntimeScope,
+  provider: "codex" | "claude" = "codex",
+): RuntimeRecord {
   return {
-    version: 1,
+    version: provider === "claude" ? 2 : 1,
     scope,
     settings: null,
     context: null,

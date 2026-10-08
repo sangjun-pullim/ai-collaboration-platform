@@ -49,8 +49,22 @@ test("should read a small selected file while a lease response remains in flight
     record.settings!.files = [...policy.files];
     await f.store.write(record);
 
-    f.faults.after = async (action, body) => {
+    f.faults.before = async (action) => {
       if (action !== "lease" || leaseId) return;
+      await providerEntered.promise;
+      const attempt = (await f.store.read())!.attempts.at(-1)!;
+      assert.equal(attempt.state, "ACKNOWLEDGED");
+      assert.ok(attempt.native);
+      assert.equal(attempt.snapshot!.state, "EXECUTING");
+      assert.equal(f.adapter.starts, 1);
+    };
+    f.faults.after = async (action, body, result) => {
+      if (action !== "lease" || leaseId) return;
+      const attempt = (await f.store.read())!.attempts.at(-1)!;
+      assert.equal(attempt.state, "ACKNOWLEDGED");
+      assert.ok(attempt.native);
+      assert.equal(f.adapter.starts, 1);
+      assert.equal((result as AttemptAuthority["attempt"]).state, "EXECUTING");
       leaseId = String(body.operationId);
       leaseEntered.resolve();
       await releaseLease.promise;
@@ -107,6 +121,7 @@ test("should read a small selected file while a lease response remains in flight
       assert.equal(leaseResponseReturned, false);
       assert.equal(callbackFinishedWhileHeld, true);
     } finally {
+      providerEntered.resolve();
       releaseLease.resolve();
       await run;
     }
@@ -131,6 +146,7 @@ test("should read a small selected file while a lease response remains in flight
     assert.equal(after.attempts.at(-1)!.toolCalls[0].result!.success, true);
     assert.equal(f.requests.filter((request) => request.action === "complete").length, 1);
   } finally {
+    providerEntered.resolve();
     releaseLease.resolve();
     try {
       await run;
@@ -165,6 +181,7 @@ async function withSelectedFile(
 ) {
   const options = { pollIntervalMs: 5, leaseIntervalMs: 50 };
   const f = await runnerFixture(options),
+    providerEntered = deferred(),
     leaseEntered = deferred(),
     releaseLease = deferred(),
     leaseCommitted = deferred(),
@@ -198,8 +215,22 @@ async function withSelectedFile(
       )
         leaseCommitted.resolve();
     };
-    f.faults.after = async (action, body) => {
+    f.faults.before = async (action) => {
       if (action !== "lease" || leaseId) return;
+      await providerEntered.promise;
+      const attempt = (await f.store.read())!.attempts.at(-1)!;
+      assert.equal(attempt.state, "ACKNOWLEDGED");
+      assert.ok(attempt.native);
+      assert.equal(attempt.snapshot!.state, "EXECUTING");
+      assert.equal(f.adapter.starts, 1);
+    };
+    f.faults.after = async (action, body, result) => {
+      if (action !== "lease" || leaseId) return;
+      const attempt = (await f.store.read())!.attempts.at(-1)!;
+      assert.equal(attempt.state, "ACKNOWLEDGED");
+      assert.ok(attempt.native);
+      assert.equal(f.adapter.starts, 1);
+      assert.equal((result as AttemptAuthority["attempt"]).state, "EXECUTING");
       leaseId = String(body.operationId);
       leaseEntered.resolve();
       await releaseLease.promise;
@@ -215,6 +246,7 @@ async function withSelectedFile(
       assert.equal(lease.result, null);
     };
     f.adapter.executeHook = async (authority) => {
+      providerEntered.resolve();
       try {
         await leaseEntered.promise;
         await settleRunnerJobs(runtime);
@@ -261,6 +293,7 @@ async function withSelectedFile(
         run.then(() => assert.fail("SYNTHETIC_RUN_FINISHED_BEFORE_FILE_CALLBACK")),
       ]);
     } finally {
+      providerEntered.resolve();
       releaseLease.resolve();
       releaseProvider.resolve();
       await run;
@@ -272,6 +305,7 @@ async function withSelectedFile(
     assert.equal(after.attempts.at(-1)!.receipt!.adoption, "ACCEPTED");
     assert.equal(f.requests.filter((request) => request.action === "complete").length, 1);
   } finally {
+    providerEntered.resolve();
     releaseLease.resolve();
     releaseProvider.resolve();
     try {
@@ -376,18 +410,18 @@ test("should preserve conservative reservations for invalid file calls", async (
     }
     const invalidSizes: unknown[] = [-1, 0.5, 65537, NaN, Infinity, undefined, "38"];
     for (const [index, size] of invalidSizes.entries()) {
-      // This scoped memory fault is introduced only after ACK and is never persisted.
-      const snapshot = probe.record.settings!.files[0];
-      const originalSize = snapshot.size;
+      // Inject into a work copy after ACK; never mutate or persist the owned frozen record.
+      const originalRecord = probe.record;
       try {
-        Object.assign(snapshot, { size });
+        probe.record = structuredClone(originalRecord);
+        Object.assign(probe.record.settings!.files[0], { size });
         await assert.rejects(
           authority.tool(fileCallback(authority, turnId, `invalid-size-${index}`)),
           { code: "RUNTIME_CAPACITY" },
         );
         assert.equal(toolReservations.at(-1), 397312);
       } finally {
-        snapshot.size = originalSize;
+        probe.record = originalRecord;
       }
       assert.equal(probe.record.settings!.files[0].size, 38);
       await scenario.assertHeld();

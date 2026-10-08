@@ -68,7 +68,7 @@ async function connect(page: Page, id: string, name: string, roomId: string) {
   await page.getByLabel("기기 연결 코드", { exact: true }).fill(p.code);
   await page.getByRole("checkbox").check();
   await page.getByRole("button", { name: "기기 승인", exact: true }).click();
-  await expect(page.getByRole("status")).toContainText("승인을 완료");
+  await expect(page.getByRole("status", { name: "기기 연결 결과" })).toContainText("승인을 완료");
   await expect(page.getByLabel("기기 연결 코드", { exact: true })).toHaveValue("");
   await broker("register", { id, name });
   await page.reload();
@@ -224,5 +224,62 @@ test("should revoke a connection and require fresh approval after membership rem
     await expect(roster.getByText("공개 저장소 · 공개 세션", { exact: true })).toHaveCount(2);
   } finally {
     await Promise.all([a.close(), b.close()]);
+  }
+});
+
+test("should expose a valid room command and require explicit approval after a pairing fragment", async ({
+  browser,
+}, info) => {
+  const a = await context(browser, info);
+  try {
+    const page = await a.newPage(),
+      owner = await login(page, "연결 명령 소유자"),
+      scope = await createRoom(page);
+    const code = "a".repeat(64),
+      sha = "b".repeat(64);
+    await page.route("**/local-connection/manifest.json", (route) =>
+      route.fulfill({
+        status: 200,
+        contentType: "application/json",
+        body: JSON.stringify({
+          version: 1,
+          code: { path: `/local-connection/connector-${sha}.tar.gz`, sha256: sha, bytes: 100 },
+          bootstrap: { path: `/local-connection/bootstrap-${sha}.sh`, sha256: sha, bytes: 100 },
+        }),
+      }),
+    );
+    let approvals = 0;
+    page.on("request", (request) => {
+      if (request.method() === "POST" && request.url().endsWith("/api/connections/approve"))
+        approvals++;
+    });
+    await page.goto(`/app/connections#code=${code}&room=${scope.roomId}`);
+    await expect(page).toHaveURL(/\/app\/connections$/);
+    await expect(page.getByLabel("기기 연결 코드", { exact: true })).toHaveValue(code);
+    await expect(page.getByRole("checkbox")).not.toBeChecked();
+    const guide = page.getByRole("region", { name: "명령 한 번으로 내 Mac 연결" });
+    await expect(guide.getByRole("button", { name: "연결 명령 복사", exact: true })).toBeEnabled();
+    await guide.getByText("명령 확인·직접 복사", { exact: true }).click();
+    const command = await guide.getByLabel("로컬 연결 명령").inputValue();
+    expect(command).toContain(scope.roomId);
+    expect(command).toContain(scope.organizationId);
+    expect(command).toContain("bootstrap-");
+    expect(command).toContain(sha);
+    expect(command).not.toContain(owner.id);
+    expect(approvals).toBe(0);
+    await guide.getByRole("button", { name: "연결 명령 복사", exact: true }).click();
+    await expect(guide.getByRole("status", { name: "연결 명령 복사 결과" })).toBeVisible();
+    await page.getByRole("checkbox").check();
+    await page.goto(`/app/connections#code=${code}&room=00000000-0000-4000-8000-000000000099`);
+    await expect(page).toHaveURL(/\/app\/connections$/);
+    await expect(page.getByLabel("기기 연결 코드", { exact: true })).toHaveValue("");
+    await expect(page.getByRole("checkbox")).not.toBeChecked();
+    await page.goto(`/app/connections#code=malformed&room=${scope.roomId}`);
+    await expect(page).toHaveURL(/\/app\/connections$/);
+    await expect(page.getByLabel("기기 연결 코드", { exact: true })).toHaveValue("");
+    expect(approvals).toBe(0);
+    await connect(page, owner.id, `manual-${info.project.name}`, scope.roomId);
+  } finally {
+    await a.close();
   }
 });

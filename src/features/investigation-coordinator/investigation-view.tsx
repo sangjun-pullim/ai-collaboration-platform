@@ -18,6 +18,7 @@ import {
   type DirectIntent,
 } from "./direct-intents";
 
+import { OwnInputControls } from "./own-input-controls";
 import { ChatTimeline } from "./chat-timeline";
 import { ChatComposer } from "./chat-composer";
 import { AdvancedControls } from "./advanced-controls";
@@ -76,6 +77,7 @@ function RoomInvestigation({ userId, roomId, role }: Props) {
   const scrollRef = useRef<HTMLDivElement>(null);
   const follow = useRef(true);
   const latestSequence = useRef(0);
+  const accessLost = useRef(false);
   useLayoutEffect(() => {
     const element = scrollRef.current;
     const sequence =
@@ -161,6 +163,17 @@ function RoomInvestigation({ userId, roomId, role }: Props) {
     if (error) errorRef.current?.focus();
   }, [error]);
 
+  // The user/room key remounts this callback; refs always hold the latest requests.
+  const [loseAccess] = useState(() => () => {
+    accessLost.current = true;
+    pollAbort.current?.abort();
+    mutationAbort.current?.abort();
+    historyRef.current = emptyHistory(roomId);
+    setHistory(historyRef.current);
+    setPermissionDenied(true);
+    setPollError("접근 권한을 확인해 주세요.");
+  });
+
   const snapshot = history.snapshot;
   const bindings = snapshot?.bindings ?? [];
   const origin = bindings.find((binding) => binding.agentId === originId);
@@ -197,7 +210,13 @@ function RoomInvestigation({ userId, roomId, role }: Props) {
     : undefined;
 
   async function mutate(action: HumanAction, fields: Body, retryBody?: Body) {
-    if (!snapshot || !writable || mutationPending.current || (pendingDirect && !retryBody))
+    if (
+      !snapshot ||
+      !writable ||
+      accessLost.current ||
+      mutationPending.current ||
+      (pendingDirect && !retryBody)
+    )
       return false;
     mutationPending.current = true;
     pollAbort.current?.abort();
@@ -322,7 +341,7 @@ function RoomInvestigation({ userId, roomId, role }: Props) {
       className="flex min-h-0 min-w-0 flex-1 flex-col [overflow-wrap:anywhere]"
     >
       <div className="flex shrink-0 flex-wrap items-center justify-between gap-2 border-b px-5 py-2">
-        <p role="status" className="text-xs text-neutral-500">
+        <p role="status" aria-label="방 상태" className="text-xs text-neutral-500">
           방: {snapshot ? labels[snapshot.roomMode] : "조회 중"}
           {cycle ? ` · 조사: ${labels[cycle.state]}` : ""}
         </p>
@@ -450,6 +469,9 @@ function RoomInvestigation({ userId, roomId, role }: Props) {
           </AdvancedControls>
         )}
       </div>
+      {writable && bindings.some((binding) => binding.owned) && (
+        <OwnInputControls userId={userId} roomId={roomId} bindings={bindings} />
+      )}
       {error && (
         <p
           ref={errorRef}
@@ -472,6 +494,7 @@ function RoomInvestigation({ userId, roomId, role }: Props) {
         historicalRuns={history.runs}
         bindings={bindings}
         labels={labels}
+        onAccessLost={loseAccess}
         scrollRef={scrollRef}
         unread={unread}
         onLatest={() => {

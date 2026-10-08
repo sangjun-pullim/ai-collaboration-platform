@@ -87,6 +87,7 @@ function harness(role: "owner" | "participant" | "observer" = "participant") {
         };
       if (name === "./chat-composer") return { ChatComposer: "composer" };
       if (name === "./chat-timeline") return { ChatTimeline: "timeline" };
+      if (name === "./own-input-controls") return { OwnInputControls: "own-input-controls" };
       if (name === "./advanced-controls") return { AdvancedControls: "advanced" };
       if (name === "../../components/ui/button") return { Button: "button" };
       throw new Error(`Unexpected UI dependency ${name}`);
@@ -135,6 +136,7 @@ function harness(role: "owner" | "participant" | "observer" = "participant") {
   return {
     render,
     states,
+    refs,
     history,
     snapshot,
     calls,
@@ -245,4 +247,26 @@ test("should honor an explicitly cleared selection when only one responder remai
   assert.equal(cleared.props.disabled, true);
   h.snapshot({ ...h.history, bindings: [{ ...h.history.bindings[0], bindingEpoch: 2 }] });
   assert.equal(find(h.render(), "composer")!.props.target, undefined);
+});
+
+test("should propagate source access loss to abort room work clear history and block further input", async () => {
+  const h = harness();
+  const poll = new AbortController();
+  const mutation = new AbortController();
+  h.refs[2].current = poll;
+  h.refs[3].current = mutation;
+  (find(h.render(), "composer")!.props.onDraft as (value: string) => void)("차단 뒤 질문");
+  const composer = find(h.render(), "composer")!;
+  const timeline = find(h.render(), "timeline")!;
+  h.snapshot({ ...h.history, roomRevision: h.history.roomRevision + 1 });
+  assert.equal(find(h.render(), "timeline")!.props.onAccessLost, timeline.props.onAccessLost);
+  (timeline.props.onAccessLost as () => void)();
+  assert.equal(poll.signal.aborted, true);
+  assert.equal(mutation.signal.aborted, true);
+  const staleSubmit = composer.props.onSubmit as (event: unknown) => Promise<boolean>;
+  assert.equal(await staleSubmit(h.submit("차단 뒤 질문")), false);
+  const tree = h.render();
+  assert.equal((find(tree, "timeline")!.props.events as unknown[]).length, 0);
+  assert.equal(find(tree, "composer"), undefined);
+  assert.equal(h.calls.length, 0);
 });

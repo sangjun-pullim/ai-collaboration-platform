@@ -5,6 +5,7 @@
     "module": "NodeNext",
     "moduleResolution": "NodeNext",
     "strict": true,
+    "rewriteRelativeImportExtensions": true,
     "skipLibCheck": true,
     "types": ["node"],
     "noEmit": true
@@ -14,7 +15,8 @@
     "playwright.config.ts",
     "playwright.auth.config.ts",
     "playwright.device.config.ts",
-    "playwright.workflow.config.ts"
+    "playwright.workflow.config.ts",
+    "playwright.settings.config.ts"
   ],
   "exclude": ["experiments", "node_modules"]
 }

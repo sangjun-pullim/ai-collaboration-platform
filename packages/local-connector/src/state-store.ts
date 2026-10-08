@@ -3,13 +3,17 @@ import { mkdir, lstat, open, rename, unlink, realpath } from "node:fs/promises";
 import { dirname, join, resolve, parse } from "node:path";
 import { randomUUID } from "node:crypto";
 import { performance } from "node:perf_hooks";
-import { ConnectionError, type Body, type Scope } from "./contracts.ts";
+import { ConnectionError, isId, type Body, type Scope } from "./contracts.ts";
 export type Mapping = {
   root: string;
   nativeSessionId: string;
   workspaceId?: string;
   agentId?: string;
   bindingEpoch?: number;
+  formatVersion?: 2;
+  runtime?: "codex" | "claude";
+  generation?: string;
+  materialization?: "RESERVED" | "MATERIALIZED";
 };
 export type Pending = {
   action: "begin" | "exchange" | "rotate" | "workspace" | "agent" | "replace";
@@ -37,6 +41,32 @@ export type ConnectorState = {
 };
 function refused(): never {
   throw new ConnectionError("FORBIDDEN");
+}
+function validateMapping(mapping: Mapping) {
+  if (
+    mapping.formatVersion === undefined &&
+    mapping.runtime === undefined &&
+    mapping.generation === undefined &&
+    mapping.materialization === undefined
+  )
+    return;
+  if (
+    mapping.formatVersion !== 2 ||
+    !["codex", "claude"].includes(mapping.runtime ?? "") ||
+    !isId(mapping.generation) ||
+    !isId(mapping.agentId) ||
+    !isId(mapping.workspaceId) ||
+    !Number.isSafeInteger(mapping.bindingEpoch) ||
+    mapping.bindingEpoch! < 1 ||
+    typeof mapping.root !== "string" ||
+    !mapping.root.startsWith("/") ||
+    typeof mapping.nativeSessionId !== "string" ||
+    !mapping.nativeSessionId ||
+    !["RESERVED", "MATERIALIZED"].includes(mapping.materialization ?? "") ||
+    (mapping.runtime === "claude" && !isId(mapping.nativeSessionId)) ||
+    (mapping.materialization === "RESERVED" && mapping.runtime !== "claude")
+  )
+    refused();
 }
 class ProfileBusy extends ConnectionError {
   constructor() {
@@ -220,6 +250,7 @@ export class StateStore {
         !["pairing", "connected", "disconnected"].includes(input.status)
       )
         refused();
+      input.mappings.forEach(validateMapping);
       return input;
     } catch {
       refused();
@@ -228,6 +259,7 @@ export class StateStore {
     }
   }
   async write(state: ConnectorState, check = () => {}) {
+    state.mappings.forEach(validateMapping);
     await this.ensureDir(check);
     check();
     try {

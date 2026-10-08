@@ -36,7 +36,7 @@ export async function callInvestigation(
         const { done, value } = await reader.read();
         if (done) break;
         size += value.length;
-        if (size > 262_144) {
+        if (size > (action === "source-read" ? 16_384 : 262_144)) {
           await reader.cancel();
           throw new WorkflowError("UNAVAILABLE");
         }
