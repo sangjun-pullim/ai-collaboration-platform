@@ -59,7 +59,7 @@
     "test:integration:workflow": "npm --prefix packages/local-connector run build && tsc -p tsconfig.integration.json && node --test --test-concurrency=1 .integration-build/tests/integration/investigation-coordinator.test.js",
     "test:e2e:workflow": "npm --prefix packages/local-connector run build && tsc -p tsconfig.integration.json && node .integration-build/tests/helpers/workflow-fixture.js --workflow-e2e-runner",
     "test:integration:runtime": "npm --prefix packages/local-connector run build && tsc -p tsconfig.integration.json && node --test --test-concurrency=1 .integration-build/tests/integration/owned-codex-workflow.test.js",
-    "test:integration:settings": "npm --prefix packages/local-connector run build && tsc -p tsconfig.integration.json && node --test --test-concurrency=1 .integration-build/tests/integration/owner-local-ai-setup.test.js .integration-build/tests/integration/claude-product-runtime.test.js",
+    "test:integration:settings": "npm --prefix packages/local-connector run build && tsc -p tsconfig.integration.json && node --test --test-concurrency=1 .integration-build/tests/integration/owner-local-ai-setup.test.js .integration-build/tests/integration/claude-product-runtime.test.js .integration-build/tests/integration/own-ai-input-pause.test.js .integration-build/tests/integration/shared-input-source-history.test.js",
     "test:e2e:settings": "npm --prefix packages/local-connector run build && tsc -p tsconfig.integration.json && node .integration-build/tests/helpers/settings-browser-fixture.js --settings-e2e-runner",
     "build:local-connection": "node scripts/build-local-connection.mjs",
     "predev": "npm run build:local-connection",
