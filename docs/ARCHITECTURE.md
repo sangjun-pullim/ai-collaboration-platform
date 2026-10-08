@@ -4,6 +4,8 @@ sources:
   - src/**
   - packages/local-connector/src/**
   - supabase/migrations/**
+  - scripts/build-local-connection.mjs
+  - scripts/local-connection-bootstrap.sh
   - experiments/local-ai-runtime/src/**
   - experiments/claude-code-runtime/src/**
 ---
@@ -20,6 +22,16 @@ sources:
 실제 웹은 회사 코드·표시 이름 입장과 AI 채팅방 목록을 기본 진입으로 사용한다. shadcn/ui·Tailwind가 화면 구성과 접근 가능한 Dialog·Sheet를 제공한다. 모의 체험은 `/demo`에 둔다. `ChatShell`은 탐색·배치만 맡고 `InvestigationView`가 조회·요청·미확정 저장·대상 선택의 상태를 소유한다. 표시용 Timeline·Composer·고급 제어에 별도 HTTP·storage·polling을 만들지 않는다.
 
 웹은 현재 사용자 session과 publishable key로 DB를 호출한다. 입장 코드 verifier·admission·시도 제한은 private DB 모델이 소유하며 제품 웹에 admin key·DB 비밀번호를 주지 않는다. 웹의 `runtime-settings`는 자기 기기에 폴더 선택·공급자·모델·추론 강도(`effort`) 설정 요청을 저장한다. PC의 `SettingsManager`가 native 폴더 선택과 자동 코드 탐색 범위의 확인, 준비와 적용을 맡는다. 웹 요청 접수·서버 확정·PC 적용을 별도 상태로 표시하며, 이 소스 구현을 실제 Mac·DB·공급자 수용 완료로 해석하지 않는다. [프런트엔드](FRONTEND-ARCHITECTURE.md)·[입장 DB](DB-SCHEMA.md#회사-코드-입장)
+
+## 설치 없이 명령 한 번으로 연결
+
+`ConnectionsPage`는 검증한 서비스 주소·현재 사용자·승인 가능한 방을 화면에 전달한다. `LocalConnectionGuide`가 방과 기기 이름에 맞는 명령을 만들고, `ConnectionManager`는 URL fragment의 기기 코드를 한 번 읽어 지운다. 코드 입력과 웹 승인은 별개이며 확인란을 자동 선택하지 않는다.
+
+운영 연결 코드는 `build-local-connection.mjs`가 새 임시 폴더에서 컴파일한다. 테스트·개인 파일·외부 런타임 패키지를 제외한 압축 파일과 검증값이 `public/local-connection/`에 생성된다. 웹 개발·빌드 전에 생성하며 `dev-local-web.mjs --check`는 생성하지 않는다. 파일의 검증값을 이름에 포함하고, 모든 파일이 준비된 뒤 배포 정보를 교체한다.
+
+Mac의 임시 실행 코드는 다운로드 검증·실행 환경 검사만 맡는다. 기존 Node 24를 사용하거나 공식 고정 버전을 임시로 실행한다. `connect-command`가 기존 `Connector` 등록·복구와 터미널의 소유 계정·방 확인을 연결한다. 등록 준비 잠금을 반환한 뒤 기존 `SettingsManager`가 실행을 관리한다. 웹 설정·중앙 API·공급자 권한·읽기 도구 계약은 그대로 사용한다.
+
+연결 프로필은 서비스 주소·사용자·방으로 구분한다. 재접속은 같은 프로필을 사용하고 불확실한 등록을 새 프로필이나 AI 입력으로 재시도하지 않는다. 종료 신호를 연결기에 전달하며 소유 프로세스 종료가 확인된 경우에만 이번 임시 실행 파일을 제거한다. 개인 로그인·설정·대화 기록은 제거하지 않는다. 실제 공급자·두 PC 수용과 배포 상태는 [개발·검증 상태](planning/delivery-and-validation.md#현재-진행-상태)에서 확인한다.
 
 ## 추천 구조
 

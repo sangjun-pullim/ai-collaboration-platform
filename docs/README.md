@@ -9,7 +9,7 @@
 | [research/](research) | AI 연결 조사와 출처 |
 | [planning/](planning) | 개발 현황·다음 작업·미결 사항·브랜치 운영 |
 | [records/](records) | 문서 정리 이력 |
-| [impl-spec/](impl-spec) | 진행 중인 구현 계획과 완료 계획 보관 |
+| [impl-spec/](impl-spec) | 구현 중·검증 대기·보류된 계획과 완료 기록. 상태 구분은 개발·검증 상태에서 확인 |
 
 ## 제품과 용어
 
@@ -39,6 +39,8 @@
 ## 개발 현황과 계획
 
 - [개발·검증 상태](planning/delivery-and-validation.md): 현재 진행 상태, 검증 근거와 다음 작업의 정본.
+- [남아 있는 계획서의 상태](planning/delivery-and-validation.md#남아-있는-계획서를-읽는-기준): 소스 구현과 실제 검증 대기·새 구현 계획을 구분하는 목록.
+- [다음 작업 순서](planning/delivery-and-validation.md#다음-작업-순서): 기존 계획을 닫을 검증 묶음과 후속 기능.
 - [결정과 미결 항목](planning/decisions-and-open-items.md): 아직 확인하거나 선택해야 할 사항.
 - [GitHub Flow 운영](planning/github-flow.md): 작업 브랜치, PR, 검토와 병합 후 정리.
 - [AI 채팅방 화면 구현 기록](impl-spec/archive/020-chat-first-web-experience.md): 기본 채팅 화면과 shadcn/ui·Tailwind 전환을 완료하고 검증한 계획.
@@ -51,9 +53,10 @@
 - [승인 폴더의 코드 탐색 구현 기록](impl-spec/archive/028-bounded-repository-reader.md): 파일 사전 선택을 없애기 위한 제한된 목록·검색·읽기 모듈. 소유자 승인과 실제 AI 연결은 후속 통합에 포함한다.
 - [폴더 승인과 실제 AI 도구 연결 계획](impl-spec/029-owner-approved-repository-tools.md): 새 세대의 로컬 승인·웹 설정과 Codex/Claude의 탐색 도구·내구 기록을 연결한다. 현재 구현 범위와 남은 검증은 개발·검증 상태 문서에서 확인한다.
 - [공식 Claude 연결과 후속 질문 계획](impl-spec/030-native-claude-chat-and-follow-up.md): 기본 factory의 실제 설치·설정 검증과 같은 소유 대화의 후속 질문을 보정한다. 자동 공동 조사의 방향 수정은 기본 채팅의 선행 조건이 아니다.
+- [명령 한 번으로 내 Mac 연결 구현 기록](impl-spec/archive/031-one-command-local-connection.md): 별도 앱·저장소·npm 설치 없이 운영 연결 코드를 임시 실행하고 기기 승인부터 웹 AI 설정까지 이어가는 단계. 현재 실행기를 재사용하는 배포·승인·설정 연결이다. 구현·검증 상태는 개발·검증 상태 문서에서 확인한다.
 - [질문 당시 대상·코드 이력 계획](impl-spec/027-shared-input-source-history.md): 중앙 채팅에 예약 당시 대상과 저장한 파일 관찰을 연결한다. 입력 전 허용 파일과 실제 도구 반환을 구분하며 메시지별 상세 조회를 제공하는 단계다.
 - [진행 중인 구현 계획](impl-spec): 실행할 코드 수준 계획.
-- [완료 계획 보관](impl-spec/archive): 당시 계획과 검증 기록. 현재 코드 상태는 구조 문서와 실행 결과로 확인한다.
+- [계획 보관](impl-spec/archive): 완료 계획과 대체된 구계획의 당시 결정·검증 기록. 현재 코드 상태는 구조 문서와 실행 결과로 확인한다.
 
 ## 결정과 기록
 

@@ -136,3 +136,19 @@
 저장 native JSONL을 stdout init/result 형식으로 가정하면 정상 답변 뒤 대화 재개 검증이 실패한다. [native 이력 증명](../packages/local-connector/src/claude/native-history-proof.ts)은 정확한 소유 session의 저장 행을 실시간 입력·메시지·실제 host 도구 반환과 대조한다. 이력 확인 실패 뒤에도 검증한 typed terminal과 답변을 보존하며 다음 resume 입력만 차단한다. 도구 결과 위조를 먼저 실패시킨 뒤 실제 반환 receipt의 대조를 보완했다.
 
 구현 리뷰에서 설정 import 충돌·custom authentication headers·대화 기록 비활성화 상속·쓰기 가능한 설치 상위 경로를 재현하고 보정했다. 개인 설정 파일은 유지하고 채팅 작업의 기록을 켜며 같은 UUID resume를 사용한다. 격리 회귀와 독립 재리뷰를 마쳤고 현재 수치·기존 전체 검사 취소·실제 Claude 수용의 미완료 조건은 [검증 정본](planning/delivery-and-validation.md#현재-진행-상태)에 기록한다.
+
+## 2026-10-08 — 웹 준비 검사에서 Docker 연결 실패의 원인 누락
+
+Docker 접근이 거절되어도 웹 준비 명령은 `LOCAL_STACK_UNVERIFIED`를 출력했다. DB 점검 모듈이 다른 모듈의 오류를 감싸면서 웹 실행기의 `LOCAL_DOCKER_UNAVAILABLE` 분류가 사라졌다.
+
+[웹 실행기](../scripts/dev-local-web.mjs)는 자신의 Docker 실행 함수에서 확인한 고정 오류 분류만 보존한다. 원본 stderr·키·임의 오류 코드는 출력하지 않으며 기존 DB·게이트웨이 확인 순서와 실행 조건을 유지한다.
+
+실제 명령을 실행하는 격리 회귀가 수정 전 실패했고 수정 후 통과했다. Docker 실패의 고정 JSON·비공개 출력 부재·Next 미실행을 확인했다. 관련 검사와 독립 리뷰 결과는 [검증 정본](planning/delivery-and-validation.md#2026-10-08-goal-재개와-실행-환경-확인)에 기록한다. 실제 실행 환경에서도 명령은 `LOCAL_DOCKER_UNAVAILABLE`로 종료했으며 Docker가 꺼졌다는 의미로 해석하지 않는다.
+
+## 2026-10-08 — 설치된 DB의 자료 이력 검사에 업그레이드 검사 포함
+
+일시정지·자료 이력을 설정 검증 명령에 연결할 때 SQL013 설치 전 DB를 요구하는 검사를 함께 선택했다. 안내대로001–013이 설치된 DB에서 실행하면 기존 업그레이드 guard가 정상적으로 거절해 설정 회귀 명령이 실패한다.
+
+[자료 이력 회귀](../tests/integration/shared-input-source-history.test.ts)는 설치 완료 상태의8개 검사만 유지하고, 기존 업그레이드1개는 [별도 파일](../tests/integration/shared-input-source-upgrade.test.ts)로 옮겼다. 검사 본문·제한 시간·기존 guard·정리 driver는 유지했다. 통합 명령은 설치된 DB의4개 파일을 선택하고 업그레이드 검사는 선택하지 않는다.
+
+검사 선언과 기존 guard를 사용하는 합성 재현에서 잘못된 선택의 실패와 보정 후 제외를 확인했다. 실제 DB 검증의 완료는 주장하지 않는다. 독립 재검토와 원문 보존 근거는 [검증 정본](planning/delivery-and-validation.md#2026-10-08-설정-검증-보완과-커밋)에 기록한다.

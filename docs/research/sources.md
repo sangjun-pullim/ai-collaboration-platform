@@ -294,6 +294,18 @@ cookie/bearer durable polling과 서버 내부 JWT를 사용하는 bounded SSE h
 
 이 확인은 서버 연결 기능과 제약의 문서 근거다. 원격 MCP만으로 이 제품의 자동 질문·답변, 읽기 범위·취소·모델 설정을 구현하거나 실제 설치된 두 AI에서 검증한 증거가 아니다. 제품 대안과 남은 검증은 [설치 부담 조사](local-ai-connection-research.md#별도-연결-프로그램-설치를-없애는-대안)에 기록했다.
 
+## S29
+
+**기존 AI의 공개 실행 제어와 설치 없는 임시 배포 비교** — 2026-10-07 확인
+
+- [Claude CLI reference](https://code.claude.com/docs/en/cli-reference): 공개 JSON 입출력·model/effort·resume 옵션. 비공개 내부 연결 옵션을 제품 계약의 근거로 쓰지 않는다.
+- [Codex app-server](https://learn.chatgpt.com/docs/app-server): 로컬 stdio의 thread/turn과 실행 제어. MCP 도구 설정과 별도 계약이다.
+- [OpenAI self-hosted environments](https://developers.openai.com/api/docs/guides/agents-api/environments/self-hosted): 클라우드 에이전트와 로컬 exec-server, 별도 API 인증 전제. 개인 Codex 로그인으로 기존 로컬 AI를 제어하는 제품 구조의 대체로 채택하지 않는다.
+- [Node 24.21.0 공식 검증값](https://nodejs.org/download/release/v24.21.0/SHASUMS256.txt): macOS arm64/x64 압축 배포본과 SHA-256.
+- [Node 24.21.0 지원 환경](https://github.com/nodejs/node/blob/v24.21.0/BUILDING.md): 두 macOS 아키텍처의 최소 지원 OS 13.5.
+
+기존 제품의 `provider-adapter.ts`·CLI·설정 관리자·운영 컴파일 import를 대조했다. 로컬 실행기는 현재 Node 내장 모듈과 제품 내부 모듈로 구성되어 운영 배포에 npm runtime 의존성을 복사할 필요가 없다. 새 배포 파일의 완결성과 다운로드·종료 검증은 [031 계획](../impl-spec/archive/031-one-command-local-connection.md)의 후속 작업이며 이 조사에서 바이너리 다운로드·실제 AI 실행을 수행하지 않았다.
+
 ## 참고하되 첫 구현에 포함하지 않은 방향
 
 - [A2A specification](https://a2a-protocol.org/latest/specification/): 표준 agent 간 메시지·task·artifact·취소 모델. 공급자 세션 연결·로컬 권한·사내 UI를 대신하지 않으며 MVP의 필수 기술로 확정하지 않았다.

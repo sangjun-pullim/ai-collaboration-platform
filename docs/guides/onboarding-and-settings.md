@@ -40,11 +40,27 @@ Supabase의 신규 로컬 개발 흐름은 CLI·container runtime으로 시작�
 
 ## 현재 웹 입장과 AI 채팅방
 
-실제 웹 경로는 `/login`, `/app`, `/app/rooms/<roomId>`, `/app/connections`다. 회사 공용 입장 코드와 표시 이름으로 접속한다. 같은 브라우저에서는 session을 유지하고 로그아웃·cookie 유실 후에는 새 사용자로 입장한다. 같은 이름으로 이전 방·기기 소유권을 복구하지 않는다. 새 채팅방은 이름만 입력해 만들고 participant/observer 초대로 동료를 초대한다. 현재 코드 입장과 DB membership으로 권한을 확인한다. 기기 코드 승인·공개 저장소/session 등록은 가능하다. 실제 Codex 실행은 아래 로컬 CLI로 준비하며, 등록만으로 실행 준비가 완료되지는 않는다.
+실제 웹 경로는 `/login`, `/app`, `/app/rooms/<roomId>`, `/app/connections`다. 회사 공용 입장 코드와 표시 이름으로 접속한다. 같은 브라우저에서는 session을 유지하고 로그아웃·cookie 유실 후에는 새 사용자로 입장한다. 같은 이름으로 이전 방·기기 소유권을 복구하지 않는다. 새 채팅방은 이름만 입력해 만들고 participant/observer 초대로 동료를 초대한다. 현재 코드 입장과 DB membership으로 권한을 확인한다. 기기 코드 승인·공개 저장소/session 등록은 가능하다. 실제 AI 실행은 아래의 명령 한 번 연결과 웹 AI 설정으로 준비하며, 등록만으로 실행 준비가 완료되지는 않는다.
 
 방의 대화는 DB cursor polling으로 복원한다. 준비된 상대 AI를 선택해 직접 질문하거나 방 참가자에게 메시지를 보낸다. 내 AI 연결 없이 질문할 수 있다. 공동 조사·중단·방/조사 재개는 별도 제어에서 사용할 수 있다. driver가 없는 binding은 미검증 안내를 유지한다. 중앙 조정과 실제 Codex의 한 PC 왕복·중단을 검증했다. 검사 수치와 실제 두 PC·Claude의 남은 범위는 [진행 상태](../planning/delivery-and-validation.md#현재-진행-상태)에 유지한다.
 
 개발자는 Node 24에서 `npm ci` 후, [환경 변수 예시](../../.env.example)의 `SUPABASE_URL`, `SUPABASE_PUBLISHABLE_KEY`, `APP_ORIGIN`을 프로세스 환경에 전달해 `npm run dev`를 실행한다. `APP_ORIGIN`은 브라우저로 접속할 정확한 origin이어야 한다. 제품 웹 서버에는 admin/service-role key·DB password·AI 공급자 인증을 전달하지 않는다. 실제 설정을 파일로 만들 때는 개인 자격증명을 저장소에 포함하지 않는다.
+
+### 내 AI를 제공하는 Mac 연결
+
+질문만 하는 참가자는 이 절차 없이 상대 AI를 선택해 질문한다. 답변을 제공하는 참가자는 macOS 13.5 이상에서 기존 Claude Code 또는 Codex CLI의 설치·로그인을 사용한다. 별도 연결 앱·프로젝트 복제·npm 설치는 필요 없다. 연결 명령이 운영 코드를 임시 실행하며, Node 24가 없으면 공식 고정 실행 파일을 검증해 임시로 사용한다.
+
+1. AI를 제공할 개발자는 웹의 **내 AI 연결**(`/app/connections`)을 연다. 참가한 채팅방을 고를 수 있다.
+2. 개발자는 **AI를 제공할 채팅방**과 **내 기기 이름**을 선택한다. **연결 명령 복사** 버튼이 준비되면 사용할 수 있다.
+3. 개발자는 자기 Mac의 터미널에 복사한 명령을 붙여 넣어 실행한다. 기기 승인 주소가 열리고, 열리지 않으면 터미널의 주소를 직접 연다.
+4. 개발자는 웹의 계정·방·공개 정보 안내를 확인하고 확인란을 선택한 뒤 **기기 승인**을 누른다. 주소에 들어온 기기 코드는 자동 입력되며 URL에서는 즉시 제거된다. 자동 승인하지 않는다.
+5. 개발자는 실행 중인 터미널에 표시된 자기 계정·조직·방·기기를 확인하고 `yes`를 입력한다. 등록 확인 뒤 웹 AI 설정을 진행할 수 있다.
+6. 개발자는 웹의 본인 기기 AI 설정에서 폴더·Claude/Codex·모델·추론 강도를 선택하고, 해당 Mac에서 폴더 읽기·공유 범위를 승인한다. 요청 접수와 PC 적용 완료는 서로 다른 상태다.
+7. 개발자는 답변을 제공하는 동안 PC와 해당 터미널을 열어 둔다. 새 명령은 설정 관리까지 이어지므로 추가 `manage`를 실행하지 않는다. 재접속하면 같은 서비스·사람·방의 연결 프로필을 사용한다.
+
+복사가 거절되면 **명령 확인·직접 복사**를 펼쳐 선택된 명령을 직접 복사한다. 종료 확인이 불완전하면 터미널이 임시 실행 파일의 보존 위치를 알린다. 기존 개인 설정·인증·대화 기록을 삭제하거나 새 AI 입력을 자동 시도하지 않는다. 기존 수동 `pair`·`exchange` 이용자는 화면의 **기존 수동 연결을 사용하는 경우**와 **수동 연결의 AI 설정 실행 방법**을 따른다.
+
+연결 명령과 기기 등록 성공은 실제 AI 답변의 검증과 다르다. 현재 지원 범위·검사 결과·실제 Mac과 두 PC에서 남은 확인은 [개발·검증 상태](../planning/delivery-and-validation.md#현재-진행-상태)를 따른다.
 
 ### 이 개발 Mac의 웹 실행
 
@@ -76,6 +92,26 @@ node scripts/dev-local-web.mjs --check
 4. 운영자는 아래 [회사 코드 운영 설정](#회사-코드-운영-설정)에 따라 표준 입력으로 코드를 설정한다. 코드와 표시 이름으로 입장할 수 있다. 현재 제품은 OTP 메일 template이나 메일 발송 준비를 요구하지 않는다.
 
 현재 실제 검사는 소유권을 확인한 로컬 Docker project의 여섯 container와 API/DB/Mailpit의 고정 loopback port를 사용한다. `test:integration`, `test:e2e:auth`의 test-parent 환경은 [local-access-stack](../../tests/helpers/local-access-stack.ts)이 제한하며 일반 `npm test`·모의 browser 검사와 분리된다. parent에만 `LOCAL_ACCESS_PROJECT`, `LOCAL_ACCESS_STACK_WORKDIR`, `LOCAL_ACCESS_DB_URL`, `LOCAL_ACCESS_MAIL_URL`, `LOCAL_ACCESS_ADMIN_KEY`, `LOCAL_ACCESS_SIGNING_JWK`가 필요하다. browser에는 scope가 제한된 fixture bridge만 전달하고 제품 child에는 위 세 제품 설정만 전달한다. 설정이 원격이거나 다른 project이면 fixture 생성·삭제를 거절한다. 정리는 생성한 합성 ID와 inbox만 대상으로 한다.
+
+### AI 설정·일시정지·자료 이력의 통합 검사
+
+이 검사는 확인된 격리 DB에 합성 계정·방·기기·자료를 생성하고 소유한 데이터만 정리한다. 개발자는 위 부모 프로세스용 환경과 SQL010–013, fixture의 `TEST_TEAM_CODE`가 준비된 로컬 DB에서 실행한다. 운영 DB에 실행하지 않는다.
+
+현재 코드의 운영 빌드와 통합 검사에 사용할 웹 서버가 필요하다. 개발자는 별도 검증 폴더에서 빌드를 준비하고 검증용 웹을 `127.0.0.1:4318`에 실행한다. 원래 사용자 웹과 `.next`를 보존한다. 아래 브라우저 명령은 같은 포트에 자체 검증 서버를 시작하므로 통합 검사 종료 뒤 직접 시작한 검증용 웹만 종료해야 한다.
+
+1. 개발자는 Node24를 사용하는 프로젝트 터미널에서 아래 명령을 실행한다. AI 설정·합성 Claude 실행기·새 답변 일시정지·답변 자료 이력의 네 통합 검사 파일이 순차 실행된다.
+
+   ```sh
+   npm run test:integration:settings
+   ```
+
+2. 개발자는 DB 검사 통과 뒤 직접 시작한 검증용 웹의 터미널에서 `Ctrl+C`로 종료한다. 브라우저 검사 서버가 사용할4318 포트가 비어 있어야 한다.
+3. 개발자는 같은 검증 폴더에서 `npm run test:e2e:workflow`를 실행한다. 실제 채팅·일시정지·자료 이력 화면을 desktop/mobile에서 확인한다.
+4. 개발자는 `npm run test:e2e:settings`를 실행한다. AI 설정·선택 폴더·자동 코드 탐색 화면을 desktop/mobile에서 확인한다.
+
+위 명령은 공식 Claude/Codex 모델을 호출하지 않는다. 합성 실행기의 답변과 실제 DB·HTTP·브라우저 검사를 구분하며 실제 Claude 답변·같은 대화 재개·두 PC 수용은 별도로 검증한다. 업그레이드 전용 `own-ai-input-upgrade.test.ts`와 `shared-input-source-upgrade.test.ts`는 이 명령에 포함하지 않는다. 각각 아직 SQL011이 없는 소유001–010 DB와 아직 SQL013이 없는 소유001–012 DB에서만 실행한다. DB reset·기적용 SQL 재적용으로 조건을 만들지 않는다.
+
+### 검증 상태
 
 사람 인증·방 접근과 기기 등록의 통합·브라우저 검사 및 독립 리뷰를 완료했다. 두 PC·Claude·Realtime·개인 설명의 제품 통합은 후속 범위다. 현재 검증 수치와 순서는 [개발 순서와 검증 계획](../planning/delivery-and-validation.md#현재-진행-상태)을 따른다.
 
