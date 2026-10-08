@@ -11,6 +11,10 @@ import {
   type OwnedContext,
 } from "../runtime-contracts.ts";
 import { object, type OwnedHistory } from "./owned-history.ts";
+import {
+  nativeHistoryMetadata,
+  validateNativeHistoryAttachment,
+} from "./native-history-records.ts";
 
 type Conversation = { inputId: string; index: number; value: string }[];
 type Receipt = NonNullable<OwnedContext["ownedTurns"][number]["toolReceipts"]>[number];
@@ -65,6 +69,7 @@ function parseConversation(
   const conversation: Conversation = [];
   let parent: string | null = null;
   let current: string | undefined;
+  let queued = false;
   for (const [index, frame] of history.records.entries()) {
     if (frame.type === "file-history-snapshot") {
       if (!isId(frame.messageId) || !expected.has(frame.messageId)) throw rejected();
@@ -72,7 +77,26 @@ function parseConversation(
       if (typeof frame.isSnapshotUpdate !== "boolean") throw rejected();
       continue;
     }
-    if (frame.type !== "user" && frame.type !== "assistant") throw rejected();
+    if (version === "2.1.293") {
+      const metadata = nativeHistoryMetadata(
+        frame,
+        context.threadId,
+        parent,
+        inputs[started.length]?.promptHash,
+      );
+      if (metadata) {
+        if (metadata === "ENQUEUE") {
+          if (queued) throw rejected();
+          queued = true;
+        } else if (metadata === "DEQUEUE") {
+          if (!queued) throw rejected();
+          queued = false;
+        }
+        continue;
+      }
+    }
+    const attachment = version === "2.1.293" && frame.type === "attachment";
+    if (frame.type !== "user" && frame.type !== "assistant" && !attachment) throw rejected();
     if (
       frame.sessionId !== context.threadId ||
       frame.cwd !== context.root.path ||
@@ -85,6 +109,11 @@ function parseConversation(
       throw rejected();
     seen.add(frame.uuid);
     parent = frame.uuid;
+    if (attachment) {
+      if (!current) throw rejected();
+      validateNativeHistoryAttachment(frame);
+      continue;
+    }
     const message = object(frame.message);
     const prompt = frame.type === "user" ? promptText(message) : null;
     if (prompt !== null) {
@@ -106,7 +135,7 @@ function parseConversation(
     if (!current) throw rejected();
     conversation.push({ inputId: current, index, value: conversationValue(frame) });
   }
-  if (started.length !== inputs.length) throw rejected();
+  if (queued || started.length !== inputs.length) throw rejected();
   proveToolResults(context, history, conversation, inputs);
   return conversation;
 }
