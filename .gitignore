@@ -10,6 +10,7 @@ playwright-report/
 !.env.example
 
 packages/local-connector/dist/
+experiments/claude-code-runtime/dist/
 
 .workflow-artifacts/
 .DS_Store

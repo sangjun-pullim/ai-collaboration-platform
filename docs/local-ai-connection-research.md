@@ -1,6 +1,6 @@
 # 웹에서 로컬 저장소와 각자의 AI 연결 조사
 
-확인일: **2026-10-01**. 공식 인터페이스, 로컬 프로토콜과 합성 저장소의 실제 실행 결과를 기록한다. 제품의 connector, 실제 웹 제어, 두 PC 협업은 아직 구현하지 않았다. 세션 연결 수준의 정본은 [AI 런타임 연동](ai-runtime-integration.md), 실행 규칙의 정본은 [비즈니스 로직](BUSINESS-LOGIC.md)이다.
+확인일: **2026-10-02**. 공식 인터페이스, 로컬 프로토콜과 합성 저장소의 실제 실행 결과를 기록한다. 제품의 Codex 연결기와 웹 제어는 단계별로 구현했다. 사람의 직접 질문·Claude 호환성·두 PC 협업의 검증과 남은 작업은 [진행 상태](delivery-and-validation.md#현재-진행-상태)를 따른다. 세션 연결 수준의 정본은 [AI 런타임 연동](ai-runtime-integration.md), 실행 규칙의 정본은 [비즈니스 로직](BUSINESS-LOGIC.md)이다.
 
 ## 조사 결론
 
@@ -44,9 +44,9 @@ Chrome은 공용 웹에서 loopback/로컬 네트워크로 보내는 요청에 �
 
 ## 각자의 AI로 접속하는 순서
 
-접속 순서와 계정·기기·저장소·session 확인은 [최초 접속 흐름](onboarding-and-settings.md#최초-접속-흐름)에 모았다. [005](impl-spec/archive/005-device-and-workspace-binding.md)의 제품 connector 등록·교체·취소는 구현·검증했고, [007](impl-spec/007-owned-codex-workflow-runner.md)의 Codex 실행 명령은 구현·검증 중이다. 실제 provider 왕복과 기존 개인 설정 유지의 최종 검증은 아직 완료하지 않았다.
+접속 순서와 계정·기기·저장소·session 확인은 [최초 접속 흐름](onboarding-and-settings.md#최초-접속-흐름)에 모았다. [005](impl-spec/archive/005-device-and-workspace-binding.md)의 제품 connector 등록·교체·취소와 [007](impl-spec/archive/007-owned-codex-workflow-runner.md)의 Codex 실행 명령을 구현·검증했다. 공식 Codex의 한 PC 왕복·중단과 기존 설정 파일 보존을 확인했다. 실제 두 PC·Claude의 남은 검증과 수치는 [진행 상태](delivery-and-validation.md#현재-진행-상태)에 유지한다.
 
-A가 Codex, B가 Claude여도 각자의 adapter가 같은 제품 메시지를 runtime 입력으로 바꾼다. 상대 AI가 상대 저장소를 직접 읽는 방식이 아니라, 소유자의 AI가 자기 저장소에서 근거를 만들어 공유한다.
+제품 설계는 A가 Codex, B가 Claude여도 각자의 adapter가 같은 제품 메시지를 runtime 입력으로 바꾸도록 한다. 소유자의 AI가 자기 저장소에서 근거를 만들어 공유한다. Claude adapter와 공급자 간 실제 왕복은 후속 구현이다.
 
 ## Codex의 연결 지점
 
@@ -65,6 +65,8 @@ A가 Codex, B가 Claude여도 각자의 adapter가 같은 제품 메시지를 ru
 
 ## Claude의 연결 지점
 
+[009 계획](impl-spec/009-claude-code-runtime-compatibility.md)은 공식 비변조 Claude Code를 직접 실행하는 독립 호환성 검사를 정의한다. 기존 로컬 로그인과 개인 설정을 유지하며 native 저장·재개·도구·중단의 차이를 먼저 확인한다. 계획의 리뷰 통과는 실제 Claude 연결 완료 증거가 아니다.
+
 Agent SDK는 connector가 운영하는 프로세스에서 Claude Code 실행을 관리하는 후보다. 공식 문서에서 cwd·저장 session 조회·resume·fork·stream·interrupt 경로를 확인할 수 있다. 개인 지침과 설정의 로딩 범위도 검증해야 하며 원래 앱과 동일한 도구·개인 맥락이 보존된다고 자동 표시하지 않는다. [SDK 근거](sources.md#s5), [설정 근거](sources.md#s14)
 
 Claude Remote Control은 **공급자의 웹/모바일과 로컬 세션을 이어 쓰는 공식 기능**이다. 기존 세션에서 활성화하는 경로가 있고 PC와 프로세스가 계속 실행돼야 한다. 이 기능의 존재만으로 우리의 공동 웹에 직접 연결할 공개 API나 두 사용자의 AI 간 자동 라우팅이 확보되었다고 볼 수 없다. Agent SDK와 Remote Control을 서로 대체 가능한 인증·세션 API로 취급하지 않는다. [공식 Remote Control](sources.md#s13)
@@ -73,7 +75,7 @@ Claude Remote Control은 **공급자의 웹/모바일과 로컬 세션을 이어
 
 | 인증 | 목적 | 분리 기준 |
 |---|---|---|
-| 사람 로그인 | 조사방 읽기·발언·자기 AI 제어 | 제품 계정과 방 멤버십 |
+| 사람 로그인 | 조사방 읽기·발언·권한이 있는 상대 AI 질문·자기 AI 제어 | 제품 계정과 방 멤버십; 질문만 하면 자기 로컬 연결은 선택 사항 |
 | connector 기기 인증 | 요청 수신·상태 보고·자기 scope 실행 | 취소 가능한 제한된 device token |
 | AI 공급자 인증 | 모델 호출과 공급자 과금 | 공급자가 허용한 사용자별 로컬 인증 경로 |
 

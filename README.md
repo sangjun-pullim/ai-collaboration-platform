@@ -1,15 +1,12 @@
 # AI 협업 조사 플랫폼 — 제품 설계 문서
 
-두 개발자의 로컬 저장소와 코딩 AI를 연결해, 공동 문제를 조사하고 개발자가 실시간으로 관찰·질문·개입하는 제품의 설계안이다.
+개발자가 웹에서 동료의 저장소 AI에 질문하고, 필요하면 자기 AI도 연결해 공동 문제를 조사·관찰·개입하는 제품의 설계안이다.
 
-특정 업무 도메인에 종속되지 않는 저장소 간 AI 협업 도구를 목표로 한다. 사용자가 든 수집기·관리자 사례는 첫 파일럿 후보이며 제품의 필수 구조가 아니다. 초기에는 두 개발자·두 AI로 검증한다.
+특정 업무 도메인에 종속되지 않는 저장소 간 AI 협업 도구를 목표로 한다. 사용자가 든 수집기·관리자 사례는 첫 파일럿 후보이며 제품의 필수 구조가 아니다. 초기에는 사람 두 명과 답변용 AI 하나의 직접 질문부터 검증하고 두 AI 공동 조사로 확장한다. 질문자의 AI·로컬 경로 연결은 선택 사항이다.
 
 - 작성일·공식 자료 확인일: **2026-09-30**
-- 상태: **설계와 단계별 구현 진행 중**. 첫 런타임 실험(001)은 실제 대화 재개·중단을 확인했다. 파일 도구 확장(003)을 포함한 런타임은 51개 격리 테스트·독립 재리뷰를 통과했고, 제한된 두 도구의 실제 callback과 저장 세션에서 새 파일 표식 읽기를 확인했다. 웹 모의 화면은 9개 상태 검사·20개 브라우저 검사와 독립 재리뷰를 통과했다. 실제 사람 인증·그룹/방 권한은 통합 14개·Auth browser 4개가 통과했고 독립 구현 리뷰 3도 통과했다. 두 저장소의 공동 실행·제품 배포는 미완료다.
-- 현재 기기 등록: macOS·Node 24 CLI의 코드 승인·저장소/session 별칭 등록·회전/취소·receipt 복구를 구현해 실제 DB·HTTP·CLI 12개와 기존 Auth 통합 14개 재검사가 통과했다. Auth browser 4개와 기기 browser 4개 재검사도 통과했으며 독립 구현 재리뷰 2도 통과했다. 등록 상태는 `codex/unverified`이며 각자의 Claude/Codex·모델·effort 선택과 실제 공동 실행은 후속 범위다.
-- 현재 실행 조정: 내구 질문·공유 답변·origin 후속 요청·lease/fence·기본 중단/UNKNOWN과 웹 공개 이력 polling을 구현했다. 실제 로컬 DB·HTTP·가짜 driver 통합 18개와 workflow browser 4건을 통과했고 독립 구현 리뷰 round1도 미해결 CRITICAL/HIGH 없이 통과했다. 실제 provider 실행기·참가자별 실행 설정·Realtime는 이어 구현한다.
-- 현재 로컬 실행기: [007](docs/impl-spec/007-owned-codex-workflow-runner.md)에서 Codex 소유 세션·binding별 모델/effort·선택 파일·내구 실행/복구 명령을 구현 중이다. 실제 서버 통합·provider 왕복·기존 설정 유지·독립 구현 리뷰를 진행 중이며, 사용자 확정에 따라 기존 개인·프로젝트 설정을 유지하는 방식으로 보정 중이다. 웹 설정·Claude·Realtime·두 PC 검증은 이어지는 범위다.
-- 사용자 요구: 서로 다른 저장소의 AI 간 직접 질문/응답, 웹 접속, AI 발신 과정 표시, 자기 AI에 대한 개인 질문과 방향 수정, 사람이 대화 과정을 관찰하며 개입, Vercel 활용 검토.
+- 상태: **단계별 구현 진행 중**. 진행 상태·검증 수치·남은 범위는 [개발·검증 순서](docs/delivery-and-validation.md#현재-진행-상태)에 유지한다. Claude와 실제 두 PC 왕복·전체 사용자 개입·Realtime·배포는 이어지는 범위다.
+- 사용자 요구: 자기 AI·경로 없이 상대 AI에 질문/응답, 서로 다른 저장소의 AI 간 질문/응답, 웹 접속, AI 발신 과정 표시, 자기 AI에 대한 개인 질문과 방향 수정, 사람이 대화 과정을 관찰하며 개입, Vercel 활용 검토.
 - 초기 사용 전제: 사용자가 **개인·비상업용**으로 확인했다. **Vercel Hobby + Supabase Free**의 무료 한도 안에서 두 사용자 실험을 시작하는 것을 기준으로 한다. 회사 업무용 확장은 후속 범위다.
 - 제품 위치: 조사 대상 저장소들과 독립된 제품 저장소·배포를 권고한다. 대상 서비스의 업무 데이터나 배포에 제품 자체를 결합하지 않는다.
 
@@ -42,13 +39,13 @@ Postgres에 공동 기록과 요청 상태를 보관하고, Realtime은 변경 �
 | [첫 사용 설정](docs/onboarding-and-settings.md) | 웹 접속, PC·저장소·계정·세션 연결, 준비 상태·오류 안내 |
 | [제약과 보안](docs/constraints-and-security.md) | 실패·권한·정보 공유·운영·비용·환경 제약 |
 | [개발·검증 순서](docs/delivery-and-validation.md) | 실험, 단계별 출시, 의미 있는 검증, 성공 측정 |
-| [첫 구현 명세](docs/impl-spec/001-local-ai-runtime-spike.md) | 런타임 실험 도구의 계획. 실제 실행·resume·중단 증거 확보, 팀 도구/L3 필요성 확인은 미결 |
+| [첫 구현 명세](docs/impl-spec/archive/001-local-ai-runtime-spike.md) | 초기 Codex 실행·재개·중단 검증과 후속 요구 확인 완료. 실제 Claude·두 PC 등 남은 범위는 [개발·검증 상태](docs/delivery-and-validation.md#현재-진행-상태)를 따른다. |
 | [웹 기본 흐름 명세](docs/impl-spec/archive/002-web-base-experience.md) | 완료된 모의 웹 계획의 보관 기록. 현재 구현은 frontend 구조 문서를 기준으로 확인 |
 | [런타임 도구 명세](docs/impl-spec/archive/003-scoped-runtime-tools.md) | 제한 도구의 실제 새 실행·저장 세션 재개까지 검증한 완료 명세 |
 | [사람 인증·방 접근 계획](docs/impl-spec/archive/004-web-auth-and-room-access.md) | 완료한 사람 인증·방 접근 계획의 보관 기록. 현재 소스·검사는 frontend/DB/API 문서 기준 |
 | [기기·저장소 등록 계획](docs/impl-spec/archive/005-device-and-workspace-binding.md) | 완료한 로컬 pairing·private state·공개 등록·권한 취소 계획의 보관 기록 |
 | [내구 실행 조정 계획](docs/impl-spec/archive/006-durable-investigation-coordinator.md) | 질문·답변·run·기본 중단과 공개 이력 polling의 완료 계획 보관 기록 |
-| [Codex 실행기 계획](docs/impl-spec/007-owned-codex-workflow-runner.md) | 로컬 소유 맥락·모델/effort·실제 workflow 실행과 장애 복구의 진행 중 계획 |
+| [Codex 실행기 계획](docs/impl-spec/archive/007-owned-codex-workflow-runner.md) | 완료한 Codex 실행기·로컬 소유 맥락·장애 복구 계획의 보관 기록 |
 | [결정과 미결 항목](docs/decisions-and-open-items.md) | 검토 중인 기술안·아직 선택할 사항·실험 과제 |
 | [출처](docs/sources.md) | 공식 자료와 확인 범위 |
 | [문서 정리 기록](docs/document-maintenance.md) | 제품 요구와 분리한 과거 정리·리뷰 범위와 한계 |
@@ -58,7 +55,7 @@ Postgres에 공동 기록과 요청 상태를 보관하고, Realtime은 변경 �
 | 표준 문서 | 생성 조건 | 현재 적용 |
 |---|---|---|
 | `PRD.md` | 제품 문서 요청 | 작성됨. 문제·목표·범위·비목표·성공 기준 |
-| `ARCHITECTURE.md` | 항상 | 작성됨. 설계와 실제 구현을 구분하며 Git 부재로 stamp의 commit 검증은 불가 |
+| `ARCHITECTURE.md` | 항상 | 작성됨. 설계와 실제 구현을 구분하며 Git 기준 freshness stamp와 작업트리 변경을 함께 확인 |
 | `ADR.md` | 항상 | 작성됨. 확정 결정만 기록하고 미선택 기술안은 미결 문서로 분리 |
 | `BUG-FIXES.md` | 항상 | 작성됨. 구현 중 재현·보정한 주요 오류를 기록 |
 | `BUSINESS-LOGIC.md` | 복잡한 업무 동작 | 작성됨. 상태 전이·제어·복구·공유 규칙 |
@@ -69,7 +66,7 @@ Postgres에 공동 기록과 요청 상태를 보관하고, Realtime은 변경 �
 
 DB/API/frontend의 선택과 구체적인 설계 의도가 생기면 해당 조건을 다시 판단한다. 소스 코드가 완성될 때까지 문서 생성을 일괄 미루지는 않는다. 연구·화면·온보딩 등의 별도 문서는 표준 문서와 공존한다.
 
-규칙은 코드에서 유도되는 `ARCHITECTURE.md`에 freshness stamp를 요구한다. 현재 Git 저장소가 없어 commit 기반 `verified-against`를 기록하지 못한다. 설계 제안과 실제 소스·검사로 확인한 구현 범위를 구분하고, 확인하지 않은 commit hash를 쓰지 않는다. 이 한계를 규칙의 예외나 전체 준수 완료로 표시하지 않는다.
+코드에서 유도되는 문서는 확인한 Git commit을 freshness stamp로 기록한다. 현재 미커밋 변경은 `git diff HEAD -- <sources>`로 추가 확인한다. 구현 계획과 설계 의도는 현재 코드의 증거로 사용하지 않는다.
 
 ## 웹 모의 체험 실행
 
@@ -81,6 +78,8 @@ npm run dev
 ```
 
 `http://localhost:3000`에서 준비·공동 기록·개인 설명·방향 수정·정지 단계·결과를 체험한다. 실제 로그인/저장소/AI와 연결되지 않으며 새로고침하면 초기화된다. 검사는 `npm run typecheck`, `npm run lint`, `npm test`, `npm run build`, `npm run test:e2e`로 실행한다. 브라우저 검사를 처음 실행할 때는 `npx playwright install chromium`이 필요하다. 현재 구조와 확인 범위는 [프런트엔드 문서](docs/FRONTEND-ARCHITECTURE.md)를 따른다.
+
+커밋 전에 프로젝트 루트에서 `npm run format`과 `npm run format:check`를 실행한다. 포맷 대상은 웹·연결기·검사 코드와 실행 설정이며, 완료 문서·SQL·원문 fixture·실험·생성물은 제외한다. 기능 변경과 포맷 변경은 별도 커밋으로 기록한다.
 
 ## 실제 로컬 로그인과 방 접근
 
@@ -98,7 +97,7 @@ npm test
 npm run probe
 ```
 
-기본 검사는 실제 AI 질문을 실행하지 않는다. 모델 호출을 명시한 실험과 계정·권한·합성 저장소 조건은 [001 검증 절](docs/impl-spec/001-local-ai-runtime-spike.md#verification)을 따른다. 실제 대화 재개·중단 증거와 아직 미확인인 파일 읽기·두 PC 왕복은 [연결 조사](docs/local-ai-connection-research.md#이번에-실제-확인한-로컬-증거)를 따른다.
+기본 검사는 실제 AI 질문을 실행하지 않는다. 모델 호출을 명시한 실험과 계정·권한·합성 저장소 조건은 [001 검증 절](docs/impl-spec/archive/001-local-ai-runtime-spike.md#verification)을 따른다. 실제 대화 재개·중단·합성 파일 읽기 증거와 아직 미확인인 실제 사용자 저장소·두 PC 왕복은 [연결 조사](docs/local-ai-connection-research.md#이번에-실제-확인한-로컬-증거)를 따른다.
 
 ## 읽는 순서
 

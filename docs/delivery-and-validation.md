@@ -10,16 +10,57 @@
 
 | 순서 | 명세 범위 | 단계 완료 기준 | 필요한 조건 |
 |---|---|---|---|
-| 1 | [로컬 AI 런타임 연결 검증](impl-spec/001-local-ai-runtime-spike.md) | 격리 protocol 테스트와 실제 runtime의 질문·이벤트·중단·저장 맥락 증거 | TypeScript/Node 실험. 실제 호출은 허용 계정·model·실효 권한 확인 후 수행 |
+| 1 | [로컬 AI 런타임 연결 검증](impl-spec/archive/001-local-ai-runtime-spike.md) | 격리 protocol 테스트와 실제 runtime의 질문·이벤트·중단·저장 맥락 증거 | TypeScript/Node 실험. 실제 호출은 허용 계정·model·실효 권한 확인 후 수행 |
 | 2 | [웹 기본 흐름](impl-spec/archive/002-web-base-experience.md) | 연결 선택·공동 대화·발신·개인 입력·정지·결과를 모의 runtime로 체험 | 실제 연동과 독립적인 Next.js/TypeScript 화면. 모의 결과는 연결 성공의 증거가 아님 |
 | 2 다음 선행 검증 | [허용된 런타임 도구](impl-spec/archive/003-scoped-runtime-tools.md) | 실제 모델의 allowlisted 파일 읽기·구조화된 로컬 질문 callback·저장 thread 도구 보존 확인 완료 | 001에서 드러난 파일 도구 미확인을 해소한 합성 호환성 검사. 실제 공동 질문 왕복과 구분 |
-| 3 | 공동 조사 | 두 binding 사이 질문·답변, 인증·기기 scope·내구 기록이 한 흐름으로 동작 | 로컬 Auth/Postgres/Realtime 통합과 실제 두 AI 계정·세션 경로. 원격 검증에는 클라우드 계정/프로젝트 필요 |
+| 3 | 상대 AI 질문과 공동 조사 | 사람→지정 AI의 질문·답변과 두 binding 사이 공동 왕복, 인증·기기 scope·내구 기록이 동작 | 직접 질문에는 대상 AI 하나만 필요. 공동 왕복에는 두 AI 계정·세션 경로 필요. 원격 검증에는 접속 가능한 서비스 주소 필요 |
 | 4 | 사용자 개입과 복구 | 개인 설명 격리·방향 변경·정지·재접속·UNKNOWN 복구 검증 | 앞 단계의 실행 상태·권한·저장 계약. 기본 중단/UNKNOWN은 1·3단계에도 포함 |
 | 5 | 두 PC 파일럿·운영 준비 | 실제 환경·다른 업무 도메인·비용·채택 부담 확인 | 앞 단계 통합, 데이터 공유 허용, 배포·운영 조건 |
 
 후속 행은 명세 작성 순서이며 전체 상세 계획을 미리 고정하지 않는다. 한 제품 단계에 별도로 검증할 작은 선행 명세를 추가할 수 있으므로 명세 번호와 단계 번호는 같을 필요가 없다. 기존 세션 L3나 다른 provider가 제품 성립에 필수이면 해당 호환성 실험을 실제 공동 조사 연동보다 먼저 추가한다. 화면 체험은 독립적으로 진행할 수 있지만 그 결과로 기존 앱 연결 가능성을 판정하지 않는다. 공통 메시지·상태·권한의 기준은 [BUSINESS-LOGIC](BUSINESS-LOGIC.md)에 유지하고 각 명세에서 중복 정의하지 않는다.
 
-공동 조사의 사람 인증·방 접근과 기기 pairing/binding은 실제 통합·브라우저·독립 리뷰를 완료했다. [006](impl-spec/archive/006-durable-investigation-coordinator.md)의 내구 조정은 실제 DB·HTTP·가짜 driver 18개와 workflow browser 4건을 통과했고 독립 구현 리뷰 round1도 미해결 CRITICAL/HIGH 없이 통과했다. 현재 모델·계약·화면은 [DB-SCHEMA](DB-SCHEMA.md), [API-SPEC](API-SPEC.md), [FRONTEND-ARCHITECTURE](FRONTEND-ARCHITECTURE.md)가 설명한다. [007](impl-spec/007-owned-codex-workflow-runner.md)은 connector-owned Codex·local intent/저널/outbox·lease/control과 binding별 로컬 모델/effort 설정의 구현·검증 단계다. 실제 provider 왕복·기존 설정 유지·독립 구현 리뷰가 남아 있어 완료 보관하지 않는다. 다음 상세 범위는 웹 설정과 Claude이며, 기존 구독으로 공식 CLI에 직접 로그인하는 후보와 실제 Codex↔Claude 왕복을 별도로 확인한다. Realtime·개인 설명/전체 개입·두 PC는 이어 검증한다.
+현재 모델·계약·화면은 [DB-SCHEMA](DB-SCHEMA.md), [API-SPEC](API-SPEC.md), [FRONTEND-ARCHITECTURE](FRONTEND-ARCHITECTURE.md)가 설명한다. 단계별 진행 상태와 검증 수치는 이 문서에 유지한다. 각 구현 명세에는 해당 단계의 완료 표시와 리뷰 기록을 남긴다.
+
+## 현재 진행 상태
+
+2026-10-04 기준이다. 실제 모델 호출, 가짜 provider, 브라우저 검사를 구분한다.
+
+| 범위 | 상태 | 검증 근거와 남은 작업 |
+|---|---|---|
+| Codex 연결 실험 [001](impl-spec/archive/001-local-ai-runtime-spike.md) | 완료 | 당시 격리 검사와 독립 구현 리뷰, 합성 저장소의 실제 새 실행·동일 소유 thread/cwd 재개·대화 표식 일치·INTERRUPTED 종결을 확인했다. 이후 macOS·Claude Code 중심 참여, 기존 공식 로그인·개인 설정과 connector 소유 세션의 요구를 확정해 마지막 단계의 미완료 표시를 보정했다. 기존 기록과 현재 검사 정의를 대조한 독립 종료 리뷰를 통과해 명세를 보관했다. 실제 AI를 다시 실행하지 않았으며 Claude 호환성과 두 PC 검증은 별도 미완료 범위다. |
+| 사람 인증·방 접근 | 완료 | 실제 Auth·DB·HTTP 14건, Auth 브라우저 4건과 독립 리뷰 완료. 변경 없는 입력의 결과를 재사용한다. |
+| 기기 pairing·저장소 binding | 완료 | 현재 기기 통합 12/12, 브라우저 4/4 통과. |
+| 내구 조사 조정 [006](impl-spec/archive/006-durable-investigation-coordinator.md) | 완료 | 현재 DB·HTTP·가짜 driver 통합 18/18과 workflow 브라우저 4/4 통과. |
+| Codex 실행기 [007](impl-spec/archive/007-owned-codex-workflow-runner.md) | 완료 | source17의 원래 전체 합성 검사 147/147, 실제 Auth·DB·HTTP·가짜 provider 실행기 6/6, 타입·lint·독립 구현 리뷰 통과. 공식 Codex의 질문 왕복 1회를 직접 입력 3개로 확인했고, 별도 입력 1개로 중앙 ACK·typed INTERRUPTED·업로드·정리를 포함한 중단을 확인했다. 한 PC의 합성 저장소 범위이며 두 PC 완료 증거는 아니다. 문서·종료 검토와 보관을 완료했다. |
+| 웹 설정·대상 표시 [008 계획](impl-spec/008-owner-runtime-settings-and-targets.md) | 설정 구현 전, 기존 대상 표시 완료 | 계획 리뷰 CRITICAL/HIGH 0. 기존 공개 metadata로 공동 조사 선택 목록에 개발자·AI·저장소·세션을 함께 표시했다. 같은 검사에서 기존 빌드의 desktop/mobile 두 사례는 실패했고 표시 수정 후 새 빌드 `EGBuXaVsp6NkpWYhrgAjz`의 전체 workflow 브라우저 8/8·새 웹 unit 120/120·타입·lint·build·format/diff를 통과했다. 선택 값·요청·서버 계약을 유지했으며 소스 입력 35개가 같은 connector 275/275와 제거 보호 리뷰를 재사용했다. 이 작은 표시 수정은 총괄이 직접 검토했고 별도 위험 표면 변경은 없다. 모델·effort 설정과 실제 provider·두 PC 수용은 후속 범위다. 두 PC 기본 왕복 결과를 반영해 적용 순서와 더 작은 명세 분할을 결정한다. |
+| Claude [009 계획](impl-spec/009-claude-code-runtime-compatibility.md) | 실제 호환성 미완료, 별도 실제 입력 상한 확인 중 | 과거 공개 source3의 합성 75/75와 리뷰는 역사적 근거로 유지한다. 현재 공개 입력·도구·종결 보정은 아래 018에서 확인한다. 변경 없는 command 해석·시작 가드·정리 리뷰는 유지한다. 원래 최대 3회는 모두 소비했고 세 UNKNOWN/terminal null·슬롯·개인 설정·소유 child REAPED를 보존했다. 세 번째 native 시작 조건은 통과했지만 상태 알림에서 멈췄으며 실제 두 도구·재개·중단은 미확인이다. private 추가 검증기에 진행 알림·보류 callback 취소를 적용했다. 거절 원문 보존과 전체 실행 연결의 HIGH 두 건, 실패 원인 확인의 MEDIUM 한 건을 보정했고 105/105 합성과 독립 재검토 C0/H0/M0/L0를 통과했다. 원래 기록 7개의 hash와 닫힌 실행 허가는 유지한다. 공개 보정 뒤 새 준비 파일의 참조와 현재 dist hash를 갱신했다. 변경 대상의 격리 검사 60/60·독립 준비 리뷰 C0/H0/M0/L0/INFO0을 통과했고, 변경 없는 검증 모듈과 공개 TaskPolicy 리뷰는 hash 일치 범위에서 재사용했다. 과거 105개를 이번에 다시 실행한 결과로 세지 않는다. 별도 최대 3회·합계 최대 6회의 정상/재개/중단 검사는 준비안이며 명시적 확인 전 추가 실행·예산 생성은 하지 않는다. 공개 CLI·제품 Claude·두 PC 수용은 미완료다. |
+| 사람→상대 AI 직접 질문 [010](impl-spec/archive/010-human-direct-questions.md) | 완료 | source6의 root unit 20/20·connector 150/150, 타입·빌드·관련 lint/컴파일과 독립 구현 리뷰 C0/H0/M0/L0를 통과했다. 실제 로컬 Auth·DB·HTTP·가짜 provider 통합 11/11과 기존 공동 조사·직접 질문·계정 전환 desktop/mobile 8/8을 확인했다. SQL008을 additive 적용하고 기존 질문 이력·receipt·원래 human/validate 함수·권한을 보존했다. 인증 사용자별 미확정 기록과 서버의 실제 로그인 사용자 대조, 일반 cycle 인덱스의 정의·query plan으로 기존 HIGH/MEDIUM을 해소했다. 단계·문서를 마치고 명세를 보관했다. 변경 없는 기존 Auth/device/paired 검사 결과는 재사용했다. 이전 회귀 전체 35/36과 전역 pairing 한도 격리 1/1은 역사적 결과로 유지하고 정확한 실패 원인은 미확인이다. Claude 제품 연동과 두 PC 검증은 별도로 남았다. |
+| 로컬 실행 기록 용량 [011](impl-spec/archive/011-local-runtime-capacity-safety.md) | 완료, 중복 보관 검증은 014에서 보정 | 과거 작업 1,022개에서 완료 업로드가 막히던 RED와 source1 검증 결과를 보존했다. 원문 보관·새 실행 전 공간 확보·최신 완료 표시를 구현했다. 독립 리뷰의 receipt 중복 예약과 큰 TERMINAL 재시작 차단을 보정했다. 고정 source2의 connector 177/177, 타입·빌드·변경 lint·root 타입·통합 컴파일, 실제 소유 로컬 Auth·DB·HTTP와 가짜 provider 실행기 6/6을 통과했다. 독립 구현 재검토는 C0/H0/M1/L0이며 H1/H2를 해소했다. 동일 hash의 archive/store/contracts 리뷰를 재사용했고 단계·문서·링크를 마쳐 명세를 보관했다. 실제 AI 입력은 0회다. 단일 Mac에서 보관 원문 64개·69.03MB를 3회 측정했으며 read 약 787–790ms, write 약 1,588–1,596ms다. 일반 운영 처리량과 성능 향상은 당시 측정 범위에서 검증하지 않았다. M1의 중복 검증은 014에서 보정했다. |
+| 코드 형식 정리 [012](impl-spec/archive/012-readable-source-formatting.md) | 완료 | Prettier 3.9.9와 두 포맷 명령·보호 경로·최소 프로젝트 지침을 도입했다. 고정 전후 105개 파일의 의미 비교와 보호 36개·두 계약 mirror를 확인했다. root unit 20/20·connector 177/177, 두 타입 검사·lint·connector build·통합 컴파일·웹 빌드를 통과했다. prototype 20/20·Auth 4/4·device 4/4·workflow 8/8의 desktop/mobile 검사를 소유 환경에서 직렬 실행했다. 독립 구현·control-plane 리뷰 C0/H0/M0/L0를 통과했고 007·010·011 기능 리뷰의 동일 의미 범위를 재사용했다. 도구 도입 5개 파일과 기계적 포맷 102개 파일을 별도 로컬 커밋으로 기록했다. 기존 lint 경고 1개와 큰 함수 책임 분리는 후속 정리 항목이다. 보관 검증 최적화는 014에서 확인한다. HTTP 공통 읽기는 다음 완료 명세에서 확인한다. 실제 AI 입력은 0회다. |
+| HTTP 요청 읽기 [013](impl-spec/archive/013-shared-http-json-reader.md) | 완료 | 기존 정책 3개의 공통 읽기를 내부 모듈 한 곳으로 옮겼다. 이전/이후 wrapper 22/22의 기대값을 보존했고 helper 13개를 포함한 root unit 55/55, 타입·lint·통합 컴파일·format/diff·새 웹 빌드를 통과했다. 실제 소유 로컬 Auth/device/직접 질문의 입력 제한 HTTP 3/3과 Auth 4/4·device 4/4·workflow 8/8의 desktop/mobile 검사를 확인했다. 독립 계획·구현 리뷰는 각각 C0/H0/M0/L0다. 변하지 않은 012의 connector 177/177·prototype 20/20을 재사용했다. 기존 Origin·오류·UTF-8/BOM 차이와 공개 계약을 유지했으며 AI 입력·remote·reset·migration은 0건이다. 기능 변경을 별도 로컬 커밋으로 기록하고 명세를 보관했다. |
+| 한 저장의 보관 검증 [014](impl-spec/archive/014-scoped-archive-validation.md) | 완료 | 같은 저장의 보관 원문을 한 번 읽고 해석하며 이전·다음 관계를 각각 확인한다. 공개 오류 우선순위를 보정했고 독립 코드 재검토 C0/H0/M0/L0를 통과했다. 한 Mac의 같은 합성 chain을 전후 각 3회 비교했다. 64개·69.03MB에서 저장의 원문 읽기는 138,055,078→69,027,539바이트, 평균 write는 1,561.893→801.172ms다. read는 777.299→787.556ms이며 IO 감소가 없다. 최대 메모리·최대 128MiB·운영 처리량·lease·두 PC 보장은 측정하지 않았다. 최초 interrupt 실패의 원인·시점 영향은 미확인으로 유지한다. 새 독립 reviewer가 성능·실패 영향 근거를 수용했다. 다음 예약 보정 후 전체 connector 210/210·실제 실행기 6/6·직접 질문 11/11을 확인하고 관련 문서·명세 보관을 완료했다. 실제 AI·remote·reset·migration은 0건이다. |
+| 선택 파일 도구 예약 [015](impl-spec/archive/015-file-tool-capacity.md) | 완료 | 38바이트 선택 파일과 처리 중인 lease 응답 예약이 겹치는 RUNTIME_CAPACITY를 실제 callback으로 먼저 재현하고, 파일별 최악 JSON 저장 비용을 적용한 뒤 UPLOADED를 확인했다. 운영 코드 한 파일의 private 책임과 새 검사 모듈로 제한했고 전체 용량·종결 예약·인증·파일 검증·오류 순서·공개 계약은 유지했다. 경계·fallback·중복·drift와 정리의 관련 8/8, 기본 동시성 전체 210/210, 타입·lint·build·통합 컴파일·format/diff를 통과했다. 같은 소유 Auth/DB/HTTP와 가짜 provider에서 실행기 6/6·직접 질문 11/11, 독립 구현 리뷰 C0/H0/M0/L0를 확인했다. 별도 기능 커밋·문서·명세 보관과 구현 CLI 종료를 완료했다. 실제 provider·remote·reset·migration은 0건이다. |
+| 조사 화면 책임 분리 [016](impl-spec/archive/016-browser-investigation-modules.md) | 완료 | 운영 3개·검사 2개 파일에서 HTTP 처리와 사용자별 요청 정책을 분리했다. 화면은 680→571줄이며 조회·요청 전송·저장/삭제·대상 선택의 단일 소유자를 유지한다. 전후 같은 동작 기준 68/68·전체 웹 unit 120/120·타입·lint·통합 컴파일·format/diff를 통과했다. 새 빌드 `ZVXjr8U1JaS2xZ3mq-5Rj`에서 Auth 4/4·device 4/4·workflow 8/8과 desktop/mobile 계정 전환을 확인했다. 독립 계획·구현 리뷰는 각각 C0/H0/M0/L0이며 함수·타입·화면 연결과 전후 검사 입력·기대값을 보존했다. 첫 VM 비교 실패·보정 증거와 기존 lint 경고 1개는 유지한다. 변경 없는 connector 210/210은 소스 입력 38개·빌드 27개와 원래 TAP hash를 대조해 재사용했다. 기능 커밋·문서·명세 보관·구현 CLI 정리를 완료했다. 실제 provider·두 PC·remote·reset·migration은 검증하지 않았다. |
+| 로컬 명령 책임 분리 [017](impl-spec/archive/017-connector-cli-modules.md) | 완료 | 운영 3개·검사 2개에서 옵션 해석과 여러 agent의 전체 profile 제거를 내부 모듈로 분리했다. CLI는 647→534줄이며 환경 검사·필수 옵션·객체 조립·명령·출력을 계속 소유한다. 전후 같은 관련 73/73·전체 connector 272/272·타입·lint·통합 컴파일·format/diff, 새 빌드의 소유 HTTP 실행기 6/6·직접 질문 11/11·device 4/4·workflow 8/8을 통과했다. 독립 계획 리뷰 C0/H0/M0/L1의 설명을 보정했고 새 구현 리뷰 C0/H0/M0/L0/INFO0을 통과했다. 옵션·제거·main·bin·기존 검사와 입력·기대값을 보존했다. 변경 없는 웹 unit 120/120·Auth 4/4·웹 빌드는 입력 66개·fixture/config 27개·served artifact 113개의 hash 일치 범위만 재사용했다. 별도 코드·문서 커밋과 명세 보관·소유 구현 CLI 창 정리를 완료했다. 실제 AI·두 PC·remote·reset·migration은 검증 범위에 포함하지 않는다. |
+| Claude 공개 프로토콜 [018](impl-spec/archive/018-claude-runtime-protocol.md) | 완료 | 공식 2.1.287 형식의 입력 연결·유일한 native 도구·실제 응답 후 완료·MCP 초기 연결과 알림·보류 파일 취소를 공개 합성 실행기에 적용했다. 순수한 입력 증명 모듈 261줄과 I/O를 소유하는 Runtime 468줄로 책임을 나눴다. 독립 구현 리뷰의 관찰 이력 부분 누락 HIGH 1개를 재현하고 전체 기록의 순서·개수·hash 대조로 보정했다. 같은 H1 대상 RED 10개 중 8개 실패→GREEN 10/10·전체 152/152, 타입·lint·format/diff와 독립 재검토 C0/H0/M0/L0/INFO0를 확인했다. 진행 알림에 매번 fsync하지 않으며 취소·receipt만으로 종결하지 않고 정상 완료 경합을 유지한다. 실제 CLI·제품 Claude·두 PC 수용은 미완료다. 원래 UNKNOWN 3개·7개 기록·개인 설정·추가 실제 입력 0회를 유지한다. TaskPolicy dist는 private permit7의 고정 hash와 달라 현재 코드의 실행 근거로 재사용하지 않는다. 실제 실행 전 영향받은 준비 범위를 새로 검토한다. 잘못 실행한 루트 웹 빌드와 새 BUILD_ID는 생성물·실수 기록으로 보존하며 과거 브라우저 결과를 이 빌드의 검증으로 주장하지 않는다. 별도 코드·문서 커밋·명세 보관·소유 CLI 정리를 완료했다. |
+| 로컬 제거 보호 분리 [019](impl-spec/archive/019-local-removal-protection.md) | 완료 | 운영 2개에서 소유 snapshot·proof 검증과 파일 삭제를 내부 모듈로 분리했다. 실행기는 2,246→2,151줄이며 기존 잠금·추적 작업·두 종료 대기·퇴역 상태를 유지한다. 새 경계 검사 3/3을 이동 전후 같은 입력으로 통과했고 기존 제거 9개·CLI 13개 거절 입력의 기대값을 보존했다. 전체 connector 275/275·새 웹 unit 120/120·소유 HTTP 실행기 6/6·타입·빌드·lint·통합 컴파일·format/diff를 통과했다. 직접 질문 원본은 10/11 두 번 실패했고, 진단 복사본의 단독 1/1·전체 11/11과 원래 위치 진단 11/11은 통과했다. 새 독립 구현 리뷰 C0/H0/M0/L0/INFO1은 변경 경로 비사용·나머지 Runner 멤버 78개 보존·기대값 완화 없는 진단 통과를 근거로 원본 실패를 이번 회귀 차단 사유에서 기각했다. 원인은 미확인으로 유지하며 추가 반복 실행을 완료 조건으로 요구하지 않았다. fsync/close 실패 조합은 코드 비교로 확인했고 새 주입 검사는 하지 않았다. 코드·문서 커밋·명세 보관·소유 CLI 종료와 창 정리를 완료했다. 실제 AI·두 PC·remote·reset·migration은 0건이며 성능 향상 수치는 주장하지 않는다. |
+
+007의 첫 실제 검사는 기본 paginated 이력과의 차이로 모델 호출 전에 실패했다. 명시적 legacy 생성·저장·재개를 0-model probe로 확인하고 회귀 검사와 보정을 완료했다. 다음 검사의 왕복은 정상 완료했지만 답변의 PENDING→ACCEPTED 두 이벤트를 하나로 기대한 검증 스크립트가 실패했다. 원본 실패를 보존하고 독립 검토한 control-flow·공식 native 이력으로 세 정상 종결·최종 답변·업로드를 확인했다. 정리된 DB 이벤트 원문을 다시 확인했다는 주장은 하지 않는다. 남은 중단은 별도의 1회 실제 호출에서 통과했으며 전체 직접 호출은 4회다.
+
+전체 사용자 개입·Realtime·파일럿·배포는 미완료다. 007의 과거 rotation timing MEDIUM 1건은 원인이 미확인인 후속 항목이다. 이후 통과로 과거 실패 원인을 확정하지 않는다. Auth 브라우저의 타입 전용 배열을 타입 선언으로 바꿔 기존 lint 경고를 제거했다. 진단 문자열 64개와 나머지 실행 코드의 동일성을 확인했고 현재 타입·lint·format 검사는 통과했다.
+
+2026-10-03 중간 코드 점검에서 실행 기록의 용량 소진 문제를 HIGH로 확인했다. 기존 fixture를 사용한 격리 검사에서, 작업 기록 1,022개에 새 실행을 시작하면 정상 답변을 저장한 뒤 1,024개 한도에 걸려 서버 업로드와 복구가 막혔다. 비교 조건에서는 업로드에 성공했다. 실제 AI 입력과 외부 요청은 0개이며 이전 완료 근거는 보존했다. 기록 보존과 새 실행 전 용량 확보를 구현했고 독립 재검토·실제 연결 검사와 문서 보관을 마쳤다. 코드 형식과 HTTP 공통 읽기를 정리했다. 보관 검증은 한 저장 안에서 재사용하도록 개선했고 별도로 드러난 선택 파일의 저장 예약 오류도 보정했다. 조사 화면의 HTTP 처리와 직접 요청 정책, CLI의 옵션 해석과 전체 profile 제거를 분리했다. 로컬 실행기의 제거 보호도 내부 모듈로 분리했으며 실행·감시·복구의 큰 함수는 후속 정리 항목이다.
+
+## 다음 작업 순서
+
+1. 007의 한 PC Codex 왕복·중단 검증과 문서 보관을 완료했다. 기존 실패·미확인 원인 기록은 유지한다.
+2. 사람→상대 AI 질문의 010을 완료했다. 승인된 009의 macOS 기본 Claude 호환성 검사를 마친다. 질문자는 자기 AI·기기·경로 없이 요청하고 대상만 실행한다. 009의 실제 결과를 반영해 Claude 제품 연동의 작은 명세를 작성한다. 두 번째 PC는 macOS이며 Claude만 사용할 수 있다. 기존 공식 CLI 로그인과 개인 지침을 유지하고 공동 조사의 제한된 실행 권한을 확인한다.
+3. 서로 다른 제품 회원의 두 PC에서 웹 질문자→Claude 답변을 먼저 검증한다. 답변 소유자는 연결을 실행해 두고 추가 입력 없이 답변한다. 이어 기본 모델·effort로 실제 Claude↔Claude와 Codex↔Claude의 공동 질문·답변을 왕복한다. 같은 PC의 두 합성 저장소 검사를 두 PC 완료 증거로 사용하지 않는다. 원격 연결에 필요한 인증·접속 주소·공유 범위를 확인한다.
+4. 검증 결과를 반영해 코드 정리와 웹 설정을 작은 완료 단위로 나눈다. 포맷은 별도 변경으로 관리하고 구조 변경·입력 검증 변경과 섞지 않는다. UTF-8 거절 차이를 없애는 작업은 API 동작 변경으로 별도 검사·리뷰한다.
+5. 참가자별 웹 모델·effort 선택과 대상 표시를 완성한다. 008의 검토된 계약은 배경으로 유지하되 전체 장치를 동시에 구현하는 순서를 고정하지 않는다. 1:1 방의 기본 대상과 다자 방의 참가자·저장소 선택을 별도 완료 단위로 다룬다.
+6. 사용자 개입·Realtime를 통합하고 두 PC 파일럿·운영 준비를 완료한다. Slack 알림은 현재 PRD에 정의되지 않았으므로 별도 추가 요구가 확인될 때 범위와 번호를 정한다.
+
+명세별 구현 브랜치를 사용한다. 완료한 변경은 검증된 논리 단위로 커밋하며, 이미 만들어진 초기 snapshot을 과거 Step별 커밋으로 재작성하지 않는다. 기본 브랜치 병합·push는 사용자의 명시적인 요청을 따른다.
 
 006 리뷰의 후속 성능 항목은 방 전체의 과거 workflow rows/receipt 잠금과 request의 room 인덱스 부재다. 현재는 두 사용자 초기 범위이며 확장성을 주장하지 않는다. 이력·lease receipt 증가에 따른 다른 방 지연을 측정한 뒤 현재 작업 rows 잠금과 room 기반 인덱스를 후속 migration에서 개선한다. 이미 적용한 SQL을 덮어쓰지 않는다.
 
@@ -31,7 +72,8 @@
 |---|---|---|
 | 기존 맥락 연결 | 정확한 앱·버전의 L1/L2/L3 지원 | 보존·누락된 맥락, cwd, 기존 프로세스와의 관계 기록 |
 | 관찰·입력·중단 | visible event, steer/queue, interrupt 종결 | 요청/적용/종료를 구분한 실행 trace |
-| 두 PC 왕복 | 로컬 저장소 A/B, outbound 연결, 질문 하나 | 양쪽 코드 근거와 같은 식별자를 연결한 답변 |
+| 두 PC 직접 질문 | 질문자 웹만 접속, 대상 PC의 저장소·AI 준비 | 질문자 binding 없이 지정 대상의 코드 근거·질문 ID·답변 확인; 대상 소유자 추가 입력과 자동 AI 왕복 없음 |
+| 두 PC 공동 왕복 | 로컬 저장소 A/B, outbound 연결, AI 간 질문 하나 | 양쪽 코드 근거와 같은 식별자를 연결한 답변 |
 | 비공개 설명 | 제품이 관리하는 별도 context·세션·권한 | 설명 transcript를 공동 owned 세션에 자동 import/resume/fork하지 않음; 기존 전역 선호·memory 보존과 구분 |
 | 인증·과금 | 해당 제품 형태에 허용되는 공급자 인증 | 공식 조건·계정 적격성, 실제 호출 계정 확인 |
 | 사내 환경 | 회사 프록시/VPN/절전·운영체제 | 실제 두 PC 접속과 단절·재연결 복구 |
@@ -53,7 +95,7 @@
 위 표의 3·4단계를 합친 통합 범위다. 3단계는 인증·기기 scope·질문 왕복·기본 중단/UNKNOWN을 검증하고, 4단계에서 개인 설명·방향 수정·재접속 복구까지 완성한다. 아래 수용 기준은 두 단계가 모두 통과한 뒤 확인한다.
 
 - 제품은 별도 저장소로 만든다.
-- 실제 사람 인증, 조사방 하나, 기기 두 개, 저장소 binding 두 개를 연결한다.
+- 실제 사람 인증과 조사방 하나를 연결한다. 직접 질문에는 대상 기기·저장소 binding 하나만 등록하고 질문자에게 로컬 설정을 요구하지 않는다. 두 AI 공동 조사 검증에는 두 기기·binding을 연결한다.
 - 이미 실험한 Codex의 connector 소유 세션을 먼저 연동하고, 같은 계약의 Claude adapter와 참가자별 도구·모델·effort 선택을 추가한다. 같은 방의 Codex↔Claude 왕복, 각자의 설정 보존·지원 밖 조합 거절을 실제 검증한다. 각 adapter를 별도 단위로 확인하며 한 공급자의 성공을 다른 공급자의 완료 증거로 사용하지 않는다.
 - durable 질문·답변·run과 Realtime 알림, 로컬 저널을 구현한다.
 - 읽기·허용된 격리 테스트·수정 제안만 지원한다.
@@ -82,6 +124,7 @@
 | 검증 | 반드시 확인할 동작 |
 |---|---|
 | 질문 라우팅 | 지정 수신자만 실행; 일반 공동 발언으로 두 AI가 동시에 새 run을 시작하지 않음 |
+| 사람의 직접 질문 | 질문자 AI·기기·경로 없이 권한 있는 사람이 지정 대상에 질문; 대상 소유자의 추가 입력 없이 답변; 질문자 run·자동 continuation 생성 없음; observer·범위 밖·미준비 대상 실행 거절 |
 | actor 위조 | AI body나 client role로 사람/관리자 권한을 얻지 못함 |
 | 방 접근 | 다른 방·다른 조직·취소된 기기·비멤버의 읽기/쓰기 거절 |
 | 로컬 scope | 웹의 임의 경로·remote shell 요청이 저장소 scope를 확대하지 못함 |

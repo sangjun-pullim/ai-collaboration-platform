@@ -1,5 +1,5 @@
 ---
-verified-against: null
+verified-against: 1eac6aee424d6acdc4ba89afac4e3683db04828d
 sources:
   - supabase/migrations/**
   - src/features/room-access/access-service.ts
@@ -8,7 +8,7 @@ sources:
 ---
 # 인증·조사방·기기·실행 조정 데이터 모델
 
-2026-10-01의 구현 소스를 확인했다. Git 기준 commit이 없어 freshness stamp를 검증할 수 없으며 `verified-against`를 비워 둔다. 격리된 실제 Auth·DB·HTTP 통합 14개와 Auth browser 4개가 통과했으며 독립 구현 리뷰 3도 추가 지적 없이 통과했다. 이 문서는 모델의 이유와 제약을 설명하며, 실제 DDL은 [마이그레이션](../supabase/migrations/20261001000100-web-auth-room-access.sql)이 정본이다.
+2026-10-03의 Git 기준 소스와 작업트리를 확인했다. 이 문서는 모델의 이유와 제약을 설명하며 실제 DDL은 [마이그레이션](../supabase/migrations/20261001000100-web-auth-room-access.sql)이 정본이다. 진행 상태와 검증 수치는 [개발 순서와 검증 계획](delivery-and-validation.md#현재-진행-상태)에 유지한다.
 
 ## 모델 경계
 
@@ -57,14 +57,24 @@ Auth 계정은 Supabase의 `auth.users`가 소유한다. 제품은 이메일이�
 
 [receipt FK 보정](../supabase/migrations/20261001000500-device-cascade-integrity.sql)은 세 credential 참조의 NO ACTION 검사를 transaction 종료까지 연기한다. 기기/조직/Auth 계정 전체 삭제는 기존 cascade로 완료하고, 살아 있는 binding이 참조하는 credential만 독립 삭제하는 동작은 계속 거절한다. 이미 적용한 SQL 네 파일은 수정하지 않았다.
 
-실제 기기 DB·HTTP·CLI 통합 12개와 기존 Auth 통합 14개가 통과했다. 등록 binding을 가진 계정의 hard-delete/ban/soft-delete, 물리적 기기·조직 정리와 정상 소유자 유지도 검사했다. Auth browser 4개·기기 browser 4개도 통과했으며 독립 구현 재리뷰 2도 통과했다. 상태 불변식은 [BUSINESS-LOGIC](BUSINESS-LOGIC.md), 다음 순서는 [로드맵](delivery-and-validation.md#단계별-명세-범위)을 따른다.
+등록 binding을 가진 계정의 hard-delete/ban/soft-delete, 물리적 기기·조직 정리와 정상 소유자 유지를 실제 기기·Auth 통합에서 검사했다. 브라우저 검사와 독립 구현 리뷰도 완료했다. 검증 수치는 [진행 상태](delivery-and-validation.md#현재-진행-상태), 상태 불변식은 [BUSINESS-LOGIC](BUSINESS-LOGIC.md)을 따른다.
 
 ## 내구 질문과 실행 조정
 
-[workflow migration](../supabase/migrations/20261001000600-durable-investigation-coordinator.sql)은 private 정본 아홉 테이블과 공개 event/run 두 projection을 추가한다. 소유한 로컬 DB에 적용했고 신규 권한·제약 및 기존 catalog 보존을 확인했다. 실제 통합 18개·workflow browser 4건을 통과했으며 독립 구현 리뷰 round1도 미해결 CRITICAL/HIGH 없이 통과했다. 기존 Auth 14개·기기 12개와 각 browser 4건의 재검사도 통과했다.
+[workflow migration](../supabase/migrations/20261001000600-durable-investigation-coordinator.sql)은 private 정본 아홉 테이블과 공개 event/run 두 projection을 추가한다. 소유한 로컬 DB에 적용했고 신규 권한·제약 및 기존 catalog 보존을 확인했다. 실제 통합·브라우저·독립 구현 리뷰와 기존 Auth·기기 회귀를 통과했다. 현재 검증 수치는 [진행 상태](delivery-and-validation.md#현재-진행-상태)에 유지한다.
 
 방 control은 revision·commit 순서의 event counter를, cycle은 평생 실행/왕복 예약과 deadline을 소유한다. generation은 양쪽 epoch·revision·공유 입력의 immutable snapshot이다. request와 attempt는 별도로 저장하고 start intent·lease·fence·UNKNOWN·terminal을 구분한다. question별 peer/continuation 유일 제약은 중복 답변이나 종결 순서 차이에도 자동 후속 요청을 하나로 제한한다.
 
 공개 projection은 현재 live room RLS 아래 authenticated SELECT만 허용한다. private schema와 사용자 직접 DML은 차단하며 고정 definer RPC가 현재 권한을 재검사한다. 공개 text·별칭·correlation·typed 상태만 반환하고 원문 key/hash·경로·native locator·provider event·개인 설명은 포함하지 않는다.
 
 room/org 삭제는 workflow 자식을 cascade한다. 과거 actor/binding 식별자는 Auth/device FK로 묶지 않아 멤버·기기 물리 삭제가 공동 이력을 없애거나 기존 삭제 순서를 뒤집지 않는다. read/소비에서 현재 scope 부재를 재확인해 미시작 요청은 취소하고 시작 의도가 있는 미종결 attempt는 UNKNOWN으로 남긴다. 삭제를 runtime terminal의 증거로 사용하지 않는다. 개인 설명 DB·실제 로컬 실행 저널은 후속 범위다.
+
+## 사람의 직접 질문
+
+[직접 질문 migration](../supabase/migrations/20261002000700-human-direct-questions.sql)은 기존 cycle에 `mode`를 추가하고 기존 행을 `AI_PAIR`로 유지한다. `DIRECT`는 실제 질문자를 `origin_owner_id`에 저장하고 `origin_agent_id`·`origin_epoch`는 null로 둔다. 대상은 기존 peer 식별자와 epoch로 고정한다. generation은 1, 실행 예약은 1, AI 간 질문 왕복 예약은 0이다.
+
+question의 `source:HUMAN`에는 `requester_user_id`가 있고 origin request·epoch는 null이다. transaction 종료 시 검사하는 graph 제약은 한 DIRECT cycle에 generation·HUMAN question·PEER request가 각각 하나인지 확인한다. 대상·질문자·revision과 질문 본문을 바꾸거나 가짜 origin·continuation을 추가할 수 없다. 직접 질문의 이력과 기존 AI_PAIR의 이력·receipt는 같은 정본 안에서 보존한다.
+
+접수와 결과 채택은 현재 질문자의 참가 권한, 대상 scope·epoch, 방 revision을 확인한다. 현재 유효한 대상의 늦은 결과는 과거 기록으로 남길 수 있지만 새 후속 실행을 만들지 않는다. UNKNOWN과 미종결 실행은 기존 한 방 한 작업 규칙으로 보호한다.
+
+[계정 전환 사전 조건 migration](../supabase/migrations/20261002000800-human-direct-actor-precondition.sql)의 private `human_actor`는 원본 16KiB·정확한 필드·UUID를 검사하고 `expectedUserId`를 현재 `auth.uid()`와 대조한다. 사전 조건을 제거한 본문은 기존 `human`에 위임한다. 기존 `human/validate` 정의와 실제 Auth 기준 receipt·정규화 hash를 보존한다. 두 공개 wrapper의 authenticated 권한은 유지하고 private helper의 직접 실행은 차단한다. `questions(cycle_id)` 일반 B-tree 인덱스는 HUMAN 부분 인덱스와 별도로 모든 모드의 cycle 조회를 지원한다. 기존 데이터·권한·query plan의 검증 범위는 [진행 상태](delivery-and-validation.md#현재-진행-상태)를 따른다.

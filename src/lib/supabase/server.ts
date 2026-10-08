@@ -14,13 +14,22 @@ export function serverConfig() {
     try {
       const claims = JSON.parse(Buffer.from(key.split(".")[1], "base64url").toString("utf8"));
       if (claims.role !== "anon") throw new Error();
-    } catch { throw new AccessError("UNAVAILABLE"); }
+    } catch {
+      throw new AccessError("UNAVAILABLE");
+    }
   }
   try {
     const app = new URL(origin);
     const provider = new URL(url);
-    if (app.origin !== origin || !["http:", "https:"].includes(app.protocol) || !["http:", "https:"].includes(provider.protocol)) throw new Error();
-  } catch { throw new AccessError("UNAVAILABLE"); }
+    if (
+      app.origin !== origin ||
+      !["http:", "https:"].includes(app.protocol) ||
+      !["http:", "https:"].includes(provider.protocol)
+    )
+      throw new Error();
+  } catch {
+    throw new AccessError("UNAVAILABLE");
+  }
   return { url, key, origin, secure: origin.startsWith("https://") };
 }
 export function privateHeaders<T extends Response>(response: T): T {
@@ -42,7 +51,8 @@ export async function requestClient() {
       getAll: () => jar.getAll(),
       setAll: (values, headers) => {
         for (const [name, value] of Object.entries(headers)) refreshHeaders.set(name, value);
-        for (const value of values) writes.set(value.name, { ...value, options: { ...value.options, ...options } });
+        for (const value of values)
+          writes.set(value.name, { ...value, options: { ...value.options, ...options } });
       },
     },
   });
@@ -51,16 +61,26 @@ export async function requestClient() {
     clearSessionCookies() {
       // Include all old chunks and chunks created by this request's refresh.
       const base = `sb-${new URL(config.url).hostname.split(".")[0]}-auth-token`;
-      for (const name of new Set([...jar.getAll().map(c => c.name), ...writes.keys(), base])) {
-        if (name === base || name.startsWith(`${base}.`) || name === `${base}-code-verifier` || name.startsWith(`${base}-code-verifier.`)) {
-          writes.set(name, { name, value: "", options: { ...options, maxAge: 0, expires: new Date(0) } });
+      for (const name of new Set([...jar.getAll().map((c) => c.name), ...writes.keys(), base])) {
+        if (
+          name === base ||
+          name.startsWith(`${base}.`) ||
+          name === `${base}-code-verifier` ||
+          name.startsWith(`${base}-code-verifier.`)
+        ) {
+          writes.set(name, {
+            name,
+            value: "",
+            options: { ...options, maxAge: 0, expires: new Date(0) },
+          });
         }
       }
     },
     finish(data: unknown, status = 200) {
       const response = privateHeaders(NextResponse.json(data, { status }));
       refreshHeaders.forEach((value, name) => response.headers.set(name, value));
-      for (const cookie of writes.values()) response.cookies.set(cookie.name, cookie.value, cookie.options);
+      for (const cookie of writes.values())
+        response.cookies.set(cookie.name, cookie.value, cookie.options);
       return response;
     },
   };

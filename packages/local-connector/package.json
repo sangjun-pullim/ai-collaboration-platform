@@ -1,7 +1,21 @@
 {
-  "name": "@ai-collab/local-connector", "version": "0.1.0", "private": true, "type": "module",
-  "engines": { "node": ">=24 <25" },
-  "bin": { "ai-collab-connector": "dist/src/cli.js" },
-  "scripts": { "typecheck": "tsc --noEmit", "build": "tsc", "test": "tsc && node --test dist/tests/*.test.js" },
-  "devDependencies": { "typescript": "5.9.3", "@types/node": "24.7.0" }
+  "name": "@ai-collab/local-connector",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "engines": {
+    "node": ">=24 <25"
+  },
+  "bin": {
+    "ai-collab-connector": "dist/src/cli.js"
+  },
+  "scripts": {
+    "typecheck": "tsc --noEmit",
+    "build": "tsc",
+    "test": "tsc && node --test dist/tests/*.test.js"
+  },
+  "devDependencies": {
+    "typescript": "5.9.3",
+    "@types/node": "24.7.0"
+  }
 }

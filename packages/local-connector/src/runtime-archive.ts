@@ -1,0 +1,309 @@
+import { constants, type Stats } from "node:fs";
+import { lstat, mkdir, open, realpath, unlink, type FileHandle } from "node:fs/promises";
+import { dirname, join, parse, resolve } from "node:path";
+import { digest, RuntimeError, type RuntimeArchiveReference } from "./runtime-contracts.ts";
+
+export const journalByteLimit = 2 * 1024 * 1024;
+export const archiveReferenceLimit = 64;
+export const archiveRequestLimit = 4096;
+const archiveByteLimit = 128 * 1024 * 1024;
+
+function unsafe(): never {
+  throw new RuntimeError("UNSAFE_STORAGE");
+}
+function secureFile(stat: Stats) {
+  if (
+    !stat.isFile() ||
+    stat.isSymbolicLink() ||
+    stat.uid !== process.getuid?.() ||
+    (stat.mode & 0o777) !== 0o600 ||
+    stat.nlink !== 1 ||
+    stat.size > journalByteLimit
+  )
+    unsafe();
+}
+function sameIdentity(before: Stats, after: Stats) {
+  secureFile(after);
+  if (
+    before.dev !== after.dev ||
+    before.ino !== after.ino ||
+    before.size !== after.size ||
+    before.mtimeMs !== after.mtimeMs ||
+    before.ctimeMs !== after.ctimeMs
+  )
+    unsafe();
+}
+
+type HeldArchive = {
+  path: string;
+  handle: FileHandle;
+  opened: Stats;
+  data: Buffer;
+  content: string;
+};
+
+async function storageIO<T>(operation: Promise<T>): Promise<T> {
+  try {
+    return await operation;
+  } catch (error) {
+    if (error instanceof RuntimeError) throw error;
+    unsafe();
+  }
+}
+
+/** Owned file evidence only. Permission to remove journals remains in RuntimeStore. */
+export class RuntimeArchive {
+  readonly dir: string;
+  constructor(parent: string, agentId: string) {
+    this.dir = join(parent, "archives", agentId);
+  }
+  private path(hash: string) {
+    if (!/^[a-f0-9]{64}$/.test(hash)) unsafe();
+    return join(this.dir, `${hash}.json`);
+  }
+  private async directory(create: boolean, check: () => void) {
+    const parts: string[] = [];
+    let path = resolve(this.dir);
+    while (path !== parse(path).root) {
+      parts.unshift(path);
+      path = dirname(path);
+    }
+    for (const part of parts) {
+      let stat: Stats;
+      try {
+        stat = await lstat(part);
+      } catch (error) {
+        if (!create) unsafe();
+        if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
+        check();
+        await mkdir(part, { mode: 0o700 });
+        check();
+        stat = await lstat(part);
+      }
+      check();
+      if (!stat.isDirectory() || stat.isSymbolicLink()) unsafe();
+      if (part === dirname(this.dir) || part === this.dir) {
+        if (stat.uid !== process.getuid?.() || (stat.mode & 0o777) !== 0o700) unsafe();
+      }
+    }
+    const canonical = await (create ? realpath(this.dir) : storageIO(realpath(this.dir)));
+    check();
+    if (canonical !== this.dir) unsafe();
+  }
+  private async sync(path: string, check: () => void) {
+    const handle = await open(
+      path,
+      constants.O_RDONLY | constants.O_NOFOLLOW | constants.O_NONBLOCK,
+    );
+    try {
+      check();
+      const stat = await handle.stat();
+      check();
+      if (stat.isFile()) secureFile(stat);
+      else if (
+        !stat.isDirectory() ||
+        stat.uid !== process.getuid?.() ||
+        (stat.mode & 0o777) !== 0o700
+      )
+        unsafe();
+      await handle.sync();
+      check();
+    } finally {
+      await handle.close();
+    }
+  }
+  private async revalidate(file: HeldArchive, check: () => void) {
+    const after = await storageIO(file.handle.stat());
+    check();
+    sameIdentity(file.opened, after);
+    const current = await storageIO(lstat(file.path));
+    check();
+    sameIdentity(file.opened, current);
+  }
+  private async heldRead(
+    hash: string,
+    check: () => void,
+    cleanupError: "override" | "preserve-primary",
+  ): Promise<HeldArchive> {
+    await this.directory(false, check);
+    const path = this.path(hash);
+    const before = await storageIO(lstat(path));
+    check();
+    secureFile(before);
+    const handle = await storageIO(
+      open(path, constants.O_RDONLY | constants.O_NOFOLLOW | constants.O_NONBLOCK),
+    );
+    try {
+      check();
+      const opened = await storageIO(handle.stat());
+      check();
+      sameIdentity(before, opened);
+      const bytes = Buffer.alloc(opened.size + 1);
+      let offset = 0;
+      while (offset < bytes.length) {
+        const read = await storageIO(handle.read(bytes, offset, bytes.length - offset, offset));
+        check();
+        if (!read.bytesRead) break;
+        offset += read.bytesRead;
+      }
+      const file: HeldArchive = {
+        path,
+        handle,
+        opened,
+        data: bytes.subarray(0, offset),
+        content: "",
+      };
+      await this.revalidate(file, check);
+      await this.directory(false, check);
+      if (offset !== opened.size) unsafe();
+      try {
+        file.content = new TextDecoder("utf-8", { fatal: true }).decode(file.data);
+      } catch {
+        unsafe();
+      }
+      if (digest(file.data) !== hash) unsafe();
+      return file;
+    } catch (error) {
+      // A failed read never transfers ownership to the surrounding batch.
+      if (cleanupError === "override") await handle.close();
+      else await handle.close().catch(() => {});
+      throw error;
+    }
+  }
+  private async closeAll(files: HeldArchive[]) {
+    let failed = false;
+    for (const file of files) {
+      try {
+        await file.handle.close();
+      } catch {
+        failed = true;
+      }
+    }
+    if (failed) unsafe();
+  }
+  async read(hash: string, check = () => {}): Promise<Buffer> {
+    try {
+      const file = await this.heldRead(hash, check, "override");
+      try {
+        return file.data;
+      } finally {
+        await file.handle.close();
+      }
+    } catch (error) {
+      if (error instanceof RuntimeError) throw error;
+      unsafe();
+    }
+  }
+  async withVerifiedContents(
+    references: RuntimeArchiveReference[],
+    validate: (contents: readonly string[]) => string,
+    check = () => {},
+  ): Promise<string> {
+    this.referenceBounds(references);
+    const files: HeldArchive[] = [];
+    let failed = false;
+    try {
+      let total = 0;
+      for (const ref of references) {
+        const file = await this.heldRead(ref.hash, check, "preserve-primary");
+        files.push(file);
+        total += file.data.length;
+        if (total > archiveByteLimit) unsafe();
+      }
+      if (files.length) {
+        for (const file of files) await this.revalidate(file, check);
+        await this.directory(false, check);
+      }
+      check();
+      const result = validate(Object.freeze(files.map((file) => file.content)));
+      if (typeof result !== "string") unsafe();
+      check();
+      if (files.length) {
+        for (const file of files) await this.revalidate(file, check);
+        await this.directory(false, check);
+      }
+      return result;
+    } catch (error) {
+      failed = true;
+      throw error;
+    } finally {
+      // Preserve a callback/guard failure, but fail successful work if any close fails.
+      try {
+        await this.closeAll(files);
+      } catch (error) {
+        if (!failed) throw error;
+      }
+    }
+  }
+  private referenceBounds(references: RuntimeArchiveReference[]) {
+    if (
+      references.length > archiveReferenceLimit ||
+      references.reduce((sum, ref) => sum + ref.requestIds.length, 0) > archiveRequestLimit
+    )
+      unsafe();
+    const hashes = new Set<string>();
+    const requests = new Set<string>();
+    for (const ref of references) {
+      if (hashes.has(ref.hash)) unsafe();
+      hashes.add(ref.hash);
+      for (const requestId of ref.requestIds) {
+        if (requests.has(requestId)) unsafe();
+        requests.add(requestId);
+      }
+    }
+  }
+  async verify(references: RuntimeArchiveReference[], check = () => {}): Promise<Buffer[]> {
+    this.referenceBounds(references);
+    const files: Buffer[] = [];
+    let total = 0;
+    for (const ref of references) {
+      const bytes = await this.read(ref.hash, check);
+      total += bytes.length;
+      if (total > archiveByteLimit) unsafe();
+      files.push(bytes);
+    }
+    return files;
+  }
+  async save(bytes: Buffer, check = () => {}): Promise<string> {
+    if (bytes.length > journalByteLimit) unsafe();
+    new TextDecoder("utf-8", { fatal: true }).decode(bytes);
+    const hash = digest(bytes);
+    await this.directory(true, check);
+    // Persist the newly created directory entries before the main journal can refer to them.
+    await this.sync(dirname(dirname(this.dir)), check);
+    await this.sync(dirname(this.dir), check);
+    const path = this.path(hash);
+    let handle;
+    try {
+      check();
+      handle = await open(
+        path,
+        constants.O_WRONLY | constants.O_CREAT | constants.O_EXCL | constants.O_NOFOLLOW,
+        0o600,
+      );
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code !== "EEXIST") throw error;
+      const prior = await this.read(hash, check);
+      if (!prior.equals(bytes)) unsafe();
+      await this.sync(path, check);
+      await this.sync(this.dir, check);
+      return hash;
+    }
+    let durable = false;
+    try {
+      check();
+      await handle.writeFile(bytes);
+      check();
+      await handle.sync();
+      check();
+      durable = true;
+    } finally {
+      await handle.close();
+      if (!durable) await unlink(path).catch(() => {});
+    }
+    const saved = await this.read(hash, check);
+    if (!saved.equals(bytes)) unsafe();
+    await this.sync(this.dir, check);
+    return hash;
+  }
+}

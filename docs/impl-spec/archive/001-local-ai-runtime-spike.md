@@ -1,5 +1,5 @@
 ---
-status: active
+status: done
 date: 2026-09-30
 risk-surface: permission
 ---
@@ -9,11 +9,11 @@ risk-surface: permission
 
 ## Context
 
-[PRD의 로컬 AI 연결](../PRD.md#로컬-ai-연결)과 [관찰·개입](../PRD.md#실시간-관찰과-개입)을 구현하기 전에 실제 런타임의 실행·이벤트·중단 계약을 확인한다. 전체 제품 순서는 [단계별 명세 범위](../delivery-and-validation.md#단계별-명세-범위)를 따른다.
+[PRD의 로컬 AI 연결](../../PRD.md#로컬-ai-연결)과 [관찰·개입](../../PRD.md#실시간-관찰과-개입)을 구현하기 전에 실제 런타임의 실행·이벤트·중단 계약을 확인한다. 전체 제품 순서는 [단계별 명세 범위](../../delivery-and-validation.md#단계별-명세-범위)를 따른다.
 
-현재 프로젝트에는 Markdown 문서만 있고 소스·package·테스트 러너·Git 저장소가 없다. 기존 로컬 증거는 Codex 0.159.1의 schema와 추론 없는 초기화까지다. [확인 범위](../local-ai-connection-research.md#이번에-실제-확인한-로컬-증거)를 실제 turn 성공으로 확대하지 않는다.
+현재 프로젝트에는 Markdown 문서만 있고 소스·package·테스트 러너·Git 저장소가 없다. 기존 로컬 증거는 Codex 0.159.1의 schema와 추론 없는 초기화까지다. [확인 범위](../../local-ai-connection-research.md#이번에-실제-확인한-로컬-증거)를 실제 turn 성공으로 확대하지 않는다.
 
-이번 명세는 실험 CLI 구현과 실행 계획이다. 언어는 TypeScript, 실행 환경은 Node.js 24 LTS, 패키지 관리는 npm으로 잡는다. 현재 설치된 Node는 20.19.5이므로 구현 검증 전에 프로젝트용 Node 24 환경을 준비한다. TypeScript·타입 패키지의 실제 설치 버전은 구현 시 lockfile에 고정한다. [Node 근거](../sources.md#s16)
+이번 명세는 실험 CLI 구현과 실행 계획이다. 언어는 TypeScript, 실행 환경은 Node.js 24 LTS, 패키지 관리는 npm으로 잡는다. 현재 설치된 Node는 20.19.5이므로 구현 검증 전에 프로젝트용 Node 24 환경을 준비한다. TypeScript·타입 패키지의 실제 설치 버전은 구현 시 lockfile에 고정한다. [Node 근거](../../sources.md#s16)
 
 Codex는 설치·프로토콜 증거가 있는 첫 실험 대상이다. 팀의 실제 도구나 제품의 유일한 provider로 확정하는 선택이 아니다. 웹·Supabase·Claude adapter·기기 pairing·공동 조사·기존 앱 live attach는 후속 범위다.
 
@@ -54,7 +54,7 @@ Codex는 설치·프로토콜 증거가 있는 첫 실험 대상이다. 팀의 �
 
 - 기존 코드 caller·export 소비자·route·DB가 없으므로 깨질 실행 의존성은 없다.
 - `docs/ai-runtime-integration.md`의 `AgentRuntime`은 개념 예시다. 이 실험의 내부 API를 제품의 최종 SDK 계약으로 공개하지 않는다.
-- `docs/BUSINESS-LOGIC.md`의 [실행 상태](../BUSINESS-LOGIC.md#실행-상태)와 [일시정지·중단·방향 수정](../BUSINESS-LOGIC.md#일시정지중단방향-수정)은 종결·UNKNOWN 판정의 기준이다. 실험에 방 revision·DB lease·자동 왕복을 추가하지 않는다.
+- `docs/BUSINESS-LOGIC.md`의 [실행 상태](../../BUSINESS-LOGIC.md#실행-상태)와 [일시정지·중단·방향 수정](../../BUSINESS-LOGIC.md#일시정지중단방향-수정)은 종결·UNKNOWN 판정의 기준이다. 실험에 방 revision·DB lease·자동 왕복을 추가하지 않는다.
 - 후속 웹·connector 명세는 실험 결과와 작은 런타임 API를 참고한다. 실험 디렉터리를 최종 앱 구조로 고정하지 않는다.
 
 ## Implementation Steps
@@ -101,7 +101,7 @@ Codex는 설치·프로토콜 증거가 있는 첫 실험 대상이다. 팀의 �
 - 합성 임시 root의 prefix에 experiment ID를 포함하고 `resume --experiment-id`로 소유 manifest를 조회할 수 있게 한다. 기존 `--resume-manifest`도 지원하며 실패 후에도 안전한 실험 ID를 반환한다. 개인 thread 목록은 조회하지 않는다.
 - 실제 종결 전 workspace/manifest를 삭제하지 않는다. UNKNOWN은 자동 재개·새 실행 대신 상태 확인 필요로 남긴다. 임시 저장 위치와 정리 방법을 본인에게 안내한다.
 
-### [ ] Step 5: 실제 호환성 확인과 문서 반영
+### [x] Step 5: 실제 호환성 확인과 문서 반영
 **File**: `docs/local-ai-connection-research.md`, `docs/decisions-and-open-items.md`
 - 먼저 격리 테스트와 실제 probe를 실행한다. 계정·model·실효 권한이 확인된 환경에서만 새 질문, 중단, 도구가 만든 저장 thread의 순차 resume를 실행한다.
 - 저장 맥락 실험은 첫 turn의 대화에만 임의 nonce를 넣고, 생성한 값의 SHA-256을 시작 의도와 함께 로컬 manifest의 `contextMarkerHash`에 저장한다. 종료한 뒤 새 process에서 같은 thread/cwd를 resume해 nonce를 다시 주지 않은 질문으로 회수하고 응답의 표식 hash를 비교한다. nonce/hash는 workspace 파일·후속 prompt·developer instructions에 넣지 않는다. 일치 여부만 공개 기록에 남긴다. 같은 파일을 다시 읽은 성공을 대화 맥락 보존으로 판정하지 않는다.
@@ -187,4 +187,5 @@ npm run probe
 | 구현 리뷰 1 보정 검사 | — | VERIFIED | 동일 세션 보정 후 Node 24.21.0 typecheck·33/33 테스트·실제 initialize-only probe를 총괄 환경에서 통과. package/lock 불변으로 npm ci 결과 재사용. 독립 재리뷰와 실제 turn 실험은 별도 |
 | 구현 리뷰 2: 같은 PID contender의 raw close가 SQLite OS lock을 해제 | HIGH | ACCEPTED | 회귀 테스트에서 B는 거절되지만 외부 C가 READY로 진입하는 실패를 먼저 재현. 기존 파일은 lstat 검증, 최초 생성만 exclusive open/close로 보정. Node 24.21.0 typecheck·34/34 테스트·initialize-only probe 통과 뒤 독립 리뷰 3에서 해소 확인 |
 | 구현 리뷰 3 | — | PASS | 변경된 잠금·회귀 테스트를 독립 검토하고 12개 파일 SHA-256을 시작·종료 시 대조. 변경 없는 transport/runtime/CLI 계약은 리뷰 2, package/npm ci는 기존 통과 결과를 재사용. Step 1–4 완료이며 실제 호환성 Step 5는 별도 |
-| 실제 합성 실험 | — | VERIFIED | Codex 0.159.1·Node 24.21.0·허용된 local-login에서 새 실행 COMPLETED, 새 process의 동일 소유 thread/cwd resume COMPLETED와 대화 표식 일치, 실제 interrupt ACK/INTERRUPTED를 확인. 소유 thread/read로 대조했고 종결 fixture는 증거 보관 후 정리. 팀 앱·상대 provider·L3 필요성 확인은 미결이므로 Step 5 유지. 파일 도구 경로는 별도003 선행 검증이며 제품 통합·두 PC 완료를 뜻하지 않음 |
+| 실제 합성 실험 | — | VERIFIED | Codex 0.159.1·Node 24.21.0·허용된 local-login에서 새 실행 COMPLETED, 새 process의 동일 소유 thread/cwd resume COMPLETED와 대화 표식 일치, 실제 interrupt ACK/INTERRUPTED를 확인. 소유 thread/read로 대조했고 종결 fixture는 증거 보관 후 정리. 후속 요구 확인으로 참여자는 주로 macOS·Claude Code를 사용하며 기존 공식 로그인·개인 설정과 connector 소유 세션을 적용하기로 정했다. PRD에서 모든 앱의 실행 중 세션 지원을 초기 필수 범위에서 제외하고 Claude를 필수 지원 대상으로 정해 다음 검증 범위를 정했으므로 Step 5를 완료한다. 파일 도구 경로는 별도003 선행 검증이며 실제 Claude·제품의 두 PC 검증 완료를 뜻하지 않음 |
+| 명세 종료 검토 2026-10-04 | — | PASS C0/H0/M0/L0/INFO0 | 기존 구현 리뷰와 공개 실제 실험 기록을 재사용하고, 마지막 단계의 후속 요구 확인 및 현재 Tests 정의·보호 파일 hash를 독립 검토했다. 완료 표시 누락을 보정해 보관하며 새로운 실제 AI 실행·제품 Claude·두 PC 완료를 주장하지 않는다. |

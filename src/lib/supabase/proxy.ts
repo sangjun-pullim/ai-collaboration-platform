@@ -5,17 +5,31 @@ import { privateHeaders, serverConfig } from "./server";
 
 export async function updateSession(request: NextRequest) {
   let config: ReturnType<typeof serverConfig>;
-  try { config = serverConfig(); } catch {
+  try {
+    config = serverConfig();
+  } catch {
     if (request.nextUrl.pathname.startsWith("/api/")) return privateHeaders(NextResponse.next());
-    return privateHeaders(new NextResponse("서비스를 준비 중입니다. 잠시 뒤 다시 시도하세요.", { status: 503, headers: { "Content-Type": "text/plain; charset=utf-8" } }));
+    return privateHeaders(
+      new NextResponse("서비스를 준비 중입니다. 잠시 뒤 다시 시도하세요.", {
+        status: 503,
+        headers: { "Content-Type": "text/plain; charset=utf-8" },
+      }),
+    );
   }
   // A rejected mutation origin must not rotate or set Auth cookies in the proxy.
-  if (request.nextUrl.pathname.startsWith("/api/") && request.method === "POST" && request.headers.get("origin") !== config.origin) {
+  if (
+    request.nextUrl.pathname.startsWith("/api/") &&
+    request.method === "POST" &&
+    request.headers.get("origin") !== config.origin
+  ) {
     return privateHeaders(NextResponse.next());
   }
   let response = NextResponse.next({ request });
   const refreshHeaders = new Headers();
-  const updates = new Map<string, { name: string; value: string; options: import("@supabase/ssr").CookieOptions }>();
+  const updates = new Map<
+    string,
+    { name: string; value: string; options: import("@supabase/ssr").CookieOptions }
+  >();
   const options = { path: "/", httpOnly: true, sameSite: "lax" as const, secure: config.secure };
   const client = createServerClient(config.url, config.key, {
     cookieOptions: options,
@@ -31,13 +45,17 @@ export async function updateSession(request: NextRequest) {
       },
     },
   });
-  const { data: { user }, error } = await client.auth.getUser();
+  const {
+    data: { user },
+    error,
+  } = await client.auth.getUser();
   if (request.nextUrl.pathname.startsWith("/app") && (!user || error)) {
     response = NextResponse.redirect(new URL("/login", config.origin));
   }
   // Logout owns the final deletion; do not attach a competing refreshed cookie.
   if (request.nextUrl.pathname !== "/api/auth/logout") {
-    for (const cookie of updates.values()) response.cookies.set(cookie.name, cookie.value, cookie.options);
+    for (const cookie of updates.values())
+      response.cookies.set(cookie.name, cookie.value, cookie.options);
   }
   privateHeaders(response);
   refreshHeaders.forEach((value, name) => response.headers.set(name, value));

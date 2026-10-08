@@ -1,0 +1,107 @@
+{
+  "ask": {
+    "protocol": 1,
+    "roomId": "00000000-0000-4000-8000-000000000001",
+    "operationId": "00000000-0000-4000-8000-000000000008",
+    "targetAgentId": "00000000-0000-4000-8000-000000000002",
+    "targetEpoch": 1,
+    "expectedRoomRevision": 1,
+    "publicText": "한글 직접 질문",
+    "confirmed": true,
+    "expectedUserId": "00000000-0000-4000-8000-000000000011"
+  },
+  "admission": {
+    "cycleId": "00000000-0000-4000-8000-000000000004",
+    "requestId": "00000000-0000-4000-8000-000000000006",
+    "accepted": true,
+    "roomRevision": 1,
+    "cycleState": "ACTIVE"
+  },
+  "cancel": {
+    "protocol": 1,
+    "roomId": "00000000-0000-4000-8000-000000000001",
+    "operationId": "00000000-0000-4000-8000-000000000008",
+    "requestId": "00000000-0000-4000-8000-000000000006",
+    "expectedRoomRevision": 1,
+    "expectedUserId": "00000000-0000-4000-8000-000000000011"
+  },
+  "cancelResult": {
+    "controlId": null,
+    "requestId": "00000000-0000-4000-8000-000000000006",
+    "state": "REQUESTED"
+  },
+  "history": {
+    "roomId": "00000000-0000-4000-8000-000000000001",
+    "roomRevision": 1,
+    "roomMode": "ACTIVE",
+    "events": [
+      {
+        "eventId": "00000000-0000-4000-8000-000000000010",
+        "roomId": "00000000-0000-4000-8000-000000000001",
+        "sequence": 1,
+        "createdAt": "2026-10-01T00:00:00.000Z",
+        "kind": "QUESTION",
+        "senderKind": "HUMAN",
+        "senderAlias": "질문 참가자",
+        "publicText": "한글 직접 질문",
+        "cycleId": "00000000-0000-4000-8000-000000000004",
+        "requestId": "00000000-0000-4000-8000-000000000006",
+        "questionId": "00000000-0000-4000-8000-000000000005",
+        "replyTo": null,
+        "roomRevision": 1,
+        "bindingEpoch": 1,
+        "agentId": "00000000-0000-4000-8000-000000000002",
+        "requestKind": "PEER",
+        "runState": null,
+        "terminal": null,
+        "roomMode": null,
+        "adoption": "PENDING"
+      }
+    ],
+    "runs": [
+      {
+        "requestId": "00000000-0000-4000-8000-000000000006",
+        "cycleId": "00000000-0000-4000-8000-000000000004",
+        "agentId": "00000000-0000-4000-8000-000000000002",
+        "ownerAlias": "소유자",
+        "sessionAlias": "공개 세션",
+        "requestKind": "PEER",
+        "roomRevision": 1,
+        "bindingEpoch": 1,
+        "state": "QUEUED",
+        "questionId": "00000000-0000-4000-8000-000000000005",
+        "createdAt": "2026-10-01T00:00:00.000Z",
+        "updatedAt": "2026-10-01T00:00:00.000Z"
+      }
+    ],
+    "bindings": [
+      {
+        "agentId": "00000000-0000-4000-8000-000000000002",
+        "ownerAlias": "소유자",
+        "sessionAlias": "공개 세션",
+        "repositoryAlias": "공개 저장소",
+        "runtime": "codex",
+        "bindingEpoch": 1,
+        "owned": false,
+        "reportedReady": true,
+        "validUntil": "2026-10-01T00:00:00.000Z"
+      }
+    ],
+    "cycle": {
+      "cycleId": "00000000-0000-4000-8000-000000000004",
+      "mode": "DIRECT",
+      "targetAgentId": "00000000-0000-4000-8000-000000000002",
+      "targetEpoch": 1,
+      "generation": 1,
+      "roomRevision": 1,
+      "state": "ACTIVE",
+      "runsReserved": 1,
+      "peerRoundsReserved": 0,
+      "deadline": "2026-10-01T00:00:00.000Z",
+      "canInterrupt": true
+    },
+    "nextCursor": 1,
+    "highWaterSequence": 1,
+    "hasMore": false
+  }
+}

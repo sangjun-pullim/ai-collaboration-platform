@@ -19,6 +19,10 @@ risk-surface: auth, permission, db-schema, public-api
 
 범위 조사 접점은 007 source13의 동결 소스로 확인했다. 구현 전 007 최종 소스의 복구 보정과 접점 차이를 반영한다. 조사 기록은 구현 완료 증거가 아니다.
 
+2026-10-02에는 질문자 AI·경로 없이 사람→상대 AI에 질문하는 요구가 추가됐다. 이 명세의 양쪽 AI activation 계약은 공동 조사용 검토안으로 유지한다. 직접 질문에 질문자 설정을 요구하지 않도록 후속 작은 명세에서 대상 표시·설정 UI의 적용 범위를 다시 나눈다. 이 문구로 기존 계약 검토를 직접 질문 구현의 승인이나 완료 근거로 사용하지 않는다.
+
+2026-10-04에는 기존 등록 정보만 사용하는 공동 조사의 내 AI·상대 AI 선택 목록에 개발자·runtime·저장소·세션 표시를 반영했다. 선택 값과 요청 처리는 유지하는 작은 표시 수정이다. 이 명세의 모델·effort 설정 계약과 적용 상태는 후속 구현 범위이며 진행 근거는 [진행 정본](../delivery-and-validation.md#현재-진행-상태)에 유지한다.
+
 ## Affected Files
 
 1. 신규 `supabase/migrations/20261002000700-owner-runtime-settings.sql` — 설정·capability·적용 receipt·공개 대상 저장, 권한 및 조사 admission 보호.

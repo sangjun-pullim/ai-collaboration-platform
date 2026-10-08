@@ -1,5 +1,5 @@
 ---
-verified-against: null
+verified-against: 6f30eedc2edfaa2f17f3ea2c29d41d504df05f90
 sources:
   - src/app/**
   - src/features/**
@@ -9,7 +9,7 @@ sources:
 ---
 # 프런트엔드 구조
 
-2026-10-01 현재 실제 웹 소스를 기준으로 작성했다. 루트는 Next.js 16.3.7 App Router·React 19.3.0·TypeScript이며 모의 체험과 실제 사람 인증·방 접근·기기 관리·공동 기록 polling 화면이 있다. 사람 인증·기기 단계는 실제 검사와 독립 리뷰를 완료했다. 공동 조사 browser 4건과 기존 Auth/기기 browser 각 4건·모의 browser 20건의 재검사는 통과했고 독립 구현 리뷰 round1도 미해결 CRITICAL/HIGH 없이 통과했다. provider 실행기·Realtime는 후속 범위다. Git 저장소가 없어 commit 기반 freshness stamp를 검증할 수 없으며 확인하지 않은 hash를 쓰지 않는다.
+2026-10-04의 Git 기준 소스와 작업트리를 확인했다. 웹은 Next.js 16.3.7 App Router·React 19.3.0·TypeScript를 사용한다. 모의 체험과 실제 사람 인증·방 접근·기기 관리·공동 기록 polling 화면이 있다. 진행 상태·검증 수치·남은 통합은 [개발 순서와 검증 계획](delivery-and-validation.md#현재-진행-상태)에 유지한다.
 
 ## 화면과 모듈 경계
 
@@ -41,7 +41,23 @@ flowchart TD
 
 실제 방은 [InvestigationView](../src/features/investigation-coordinator/investigation-view.tsx)의 공개 이력을 함께 렌더링한다. [history-state](../src/features/investigation-coordinator/history-state.ts)는 eventId 중복 제거·sequence gap 복구와 typed 과거 run 재생을 담당한다. 방 전환·권한 거절 시 이력을 초기화하고 늦게 도착한 snapshot이 최신 상태를 되돌리지 않도록 처리한다. 이 상태는 prototype reducer와 분리한다.
 
+조사 화면의 내부 책임은 다음 모듈로 나눈다. 조회·요청 전송·저장/삭제·대상 선택과 React 상태의 소유자는 화면 하나로 유지한다.
+
+| 모듈 | 책임 |
+|---|---|
+| [investigation-view.tsx](../src/features/investigation-coordinator/investigation-view.tsx) | 화면 수명, 조회와 mutation 취소, 미확정 요청 저장/삭제, 이력과 대상 선택 |
+| [investigation-client.ts](../src/features/investigation-coordinator/investigation-client.ts) | `callInvestigation` 함수 하나로 요청 검증·fetch·응답 읽기·오류 전달 |
+| [direct-intents.ts](../src/features/investigation-coordinator/direct-intents.ts) | 사용자·방 저장 키, 복원 검증, 새 요청과 동일 재시도 본문 생성 |
+
+브라우저 HTTP 모듈은 요청을 검증한 뒤 POST JSON을 전송한다. 호출자 중단과 10초 제한을 결합하고 응답의 실제 수신 바이트를 최대 262,144바이트로 제한한다. JSON content type, 엄격한 UTF-8과 기존 BOM 처리, 오류 우선순위 및 reader 정리를 유지한다. 서버의 16KiB 요청 읽기 모듈과 실행 환경·상한이 다르다. 직접 요청 정책은 저장값의 읽기·거절을 수행하며 저장·삭제와 재시도 시점은 화면이 결정한다.
+
 공동 발언·명시적 origin/peer 조사 시작·자기 interrupt·방 pause·방/조사 재개를 제공한다. 준비와 실행은 기기 보고로 표시하며 provider 미검증·UNKNOWN·과거 미채택을 구분한다. observer는 읽기 화면을 사용한다. polling은 활동/추가 이력 조회 시 2초, idle 10초, 숨김 30초이며 실패 시 최대 30초 backoff를 적용한다. 동시 조회를 제한하고 화면 종료·mutation·권한 거절 때 진행 중 요청을 abort한다.
+
+직접 질문 폼은 질문자의 AI 연결 없이 표시한다. 준비된 상대 연결이 하나면 기본 선택하고 여러 연결이면 명시적으로 선택한다. 선택 목록에는 저장소·세션·소유자 별칭과 runtime을 표시한다. 대상 epoch 교체나 offline 상태를 확인하면 재선택을 요구한다. 질문·공개 범위 확인을 제출한 뒤 같은 질문의 답변과 실제 종결 상태를 공동 기록에서 조회한다.
+
+공동 조사의 내 AI·상대 AI 선택 목록도 개발자·runtime·공개 저장소 별칭·세션 별칭을 함께 표시한다. 선택 항목의 값은 기존 agent ID이며 같은 참가자의 다른 저장소를 표시할 때도 등록된 공개 정보를 사용한다. 모델·effort의 웹 선택과 적용 상태는 후속 설정 범위다.
+
+응답이 유실된 직접 질문은 sessionStorage에 같은 operation·본문을 보관하고 사용자가 `같은 요청 확인`을 실행하면 그대로 재전달한다. 서버에서 인증한 사용자 ID와 방 ID를 저장 키에 포함하고 복원한 본문의 `expectedUserId`도 대조한다. 예전 방 ID만 있는 항목은 제거하며 새 계정에서 채택하지 않는다. 쿠키만 다른 계정으로 바뀐 이전 화면의 요청도 서버의 실제 Auth 대조에서 거절한다. 화면 종료나 늦은 응답이 다른 사용자의 미확정 기록을 지우지 않도록 처리한다. 새 질문으로 자동 재시도하지 않는다. 직접 질문의 중단 요청은 `canInterrupt`가 허용한 실행 하나만 대상으로 하며 ACK와 typed 종결을 구분한다. 실제 브라우저 검증 범위는 [진행 상태](delivery-and-validation.md#현재-진행-상태)를 따른다.
 
 공동 확정 이벤트 `shared`, 미확정 발신 `draft`, 개인 설명 `privateHistory`는 reducer에서 서로 다른 필드다. 개인 기록을 공동 배열에 넣고 CSS로 숨기는 구조가 아니다. 설명·방향 수정·공동 발언의 제품 의미는 [상호작용 정본](interaction-design.md#개발자-입력의-종류)을 따른다.
 
@@ -55,10 +71,10 @@ Composer의 미제출 초안은 컴포넌트 로컬 상태에서 `speak`·`expla
 
 ## 검사와 남은 통합
 
-Node 24.21.0에서 웹/unit/E2E 타입·lint·production build를 확인했다. [상태 검사](../tests/unit/prototype-state.test.ts) 9개, [브라우저 수용 검사](../tests/e2e/web-base-experience.spec.ts) 10개를 desktop/mobile에서 실행한 20건이 통과했다. 개인 미제출 초안 전환은 수정 전 양쪽 실패를 먼저 재현했고 수정 후 검사와 독립 재리뷰를 통과했다. CSS/layout 변경이 없는 보정에서는 기존 6개 desktop/mobile 직접 시각 검토를 재사용했다.
+웹·단위·브라우저의 타입·lint·빌드와 동작 검사를 수행한다. 현재 검증 수치는 [개발 순서와 검증 계획](delivery-and-validation.md#현재-진행-상태)을 따른다. 개인 미제출 초안 전환의 실패 재현과 보정은 [오류 기록](BUG-FIXES.md#2026-10-01--미제출-개인-입력의-공개-방향-수정-전환)에 남긴다. CSS/layout 변경이 없는 소스 보정에서는 이전 직접 시각 검토를 재사용한다.
 
 웹·단위·브라우저는 각 tsconfig로 타입 검사한다. 독립 `experiments/local-ai-runtime/`은 웹 import/build/lint/test에 포함되지 않는다. 외부 폰트·AI·클라우드 계정 없이 웹 검증을 수행한다.
 
-실제 연동에서는 이 mock reducer를 서버 정본으로 승격하지 않는다. 사람 인증·방 접근은 실제 Auth/Postgres/HTTP 14개·Auth E2E desktop/mobile 4건과 독립 리뷰 3을 통과했다. 기기 통합은 DB·HTTP·별도 CLI process 12개가 통과했고 실제 기기 browser 4개와 기존 Auth browser 4개 재검사도 통과했다. 모의·Auth·기기 browser는 각각 `playwright.config.ts`, `playwright.auth.config.ts`, `playwright.device.config.ts`로 분리한다. 기기 browser의 parent broker는 자기 합성 pairing·등록·heartbeat만 지원하고 제품/브라우저 child에 admin·DB·JWK를 전달하지 않는다. 민감 artifact 정제와 trace/screenshot/video 비활성 정책을 재사용한다.
+실제 연동에서는 mock reducer를 서버 정본으로 승격하지 않는다. 모의·Auth·기기 browser는 각각 `playwright.config.ts`, `playwright.auth.config.ts`, `playwright.device.config.ts`로 분리한다. 기기 browser의 parent broker는 자기 합성 pairing·등록·heartbeat만 지원하고 제품/브라우저 child에 admin·DB·JWK를 전달하지 않는다. 민감 artifact 정제와 trace/screenshot/video 비활성 정책을 재사용한다. 각 단계의 진행 상태와 재검사 결과는 개발 순서 문서에서 관리한다.
 
 workflow browser는 `playwright.workflow.config.ts`로 분리하며 parent broker가 자기 fixture의 고정 fake-driver 동작만 제공한다. 실제 runtime 제어와 참가자별 모델/effort·Realtime·개인 설명은 [개발 순서](delivery-and-validation.md#단계별-명세-범위)의 후속 범위다. 현재 등록은 `codex/unverified`이며 모델 선택 기능은 아직 없다. 현재 mock 역할과 상태는 실제 권한 검증의 증거가 아니다.
