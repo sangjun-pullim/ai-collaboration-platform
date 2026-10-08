@@ -11,11 +11,21 @@ import { runRuntimeCommand } from "../src/cli/runtime-command.ts";
 import { policyFixture } from "./claude-policy-fixture.ts";
 import { FakeTransport } from "./claude-runtime-fixture.ts";
 import { ClaudeCatalogStore } from "../src/claude/catalog-store.ts";
+import { NativeClaudePolicy } from "../src/claude/native-policy.ts";
 
-test("should keep standalone Claude default admission closed under the device settings lock", async () => {
+test("should keep standalone Claude default admission closed under the device settings lock", async (t) => {
   const f = await runtimeFixture(),
     profile = new StateStore(f.stateDir, "one");
   try {
+    const admission = t.mock.method(
+      NativeClaudePolicy.prototype,
+      "admit",
+      async (root: string, check: () => void) => {
+        assert.equal(root, f.root);
+        check();
+        throw new RuntimeError("POLICY_UNCONFIRMED");
+      },
+    );
     await assert.rejects(
       withSettingsDeviceLock(profile, "runtime-capabilities", async () =>
         runRuntimeCommand(
@@ -28,6 +38,7 @@ test("should keep standalone Claude default admission closed under the device se
       ),
       { code: "POLICY_UNCONFIRMED" },
     );
+    assert.equal(admission.mock.callCount(), 1);
     await assert.rejects(readFile(new ClaudeCatalogStore(profile).file), { code: "ENOENT" });
   } finally {
     await f.close();

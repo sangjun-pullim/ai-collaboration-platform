@@ -1,6 +1,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import { randomUUID } from "node:crypto";
+import { timelineEvents } from "../../src/features/investigation-coordinator/chat-presentation.ts";
 import { ClaudeAdapter } from "../../packages/local-connector/src/claude/adapter.ts";
 import { claudeProductCase, productAnswer } from "../helpers/claude-product-fixture.js";
 
@@ -64,11 +65,24 @@ test(
       assert.equal(current.context!.materialization!.state, "MATERIALIZED");
       assert.equal(current.context!.ownedTurns.length, 2);
       const history = await f.workflow.history(f.scene, f.scene.requester);
-      const answers = history.events.filter(
-        (event) => event.senderKind === "AGENT" && event.publicText === productAnswer,
+      const audit = structuredClone(history.events);
+      const answers = timelineEvents(history.events).filter(
+        (event) =>
+          event.kind === "ANSWER" &&
+          event.senderKind === "AGENT" &&
+          event.publicText === productAnswer,
       );
       assert.equal(answers.length, 2);
       assert.ok(answers.every((event) => event.agentId === f.scene.responder.agentId));
+      const requestIds = [first.snapshot!.requestId, current.attempts.at(-1)!.snapshot!.requestId];
+      assert.equal(new Set(requestIds).size, 2);
+      for (const requestId of requestIds)
+        assert.equal(answers.filter((event) => event.requestId === requestId).length, 1);
+      assert.deepEqual(history.events, audit);
+      assert.equal(new Set(audit.map((event) => event.eventId)).size, audit.length);
+      assert.ok(
+        audit.every((event, index) => index === 0 || event.sequence > audit[index - 1].sequence),
+      );
       f.assertRequesterWithoutAI();
       assert.ok(f.transports.every((transport) => transport.closed));
     }),
@@ -148,7 +162,21 @@ test("should interrupt a held product file tool and suppress its late reply", op
     assert.ok(f.transports.every((transport) => transport.closed));
     const record = (await (await f.runtime()).read())!;
     assert.equal(record.context!.ownedTurns.at(-1)!.toolCancellations!.length, 1);
-    await f.adapters.at(-1)!.validate(record.context!, record.settings!, () => {});
+    const beforeReconnect = {
+      inputs: f.inputs.length,
+      launches: f.launches.length,
+      transports: f.transports.length,
+    };
+    const reconnected = f.adapter();
+    try {
+      await reconnected.validate(record.context!, record.settings!, () => {});
+      assert.deepEqual(
+        { inputs: f.inputs.length, launches: f.launches.length, transports: f.transports.length },
+        beforeReconnect,
+      );
+    } finally {
+      await reconnected.close();
+    }
     assert.equal(f.inputs.length, 1);
     f.assertRequesterWithoutAI();
   }),

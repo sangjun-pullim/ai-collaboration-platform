@@ -2,6 +2,7 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import { readFile, mkdir, writeFile, lstat } from "node:fs/promises";
 import { ClaudeCatalogStore } from "../src/claude/catalog-store.ts";
+import { NativeClaudePolicy } from "../src/claude/native-policy.ts";
 import { join } from "node:path";
 import { StateStore } from "../src/state-store.ts";
 import { RuntimeFilePolicy } from "../src/runtime-file-policy.ts";
@@ -822,9 +823,18 @@ test("should retain UNKNOWN when a crashed catalog has no exact cleanup proof", 
   }
 });
 
-test("should keep default Claude admission closed without a verified policy", async () => {
+test("should keep default Claude admission closed without a verified policy", async (t) => {
   const f = await fixture("claude");
   try {
+    const admission = t.mock.method(
+      NativeClaudePolicy.prototype,
+      "admit",
+      async (root: string, check: () => void) => {
+        assert.equal(root, f.root);
+        check();
+        throw new RuntimeError("POLICY_UNCONFIRMED");
+      },
+    );
     const status = await f.manager({ adapter: undefined }).run({ once: true });
     assert.equal(status.state, "FAILED");
     assert.equal(status.reason, "POLICY_UNCONFIRMED");
@@ -833,6 +843,7 @@ test("should keep default Claude admission closed without a verified policy", as
     assert.equal(journal.context, null);
     assert.equal(f.prepares, 0);
     assert.equal(f.adapters.length, 0);
+    assert.equal(admission.mock.callCount(), 1);
     await assert.rejects(lstat(new ClaudeCatalogStore(f.profile).file), { code: "ENOENT" });
   } finally {
     await f.close();

@@ -1,4 +1,4 @@
-import { randomUUID, timingSafeEqual } from "node:crypto";
+import { createHash, randomUUID, timingSafeEqual } from "node:crypto";
 import { open, rename, rm, lstat, readFile } from "node:fs/promises";
 import { constants } from "node:fs";
 import { join, resolve } from "node:path";
@@ -55,6 +55,18 @@ export type HumanDirectScene = {
   outsider: FixturePerson;
   responder: DeviceProfile;
 };
+function profileName(name: string) {
+  if (/^[a-z0-9][a-z0-9-]{0,39}$/.test(name)) return name;
+  const suffix = createHash("sha256").update(name).digest("hex").slice(0, 24);
+  const stem =
+    name
+      .toLowerCase()
+      .replace(/[^a-z0-9-]+/g, "-")
+      .replace(/^-+/, "")
+      .slice(0, 15)
+      .replace(/-+$/, "") || "profile";
+  return `${stem}-${suffix}`;
+}
 function safe(error: unknown, stage: string) {
   const frame =
     error instanceof Error
@@ -203,10 +215,10 @@ export class WorkflowFixture {
       "관찰자",
     );
     const origin = await this.devices.register(
-      await this.devices.connected(owner, scope, `${label}-origin`),
+      await this.devices.connected(owner, scope, profileName(`${label}-origin`)),
     );
     const responder = await this.devices.register(
-      await this.devices.connected(peer, scope, `${label}-peer`),
+      await this.devices.connected(peer, scope, profileName(`${label}-peer`)),
     );
     await this.ready(origin);
     await this.ready(responder);
@@ -231,7 +243,7 @@ export class WorkflowFixture {
       "관찰자",
     );
     const responder = await this.devices.register(
-      await this.devices.connected(owner, scope, `${label}-responder`),
+      await this.devices.connected(owner, scope, profileName(`${label}-responder`)),
     );
     await this.ready(responder);
     ensure(
@@ -359,12 +371,15 @@ export class WorkflowFixture {
       bindingEpoch: await this.epoch(p),
       ...fields,
     });
-    if (!["poll", "admission", "admission-ack"].includes(action))
+    if (
+      typeof body.operationId === "string" &&
+      !["poll", "admission", "admission-ack"].includes(action)
+    )
       this.operations.push({
         roomId: p.roomId,
         actorId: p.deviceId!,
         action,
-        operationId: String(body.operationId),
+        operationId: body.operationId,
       });
     await this.save();
     const response = await fetch(`${this.stack.config.app}/api/workflow/${action}`, {

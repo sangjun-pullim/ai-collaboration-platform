@@ -499,7 +499,7 @@ export class DeviceFixture {
     const intent = await this.intent(name, "cli");
     return this.withPairingRecovery(intent, async () => {
       const result = await this.withBeginFault(intent, options.fault, () =>
-        this.cli(name, "pair", ["--device-alias", `기기 ${name}`]),
+        this.cli(name, "pair", ["--device-alias", `기기 ${name}`.slice(0, 40)]),
       );
       await this.recoverIntent(intent);
       if (options.fault === "stdout-lost")
