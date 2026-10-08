@@ -3,6 +3,7 @@ import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import { runInNewContext } from "node:vm";
 import ts from "typescript";
+import { consumeConnectionFragment } from "../../src/features/device-binding/local-connection-command.ts";
 import {
   capabilityHash,
   SettingsError,
@@ -799,8 +800,20 @@ test("should consume a known pairing fragment once without selecting approval", 
     requests = 0;
   const roomId = deviceId,
     code = "a".repeat(64);
+  const refs: { current: unknown }[] = [];
+  let refCursor = 0;
+  const listeners = new Set<() => void>();
+  const confirmation = { checked: true };
   const window = {
     location: { hash: `#code=${code}&room=${roomId}`, pathname: "/app/connections", search: "" },
+    addEventListener(name: string, listener: () => void) {
+      assert.equal(name, "hashchange");
+      listeners.add(listener);
+    },
+    removeEventListener(name: string, listener: () => void) {
+      assert.equal(name, "hashchange");
+      listeners.delete(listener);
+    },
     history: {
       state: null,
       replaceState(_a: unknown, _b: unknown, path: string) {
@@ -814,7 +827,10 @@ test("should consume a known pairing fragment once without selecting approval", 
     {
       react: {
         useEffect: (f: () => unknown) => effects.push(f),
-        useRef: () => ({ current: null }),
+        useRef(initial: unknown) {
+          const slot = refCursor++;
+          return (refs[slot] ??= { current: initial });
+        },
         useState(initial: unknown) {
           const slot = cursor++;
           if (!(slot in states)) states[slot] = typeof initial === "function" ? initial() : initial;
@@ -828,10 +844,7 @@ test("should consume a known pairing fragment once without selecting approval", 
       "../../components/ui/input": { Input: "input" },
       "../runtime-settings/runtime-settings-form": { RuntimeSettingsForm: "settings-form" },
       "./local-connection-guide": { LocalConnectionGuide: "connection-guide" },
-      "./local-connection-command": {
-        consumeConnectionFragment: (hash: string) =>
-          hash.includes(code) ? { roomId, code } : null,
-      },
+      "./local-connection-command": { consumeConnectionFragment },
       "../room-access/access.module.css": { default: {} },
     },
     {
@@ -845,14 +858,24 @@ test("should consume a known pairing fragment once without selecting approval", 
   ).ConnectionManager as (props: unknown) => UINode;
   const props = {
     devices: [],
-    rooms: [{ roomId, organizationId: rootId, roomTitle: "방", organizationName: "조직" }],
+    rooms: [roomId, rootId].map((roomId) => ({
+      roomId,
+      organizationId: rootId,
+      roomTitle: "방",
+      organizationName: "조직",
+    })),
     origin: "https://example.com",
     userId: rootId,
   };
   ui(props);
-  effects[0]();
+  refs[1].current = confirmation;
+  const firstCleanup = effects[0]();
+  assert.equal(typeof firstCleanup, "function");
+  (firstCleanup as () => void)();
+  const cleanup = effects[0]();
   await Promise.resolve();
   cursor = 0;
+  refCursor = 0;
   const tree = ui(props);
   assert.equal(replaced, "/app/connections");
   assert.equal(window.location.hash, "");
@@ -861,7 +884,53 @@ test("should consume a known pairing fragment once without selecting approval", 
   assert.ok(checkbox);
   assert.equal(checkbox.props.checked, undefined);
   assert.equal(checkbox.props.defaultChecked, undefined);
-  effects[0]();
+  assert.equal(listeners.size, 1);
+  assert.equal(confirmation.checked, false);
+  const render = () => {
+    cursor = 0;
+    refCursor = 0;
+    return ui(props);
+  };
+  const codeField = () => nodes(render()).find((node) => node.props.name === "code")!;
+  const navigate = (hash: string) => {
+    window.location.hash = hash;
+    for (const listener of listeners) listener();
+  };
+  const nextCode = "b".repeat(64);
+  confirmation.checked = true;
+  navigate(`#code=${nextCode}&room=${rootId}`);
+  await Promise.resolve();
+  assert.equal(window.location.hash, "");
+  assert.equal(codeField().props.value, nextCode);
+  assert.equal(nodes(render()).find((node) => node.props.name === "roomId")?.props.value, rootId);
+  assert.equal(confirmation.checked, false);
+  for (const hash of [
+    `#code=${code}&room=${secondOperationId}`,
+    `#code=malformed&room=${roomId}`,
+    `#code=${code}&code=${code}&room=${roomId}`,
+  ]) {
+    confirmation.checked = true;
+    navigate(hash);
+    await Promise.resolve();
+    assert.equal(window.location.hash, "");
+    assert.equal(codeField().props.value, "");
+    assert.equal(confirmation.checked, false);
+  }
+  navigate(`#code=${code}&room=${roomId}`);
+  navigate(`#code=${nextCode}&room=${rootId}`);
+  await Promise.resolve();
+  assert.equal(codeField().props.value, nextCode);
+  assert.equal(nodes(render()).find((node) => node.props.name === "roomId")?.props.value, rootId);
+  (codeField().props.onChange as (event: unknown) => void)({ target: { value: nextCode } });
+  navigate("");
+  await Promise.resolve();
+  assert.equal(codeField().props.value, nextCode);
+  navigate(`#code=${code}&room=${roomId}`);
+  assert.equal(typeof cleanup, "function");
+  (cleanup as () => void)();
+  await Promise.resolve();
+  assert.equal(codeField().props.value, nextCode);
+  assert.equal(listeners.size, 0);
   assert.equal(requests, 0);
 });
 

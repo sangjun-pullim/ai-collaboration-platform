@@ -28,26 +28,45 @@ export function ConnectionManager({
 }) {
   const router = useRouter();
   const alert = useRef<HTMLParagraphElement>(null);
+  const confirmation = useRef<HTMLInputElement>(null);
+  // StrictMode repeats effect setup after the fragment has already left the URL.
+  const pendingFragment = useRef<{ hash: string } | null>(null);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<ConnectionErrorCode | null>(null);
   const [notice, setNotice] = useState("");
   const [roomId, setRoomId] = useState(rooms[0]?.roomId ?? "");
   const [pairingCode, setPairingCode] = useState("");
   useEffect(() => {
-    if (!window.location.hash) return;
-    const hash = window.location.hash;
-    window.history.replaceState(
-      window.history.state,
-      "",
-      window.location.pathname + window.location.search,
-    );
-    const pairing = consumeConnectionFragment(hash, rooms);
-    if (pairing) {
+    let active = true;
+    const consume = () => {
+      if (window.location.hash) {
+        const hash = window.location.hash;
+        window.history.replaceState(
+          window.history.state,
+          "",
+          window.location.pathname + window.location.search,
+        );
+        pendingFragment.current = { hash };
+      }
+      const pending = pendingFragment.current;
+      if (!pending) return;
+      const pairing = consumeConnectionFragment(pending.hash, rooms);
+      if (confirmation.current) confirmation.current.checked = false;
       queueMicrotask(() => {
-        setRoomId(pairing.roomId);
-        setPairingCode(pairing.code);
+        if (!active || pendingFragment.current !== pending) return;
+        pendingFragment.current = null;
+        if (pairing) setRoomId(pairing.roomId);
+        setPairingCode(pairing?.code ?? "");
+        setNotice("");
+        setError(null);
       });
-    }
+    };
+    consume();
+    window.addEventListener("hashchange", consume);
+    return () => {
+      active = false;
+      window.removeEventListener("hashchange", consume);
+    };
   }, [rooms]);
   const [settingsRoomId, setSettingsRoomId] = useState(
     devices.find((device) => device.state === "active")?.roomId ?? rooms[0]?.roomId ?? "",
@@ -193,8 +212,8 @@ export function ConnectionManager({
                 />
               </label>
               <label>
-                <input name="confirmed" type="checkbox" required /> 내 계정·선택한 방·기기 별칭과
-                공개 정보 범위를 확인했습니다
+                <input ref={confirmation} name="confirmed" type="checkbox" required /> 내
+                계정·선택한 방·기기 별칭과 공개 정보 범위를 확인했습니다
               </label>
               <Button disabled={busy}>기기 승인</Button>
             </form>

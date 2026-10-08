@@ -269,9 +269,11 @@ test("should expose a valid room command and require explicit approval after a p
     expect(approvals).toBe(0);
     await guide.getByRole("button", { name: "연결 명령 복사", exact: true }).click();
     await expect(guide.getByRole("status", { name: "연결 명령 복사 결과" })).toBeVisible();
+    await page.getByRole("checkbox").check();
     await page.goto(`/app/connections#code=${code}&room=00000000-0000-4000-8000-000000000099`);
     await expect(page).toHaveURL(/\/app\/connections$/);
     await expect(page.getByLabel("기기 연결 코드", { exact: true })).toHaveValue("");
+    await expect(page.getByRole("checkbox")).not.toBeChecked();
     await page.goto(`/app/connections#code=malformed&room=${scope.roomId}`);
     await expect(page).toHaveURL(/\/app\/connections$/);
     await expect(page.getByLabel("기기 연결 코드", { exact: true })).toHaveValue("");
