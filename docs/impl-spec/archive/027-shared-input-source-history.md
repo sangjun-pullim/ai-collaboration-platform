@@ -1,6 +1,7 @@
 ---
-status: active
+status: done
 date: 2026-10-06
+completed: 2026-10-08
 risk-surface: auth, permission, db-schema, public-api
 ---
 > NOTE: This is the plan, not a description of the code. Current implementation and acceptance must be verified separately.
@@ -9,7 +10,7 @@ risk-surface: auth, permission, db-schema, public-api
 
 ## Context
 
-[PRD의 기본 채팅 수용 기준](../PRD.md#기본-채팅의-기능-수용-기준)은 코드 근거가 붙은 답변을 요구한다. 입력 직전 SourceObservation v1과 029의 실제 반환 파일 관찰은 로컬 저널에 남지만 중앙 답변·채팅 화면에는 연결하지 않는다. 질문 대상의 공개 별칭도 예약 시점에 고정해야 한다.
+[PRD의 기본 채팅 수용 기준](../../PRD.md#기본-채팅의-기능-수용-기준)은 코드 근거가 붙은 답변을 요구한다. 입력 직전 SourceObservation v1과 029의 실제 반환 파일 관찰은 로컬 저널에 남지만 중앙 답변·채팅 화면에는 연결하지 않는다. 질문 대상의 공개 별칭도 예약 시점에 고정해야 한다.
 
 전체 구현의 기존 승인과 사용자가 확정한 선택 폴더 자동 탐색을 적용한다. 026의 입력 관찰, 028의 안전한 I/O, 029의 소유자 승인·실제 도구·내구 관찰은 그대로 소비한다. 개인 설명·방향 수정·구조화 결과·실제 Claude/두 Mac 수용은 별도 범위다. 기존 Git/DB/browser/native 제한과 실제 입력 예산을 넓히지 않는다.
 
@@ -122,9 +123,9 @@ PostgreSQL17 jsonb는 NUL 이스케이프와 올바르지 않은 surrogate pair�
 - 부모가 actual diff·호출자·worker 결과를 확인한 뒤 새 독립 reviewer가 권한·잠금·canonical/UTF16·byte ledger·partial/확정·정확한 event·복구/제거/교체·UI를 검토한다. 같은 입력의026/028/029 검토만 재사용하며 새 공개 연결은 독립 검토한다.
 - 정본에는 실제 동작을 쓰고 검증 수치는 delivery 한 곳에 둔다. 현재 소스와 실제 수용을 구분한다. 새 웹 build/typegen/restart로 미리보기를 바꾸지 않는다. Git 쓰기가 불가능하면 patch/입력/검사/리뷰를 보존하고 미커밋으로 보고한다.
 
-### [ ] Step 5: 실제 SQL·HTTP·브라우저 수용
+### [x] Step 5: 실제 SQL·HTTP·브라우저 수용
 
-> 현재 실행 환경에서 Docker socket/HTTP/browser 접근 제한으로 실제 실행0이다. 실행 조건이 바뀌지 않으면 정의·컴파일·합성 결과와 실제 수용을 구분하며 이 Step을 완료 표시하지 않는다.
+> 검증 진행: 2026-10-08 환경 전환 뒤 실제 자료 이력 SQL·HTTP, 두 사용자 자료 화면, 같은 backend의 SQL013 warm upgrade를 통과했다. SQL015 요약 연산자 보정은 별도 실패 재현·독립 리뷰·실제 적용을 확인했다. 종료 리뷰까지 마치기 전에는 이 Step을 완료 표시하지 않는다. 공식 AI 입력은 이 단계의 수용에 필요하지 않다.
 
 - owned 격리 DB에서 SQL013 신규 설치와001–012 warm upgrade, 실제 RLS/RPC·동시성·token/canonical JS-SQL 벡터·역사 연결을 확인한다. 설치된 공유/운영 DB를 이 검사에 사용하지 않는다.
 - 두 사용자 HTTP/browser에서 같은 event의 당시 target/자료와 소유권을 확인한다. source-read는 다른 방·비멤버·취소된 신원을 거절한다. 실제 AI 입력은 필요하지 않는다.
@@ -149,7 +150,7 @@ PostgreSQL17 jsonb는 NUL 이스케이프와 올바르지 않은 surrogate pair�
 
 ## Review Notes
 
-아래 검토 결과는 각 검토 시점의 기록이다. 현재 구현·수용 상태는 위 Step 표시와 [개발·검증 상태](../planning/delivery-and-validation.md#현재-진행-상태)에서 확인한다.
+아래 검토 결과는 각 검토 시점의 기록이다. 현재 구현·수용 상태는 위 Step 표시와 [개발·검증 상태](../../planning/delivery-and-validation.md#현재-진행-상태)에서 확인한다.
 
 | Finding | Severity | Disposition | Rationale |
 |---------|----------|-------------|-----------|
@@ -171,6 +172,12 @@ PostgreSQL17 jsonb는 NUL 이스케이프와 올바르지 않은 surrogate pair�
 
 독립 구현 리뷰1: REVISE C0/H3/M1/L0/INFO0. 현재 입력278개·고정본278개·원본 산출물125개·상대 delta42개가 일치했다. 연결기 입력93개의 기존 통과와 최종 화면 입력 검사를 재사용하되 새 공개 연결은 직접 검토했다. 위 네 지적의 보정과 다음 독립 검토를 진행한다. 절대 성능 지연·lease 실패는 측정하지 않았으며 실제 SQL·HTTP·브라우저 실행은0이다.
 
-구현 리뷰1 보정: H1의 정확한 공개 fixture·원래 v1 hash, H2의 기존 부모 broker·관리자 환경 제거, H3의 AUTO 혼합·올바른 hash의 비정규 전체 자료10종·UNKNOWN/HISTORICAL과 기존 PEER 채택 정의, M1의 소유 동결 기록·기록 교체 시 재투영·확정 선조회·누락 조각 생성이 코드에 반영됐다. 원본 실패를 보존했으며 최종 격리 검사 결과는 [개발 현황](../planning/delivery-and-validation.md)에 기록한다. 실제 실행을 검사 정의나 컴파일 통과로 대체하지 않는다. 독립 리뷰2 PASS를 확인했다. Step1–4는 소스·검사 정의·독립 리뷰 범위에서 완료했으며 실제 수용인 Step5는 미완료다.
+구현 리뷰1 보정: H1의 정확한 공개 fixture·원래 v1 hash, H2의 기존 부모 broker·관리자 환경 제거, H3의 AUTO 혼합·올바른 hash의 비정규 전체 자료10종·UNKNOWN/HISTORICAL과 기존 PEER 채택 정의, M1의 소유 동결 기록·기록 교체 시 재투영·확정 선조회·누락 조각 생성이 코드에 반영됐다. 원본 실패를 보존했으며 최종 격리 검사 결과는 [개발 현황](../../planning/delivery-and-validation.md)에 기록한다. 실제 실행을 검사 정의나 컴파일 통과로 대체하지 않는다. 독립 리뷰2 PASS를 확인했다. Step1–4는 소스·검사 정의·독립 리뷰 범위에서 완료했으며 실제 수용인 Step5는 미완료다.
 
 독립 구현 리뷰2: PASS C0/H0/M0/L0/INFO0. 입력285개·고정본285개·원본 산출물233개와 이전 publisher 검증 파일54개, 총괄 명령 로그23개의 hash와 크기가 일치했다. 리뷰1의 불변 입력265개는 범위를 제한해 재사용했고 변경13개·신규7개와 관련 adapter/store를 직접 확인했다. HIGH3건·MEDIUM1건은 RESOLVED다. 현재 최종 코드의 연결기 검사와 문서 갱신을 확인했으며 실제 SQL·HTTP·브라우저·AI·Git 실행은0이다. Step5를 완료하거나 계획을 보관하지 않는다.
+
+## 2026-10-08 최종 수용과 보관
+
+환경 전환 후 정의한 실제 DB·Auth·HTTP·브라우저와 같은 backend의 warm upgrade 검사를 실행했다. 원본 실패와 보정 전후의 source·입력 hash, fixture의 정확한 소유 정리와 기존 데이터 보존을 확인했다. 전체 연결기·웹 단위 검사, 타입·lint·format/check도 통과했다. 상세 실행 수치는 [개발·검증 상태](../../planning/delivery-and-validation.md#현재-진행-상태)에 유지한다.
+
+새 독립 `pause_source_acceptance_closure_review`는 기존 소스 리뷰의 불변 범위를 재사용하고 SQL 보정·fixture·실제 수용을 추가 검토했다. 일반 설치 안내의 SQL014–016 누락 HIGH1을 수용해 수정했고 최종 C0/H0/M0/L0 PASS를 확인했다. 모든 Step과 필수 Tests·종료 검토를 완료해 보관한다. 공식 Claude 실제 답변·동일 대화 재개·중단과 Mac 폴더 창·두 Mac 수용은 022·029·030의 별도 미완료이며 이 보관의 근거로 확대하지 않는다.

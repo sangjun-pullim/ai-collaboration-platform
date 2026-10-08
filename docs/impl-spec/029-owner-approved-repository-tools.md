@@ -108,6 +108,9 @@ risk-surface: permission
 
 ### [ ] Step 6: 실제 설정·브라우저 수용
 
+> 2026-10-08 실제 설정 DB·HTTP·브라우저와 SQL012 warm upgrade를 통과했다. Mac의 실제 폴더 선택·취소와 공식 AI의 자동 탐색 도구 실행 수용이 남아 있어 이 Step은 미완료로 유지한다.
+
+
 **File**: 기존 설정 통합·browser fixture와 실행 기록
 
 - 허용된 실제 local DB 접근이 가능할 때 SQL010/011→012 warm upgrade와 신규 설치 두 경우를 검증한다. owned human/device로 동일 본문 재전송/불일치/취소/권한상실/old receipt와 새mode를 확인한다. 이전025의8개와022의18개 settings 검사도 새 migration 입력에 맞춰 관련 실행 범위로 포함한다.

@@ -87,8 +87,8 @@ risk-surface: auth, permission, db-schema, public-api
 - CLI runtime-prepare/register/replace/run 및 revoke-local은 settings device 잠금→기존 binding/session/profile 잠금 순서를 따르며 active operation/UNKNOWN/미확정 journal을 검사한다. settings manager와 raw CLI가 같은 PC profile을 동시에 변경할 수 없다. remove-local-profile은 새 settings journal·generation 기록의 소유권과 unresolved/lock을 확인하고 준비 후보·이력을 무조건 삭제하지 않는다. settings 기록 없는 기존 CLI profile의 호환은 유지한다.
 - 새 명령은 기존 begin/approval/exchange/등록 contract를 재사용한다. 연결 승인과 PC의 room scope 확인을 생략하지 않는다. PC를 켜고 connector를 실행해 둔 답변 제공자는 매 질문에 수동 입력할 필요가 없다.
 
-### [ ] Step 4: 웹 내 AI 설정과 실제 적용 상태
-> BLOCKED: 화면과 제어 코드의 합성 검사는 통과했으나 SQL010을 사용하는 실제 Auth/DB 브라우저 검사는 미실행이다. 요청한 설정·실제 적용·응답 준비의 연결을 실제 환경에서 확인해야 한다.
+### [x] Step 4: 웹 내 AI 설정과 실제 적용 상태
+> 2026-10-08 실제 Auth·DB·HTTP와 desktop/mobile 설정 화면을 검증했다. 요청·실제 적용·응답 준비의 구분, Claude/Codex 모델·effort 선택, 타인 설정 거절과 질문자 AI 생략을 확인했다. 현재 검증 근거는 개발·검증 상태를 따른다.
 
 **File**: connection-manager, connections page, runtime-settings-form
 
@@ -98,7 +98,7 @@ risk-surface: auth, permission, db-schema, public-api
 - 동일 agent/epoch의 현재 공개 별칭과 실제 provider만 대상 카드에 표시한다. 과거 질문의 당시 저장소/모델 snapshot이 없는 v1 기록은 현재 값으로 채우지 않는다. model/effort의 상세 역사 snapshot은 후속 계약이며 초기 DIRECT 기본 질문의 전제조건이 아니다.
 
 ### [ ] Step 5: 권한·장애·실제 연결 검증과 종료
-> BLOCKED: 원래 구현 리뷰3의 역사적 REVISE를 보존하며 중단 복구 HIGH는023의 독립 리뷰2 PASS로 해소했다. 정책/history 소스 연결은024에서 완료했다. 실제 native 정책 활성화와 DB·브라우저·Mac 폴더 창·공식 Claude·두 Mac 수용, GitHub Flow 작업이 남아 있어022를 종료하거나 보관하지 않는다.
+> BLOCKED: 원래 구현 리뷰3의 역사적 REVISE를 보존하며 중단 복구 HIGH는023의 독립 리뷰2 PASS로 해소했다. 정책/history 소스 연결은024에서 완료했다. 2026-10-08 native 정책 활성화·실제 DB·HTTP·브라우저와 PR1–3 병합을 확인했다. Mac 폴더 창·공식 Claude·두 Mac 수용과 전체 종료 검토가 남아 있어022를 종료하거나 보관하지 않는다.
 
 **File**: test와 관련 정본 문서
 

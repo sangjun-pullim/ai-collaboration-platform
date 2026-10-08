@@ -48,13 +48,13 @@
 - [내 Mac의 AI 설정 계획](impl-spec/022-owner-local-ai-setup.md): 질문자 AI 없이 상대에게 질문하고, 답변 제공자가 폴더·Claude/Codex·모델·effort를 적용하는 단계. 기존 승인으로 구현 중이며 현재 검증과 미완료 범위는 개발·검증 상태를 따른다.
 - [Claude 중단 복구 보정 계획](impl-spec/archive/023-claude-interrupt-recovery.md): 중단 증거의 내구 저장과 같은 입력 복구 오류를 보정하는 계획. 전체 AI 설정 단계를 대체하지 않는다.
 - [Claude 실행 정책·이력 연결 기록](impl-spec/archive/024-claude-native-policy-and-history.md): 실행 생성 지점의 정책·소유 이력 공급과 모델 목록 조회 예약을 연결한 계획이다. 실제 Claude 수용과 운영 허용은 별도 검증한다.
-- [내 AI의 새 답변 일시정지 계획](impl-spec/025-own-ai-input-pause.md): 진행 중인 답변을 유지하면서 본인 AI의 다음 실행만 막는 제어. 현재 상태와 검증 범위는 개발·검증 상태 문서에서 확인한다.
+- [내 AI의 새 답변 일시정지 구현 기록](impl-spec/archive/025-own-ai-input-pause.md): 진행 중인 답변을 유지하면서 본인 AI의 다음 실행만 막는 제어. 실제 DB·HTTP·브라우저와 종료 리뷰를 마쳐 보관했다. 검증 근거는 개발·검증 상태 문서에서 확인한다.
 - [AI 입력 당시 저장소 관찰 구현 기록](impl-spec/archive/026-input-source-observation.md): 당시 commit·선택 파일 hash를 로컬 실행 기록에 보존한 단계. 중앙 채팅 이력과의 연결은 아래 질문 당시 대상·코드 이력 계획에서 다룬다.
 - [승인 폴더의 코드 탐색 구현 기록](impl-spec/archive/028-bounded-repository-reader.md): 파일 사전 선택을 없애기 위한 제한된 목록·검색·읽기 모듈. 소유자 승인과 실제 AI 연결은 후속 통합에 포함한다.
 - [폴더 승인과 실제 AI 도구 연결 계획](impl-spec/029-owner-approved-repository-tools.md): 새 세대의 로컬 승인·웹 설정과 Codex/Claude의 탐색 도구·내구 기록을 연결한다. 현재 구현 범위와 남은 검증은 개발·검증 상태 문서에서 확인한다.
 - [공식 Claude 연결과 후속 질문 계획](impl-spec/030-native-claude-chat-and-follow-up.md): 기본 factory의 실제 설치·설정 검증과 같은 소유 대화의 후속 질문을 보정한다. 자동 공동 조사의 방향 수정은 기본 채팅의 선행 조건이 아니다.
 - [명령 한 번으로 내 Mac 연결 구현 기록](impl-spec/archive/031-one-command-local-connection.md): 별도 앱·저장소·npm 설치 없이 운영 연결 코드를 임시 실행하고 기기 승인부터 웹 AI 설정까지 이어가는 단계. 현재 실행기를 재사용하는 배포·승인·설정 연결이다. 구현·검증 상태는 개발·검증 상태 문서에서 확인한다.
-- [질문 당시 대상·코드 이력 계획](impl-spec/027-shared-input-source-history.md): 중앙 채팅에 예약 당시 대상과 저장한 파일 관찰을 연결한다. 입력 전 허용 파일과 실제 도구 반환을 구분하며 메시지별 상세 조회를 제공하는 단계다.
+- [질문 당시 대상·코드 이력 구현 기록](impl-spec/archive/027-shared-input-source-history.md): 중앙 채팅에 예약 당시 대상과 저장한 파일 관찰을 연결한다. 입력 전 허용 파일과 실제 도구 반환을 구분하며 메시지별 상세 조회를 제공하는 단계다.
 - [진행 중인 구현 계획](impl-spec): 실행할 코드 수준 계획.
 - [계획 보관](impl-spec/archive): 완료 계획과 대체된 구계획의 당시 결정·검증 기록. 현재 코드 상태는 구조 문서와 실행 결과로 확인한다.
 

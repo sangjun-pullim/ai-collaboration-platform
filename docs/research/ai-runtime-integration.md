@@ -82,7 +82,7 @@ interface AgentRuntime {
 
 ### 공식 Claude 설치·설정과 같은 대화 재개
 
-기본 제품 factory는 `NativeClaudePolicy`로 해당 Mac의 설치·설정을 발견한다. 초기 지원은 공식 native 설치 2.1.288, 기본 `~/.claude` 프로필과 개인 Pro/Max 구독 로그인이다. entry symlink와 canonical 실행 파일을 구분하고 고정 macOS 코드 서명 검사 뒤에만 `--version`·`auth status`를 읽는다. 호출은 시간·출력 크기를 제한하며 입력을 보내지 않는다. caller가 만든 객체나 합성 fixture 근거를 실제 설치 허가로 해석하지 않는다. [공식 CLI 참조](https://code.claude.com/docs/en/cli-reference)
+기본 제품 factory는 `NativeClaudePolicy`로 해당 Mac의 설치·설정을 발견한다. 현재 검토한 지원 버전은 공식 native 설치 2.1.288과 2.1.293이며, 기본 `~/.claude` 프로필과 개인 Pro/Max 구독 로그인이다. entry symlink와 canonical 실행 파일을 구분하고 고정 macOS 코드 서명 검사 뒤에만 `--version`·`auth status`를 읽는다. 호출은 시간·출력 크기를 제한하며 입력을 보내지 않는다. caller가 만든 객체나 합성 fixture 근거를 실제 설치 허가로 해석하지 않는다. [공식 CLI 참조](https://code.claude.com/docs/en/cli-reference)
 
 개인 user/project/local 설정과 CLAUDE 지침은 유지한다. native 정책은 전역·조상 지침, 규칙 파일·import, 선택 root와 worktree의 local 설정을 발견하고 권한에 영향을 주는 변경을 검출한다. 관리 설정은 작업 overlay보다 우선하므로 초기 개인 지원에서 managed 파일·MDM preference domain·remote cache가 있거나 확인되지 않으면 실행을 거절한다. 사용자 지정 config·command helper·추가 작업 디렉터리도 검증 전에는 지원하지 않는다. [설정](https://code.claude.com/docs/en/settings), [관리 설정](https://code.claude.com/docs/en/managed-settings), [서버 관리 설정](https://code.claude.com/docs/en/server-managed-settings)
 

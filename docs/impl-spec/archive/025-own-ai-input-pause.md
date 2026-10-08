@@ -1,6 +1,7 @@
 ---
-status: active
+status: done
 date: 2026-10-06
+completed: 2026-10-08
 risk-surface: auth, permission, db-schema, public-api
 ---
 > NOTE: This is the plan, not a description of the code. Current implementation and acceptance must be verified separately.
@@ -9,7 +10,7 @@ risk-surface: auth, permission, db-schema, public-api
 
 ## Context
 
-[업무 규칙](../BUSINESS-LOGIC.md#일시정지중단방향-수정)은 본인 AI의 새 입력 일시정지와 방 전체의 정지, 실행 중인 답변의 중단을 구분한다. 현재 실제 채팅 경로에는 본인 binding의 새 실행만 막는 제어가 없다. `RuntimeAdmission.pause()`는 실행 중 도구도 거절하고 `WorkflowRunner.stop()`은 실제 provider 중단을 요청하므로 이 기능에 재사용하지 않는다.
+[업무 규칙](../../BUSINESS-LOGIC.md#일시정지중단방향-수정)은 본인 AI의 새 입력 일시정지와 방 전체의 정지, 실행 중인 답변의 중단을 구분한다. 현재 실제 채팅 경로에는 본인 binding의 새 실행만 막는 제어가 없다. `RuntimeAdmission.pause()`는 실행 중 도구도 거절하고 `WorkflowRunner.stop()`은 실제 provider 중단을 요청하므로 이 기능에 재사용하지 않는다.
 
 전체 구현을 계속하라는 기존 승인으로 이 계획을 작성하고 독립 리뷰 후 구현한다. 2026-10-07 사용자는 사람의 상대 AI 질문·답변과 같은 대화 후속 질문을 우선 확정했다. 개인 설명의 저장과 자동 공동 조사의 방향 수정은 후속 기능이며 기본 채팅의 선행 조건이 아니다. 이 계획은 그 두 기능이나 실제 Claude 수용을 대체하지 않는다. 기존 실제 입력 예산, 개인 설정·인증과 미확인 native 실행 제한을 바꾸지 않는다.
 
@@ -109,10 +110,10 @@ risk-surface: auth, permission, db-schema, public-api
 - read projection만으로 pending intent를 성공 처리하지 않는다. 현재 operation receipt를 확인한 뒤 pending을 정리한다. 오래된 epoch/revision receipt는 현재 제어 상태로 채택하지 않고 최신 상태를 조회한다. stale mutation은 자동으로 새 revision/body로 재시도하지 않는다.
 - 실제 브라우저 회귀는 Step4에서 실행한다. 단위 state/helper 검사나 prototype 문자열을 실제 UI/AI 적용 증거로 삼지 않는다.
 
-### [ ] Step 4: DB·HTTP·브라우저 회귀와 종료 검토
+### [x] Step 4: DB·HTTP·브라우저 회귀와 종료 검토
 **File**: tests/integration/own-ai-input-pause.test.ts, tests/integration/own-ai-input-upgrade.test.ts, tests/e2e 관련 workflow/settings 검사, 관련 정본 docs
 
-> BLOCKED: 현재 실행 환경에서 Docker socket·로컬 HTTP 접근이 거절된다. 실제 CLI 이력 쓰기·009 추가 입력 준비 및 두 Mac 수용도 별도로 미완료다. 이 Step의 격리 DB/HTTP/브라우저 검증을 합성 검사로 대신하지 않는다. 독립적인 소스 구현·단위 검사·리뷰는 계속한다.
+> 검증 진행: 2026-10-08 환경 전환 뒤 실제 일시정지 DB·HTTP, 같은 backend의 SQL011 warm upgrade, desktop/mobile 제어 회귀를 통과했다. 원본 실패와 보정, fixture 정리 결과를 보존했다. 전체 연결기 검사와 영향 범위 종료 리뷰를 마치기 전에는 이 Step을 완료 표시하지 않는다. 공식 Claude·두 Mac은 022·030에서 별도로 수용한다.
 
 - `WorkflowFixture.human/device`의 operation 분류에서 `input-state`, `admission`, `admission-ack`를 제외한다. `input-control`을 사람 actor로 분류하고 expectedUserId를 현재 fixture 회원으로 검증한다. 조회·ACK에 문자열 `undefined` operation을 기록하지 않는다. 원래 actor·scope·receipt 복구·owned 종료 검사를 약화하지 않고 새 receipt를 실제 소유자 scope로 정리한다. `RuntimeSettingsFixture`가 재사용하는 workflow fixture 및 실제 settings/browser fixture의 경로도 같은 분류를 사용하도록 대조한다.
 - 기존 owned fixture에 migration011 적용/업그레이드, 실제 Auth·bearer·RPC·HTTP와 권한/잠금 회귀를 추가한다. 원래 core/restore를 호출한 뒤 migration을 적용한 경로도 포함한다. DB의 claim/pause commit 순서 양쪽을 실제 독립 connection과 barrier로 검증한다.
@@ -169,3 +170,9 @@ risk-surface: auth, permission, db-schema, public-api
 | 전체 구현 리뷰2 I1: 원본·현재 전체 connector의 동일한 제거 검사 취소 | INFO | REJECTED · 025 신규 회귀로 기각 | 변경 전 입력·양쪽 실행 로그가 일치하며 같은 15초 검사가 양쪽에서 취소되었다. 전체 통과나 원인 해결로 표시하지 않고 원래 timeout·소유권·거절 assertion을 유지한다. |
 | 전체 구현 리뷰2 I2: 최대 continuation의 간헐 UNKNOWN | INFO | 기존 미확인 문제 | 제한 비교에서 원본과 현재 모두 관측되었다. 원래 UPLOADED 기대값을 유지하고 credential cache 후보 제거를 원인 해결로 표시하지 않는다. |
 | 전체 구현 리뷰3 H2: 신규 interrupt 검사 준비에 bindingEpoch·expectedRoomRevision 누락 | HIGH | ACCEPTED · FIXED_SOURCE_ONLY | 원래 리뷰 상한에서 미해결로 기록하고 2줄 보정안을 준비한 뒤 사용자가 두 값 보완과 독립 리뷰 1회 추가를 승인했다. 실제 소스·fixture·계약의 수정 전 INVALID_BODY 실패와 수정 후 통과를 보존했고 추가 독립 리뷰가 소스 해소를 확인했다. 역사적 REVISE 기록을 유지하며 실제 DB/HTTP 수용은 Step4에 남아 있다. |
+
+## 2026-10-08 최종 수용과 보관
+
+환경 전환 후 정의한 실제 DB·Auth·HTTP·브라우저와 같은 backend의 warm upgrade 검사를 실행했다. 원본 실패와 보정 전후의 source·입력 hash, fixture의 정확한 소유 정리와 기존 데이터 보존을 확인했다. 전체 연결기·웹 단위 검사, 타입·lint·format/check도 통과했다. 상세 실행 수치는 [개발·검증 상태](../../planning/delivery-and-validation.md#현재-진행-상태)에 유지한다.
+
+새 독립 `pause_source_acceptance_closure_review`는 기존 소스 리뷰의 불변 범위를 재사용하고 SQL 보정·fixture·실제 수용을 추가 검토했다. 일반 설치 안내의 SQL014–016 누락 HIGH1을 수용해 수정했고 최종 C0/H0/M0/L0 PASS를 확인했다. 모든 Step과 필수 Tests·종료 검토를 완료해 보관한다. 공식 Claude 실제 답변·동일 대화 재개·중단과 Mac 폴더 창·두 Mac 수용은 022·029·030의 별도 미완료이며 이 보관의 근거로 확대하지 않는다.

@@ -15,7 +15,7 @@ risk-surface: auth, permission
 
 또한 현재 `proveOwnedHistory()`는 저장 JSONL에도 stdout의 init/result가 있다고 가정한다. 실시간 완료와 저장 대화의 재개 검증을 구분해야 한다. 실제 typed result를 확인한 입력에는 정확한 native 기록의 체크포인트를 남긴다. 저장 assistant 본문만으로 미확정 실행을 완료 처리하지 않는다.
 
-이 보정은 사용자의 전체 구현·감독 위임과 승인된 022의 재작업 범위에서 진행한다. 실제 입력은 기존 009의 추가 최대 3회 승인만 재사용한다. 현재 추가 입력은 0회다. 기존 UNKNOWN 3개, 원래 입력 예산과 기록을 변경하지 않는다.
+이 보정은 사용자의 전체 구현·감독 위임과 승인된 022의 재작업 범위에서 진행한다. 실제 입력은 기존 009의 추가 최대 3회 승인만 재사용한다. 승인 당시 추가 입력은 0회였다. 2026-10-08 추가 첫 입력 1개가 초기화 검증에서 UNKNOWN으로 종료됐으며 다음 입력은 자동 실행하지 않았다. 기존 UNKNOWN 3개와 원래 예산·기록을 보존하고 실제 수용은 Step4에서 확인한다.
 
 ## Affected Files
 
@@ -42,7 +42,7 @@ risk-surface: auth, permission
 
 - 회귀 검사에서 기본 factory가 공식 설치의 검토 근거를 공급할 수 없는 현상을 먼저 재현한다.
 - macOS native 설치의 entry symlink와 canonical target을 구분한다. 실행은 확인한 target만 사용한다. 파일·상위 디렉터리·소유권·쓰기 권한·크기·변경 여부를 확인한다. 코드 서명 검증은 고정 `/usr/bin/codesign`과 Anthropic 식별자로 수행한다. 실패나 확인 불가는 성공으로 바꾸지 않는다.
-- 공식 CLI의 `--version`과 `auth status`는 bounded 읽기 전용 child로 확인한다. stderr·이메일·조직 이름·인증 원문을 공개하지 않는다. 새 로그인·토큰 복사·업데이트를 실행하지 않는다. 현재 2.1.288과 지원 근거를 구분하고 검토하지 않은 버전은 거절한다. inherited/settings의 미검증 custom authentication headers는 probe 전에 거절한다.
+- 공식 CLI의 `--version`과 `auth status`는 bounded 읽기 전용 child로 확인한다. stderr·이메일·조직 이름·인증 원문을 공개하지 않는다. 새 로그인·토큰 복사·업데이트를 실행하지 않는다. 현재 서명된 2.1.288·2.1.293의 지원 근거를 확인하고 검토하지 않은 버전은 거절한다. inherited/settings의 미검증 custom authentication headers는 probe 전에 거절한다.
 - auth status가 보고한 실제 config/projects 위치를 대조한다. 초기 지원은 기본 `~/.claude` 프로필이며 다른 `CLAUDE_CONFIG_DIR`는 global config 위치를 검증하기 전까지 거절한다. 기존 프로필을 이동하거나 복사하지 않는다. user/project/local 및 root/worktree local 설정을 발견한다. 임의 추가 working directory, 환경의 별도 설정 source, command helper 등 실행 권한을 확정하지 못하는 조합은 이유를 보존해 거절한다.
 - 초기 검증 범위는 macOS의 개인 Claude 구독 로그인이다. Team/Enterprise의 원격 managed policy와 미검증 endpoint-managed policy는 무조건 개인 구독으로 해석하지 않는다. managed 파일·drop-in·MDM·remote cache의 존재·변경과 로그인 유형을 확인한다. 검증할 수 없는 managed source는 명시적으로 미지원이다. 조직 정책을 끄거나 우회하지 않는다.
 - 전역·프로젝트 지침과 설정 파일은 그대로 둔다. native 실행의 작업별 overlay로 hooks와 확인하지 않은 configured/builtin plugin 실행을 제한한다. built-in tool set을 비우고 strict MCP·dontAsk·정확한 제품 도구만 적용한다. managed 우선순위와 설정 재적용에 관한 공식 문서 근거를 기록한다.
@@ -76,7 +76,7 @@ risk-surface: auth, permission
 
 **File**: 격리 검증 산출물, 실제 실행의 준비 기록
 
-개발 도구 환경의 입력 없는 기본 admission은 `POLICY_UNCONFIRMED`, `stage: PUBLISHER`로 종료됐다. 원본 실패는 보존한다. 2026-10-07 사용자 Mac 터미널의 [연결 확인 절차](../guides/onboarding-and-settings.md#claude-연결-확인)에서 `VERIFIED`, 버전 `2.1.288`, AI 입력 `0`이라는 응답을 전달받았다. 이 사용자 보고는 설치·로그인·설정 점검의 통과이며 실제 답변·재개·중단과 native 이력 쓰기는 아직 검증하지 않았다. 현재 개발 도구 권한은 기존 `~/.claude` 이력 쓰기와 Docker 접근을 허용하지 않는다. 추가 실제 입력은0회이며 기존 추가3회 승인을 유지한다. 실제 수용은 미완료이고 이 Step은 `[ ]`로 둔다. 실행 환경의 조건이며 개인 설명·방향 수정·추가 사용자 결정 때문에 기본 채팅을 멈추는 조건이 아니다.
+개발 도구 환경의 입력 없는 기본 admission은 `POLICY_UNCONFIRMED`, `stage: PUBLISHER`로 종료됐다. 원본 실패는 보존한다. 2026-10-07 사용자 Mac 터미널의 [연결 확인 절차](../guides/onboarding-and-settings.md#claude-연결-확인)에서 `VERIFIED`, 버전 `2.1.288`, AI 입력 `0`이라는 응답을 전달받았다. 이 사용자 보고는 설치·로그인·설정 점검의 통과이며 실제 답변·재개·중단과 native 이력 쓰기는 아직 검증하지 않았다. 2026-10-08 환경 전환 후 공식 2.1.293의 설치·모델 목록과 소유 프로세스 종료를 확인했다. 캐시 시각 갱신의 오판을 보정한 뒤 추가 첫 입력1개가 새 내장 플러그인 초기화 조건에서 UNKNOWN이 됐다. 실패 기록·예산·lock과 소유 프로세스 REAPED를 보존했다. 해당 버전의 임시 플러그인 제한·격리 회귀·독립 리뷰는 PASS이며 보정 뒤 실제 답변·재개·중단 수용은 아직 남아 있어 이 Step은 `[ ]`로 둔다. 실행 환경의 조건이며 개인 설명·방향 수정·추가 사용자 결정 때문에 기본 채팅을 멈추는 조건이 아니다.
 
 - 최종 소스·설치 identity·공식 프로토콜·정확한 설정/이력 위치·합성 root/state·기존 승인·입력 예산과 소유 정리 조건을 묶어 독립 리뷰를 받는다.
 - 현재 환경에서 서명·이력 쓰기·개인 설정 보존을 확인할 수 있는지 실제 결과로 판단한다. 도구의 제한을 외부 터미널·새 프로필·권한 확대·토큰 복사로 우회하지 않는다.

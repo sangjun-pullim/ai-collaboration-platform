@@ -129,7 +129,7 @@ node scripts/dev-local-web.mjs --check
 
 공유 DB·운영 Auth에 적용하면 다른 사용자의 접근 정책과 실행 계약이 바뀐다. 운영자는 대상과 변경을 확인한 뒤 적용한다.
 
-1. 운영자는 해당 DB에 미적용 [소유자 설정](../../supabase/migrations/20261005001000-owner-local-ai-setup.sql)·[새 답변 제어](../../supabase/migrations/20261006001100-own-ai-input-pause.sql)·[자동 탐색 승인](../../supabase/migrations/20261006001200-owner-approved-repository-access.sql)·[자료 이력](../../supabase/migrations/20261006001300-shared-input-source-history.sql)을 010–013 순서로 적용한다. 기존 파일을 재적용하거나 DB를 reset하지 않는다.
+1. 운영자는 해당 DB의 미적용 SQL을 번호 순서로 적용한다. [소유자 설정](../../supabase/migrations/20261005001000-owner-local-ai-setup.sql)·[새 답변 제어](../../supabase/migrations/20261006001100-own-ai-input-pause.sql)·[자동 탐색 승인](../../supabase/migrations/20261006001200-owner-approved-repository-access.sql)·[자료 이력](../../supabase/migrations/20261006001300-shared-input-source-history.sql) 뒤에 [모델 목록 검증 보정](../../supabase/migrations/20261008001400-runtime-settings-catalog-validation.sql)·[자료 요약 보정](../../supabase/migrations/20261008001500-source-history-summary-validation.sql)·[설정 적용 영수증 보정](../../supabase/migrations/20261008001600-runtime-settings-binding-receipt.sql)까지 010–016 순서로 설치한다. 이미 설치한 SQL은 재적용하지 않고 남은 번호만 적용한다. DB를 reset하지 않는다.
 2. 운영자는 같은 DB의 PostgREST schema cache를 갱신한다. 고정 자료 RPC를 사용하는 중앙 API가 준비된다.
 3. AI를 제공하는 개발자는 중앙 API·DB 준비 뒤 자기 Mac의 연결 프로그램을 갱신한다. 연결 프로그램은 현재 연결의 자료 버전 지원을 확인한 뒤 새 입력을 허용한다.
 
@@ -173,13 +173,13 @@ SQL
 
 **로컬 DB 스키마를 변경하는 명령이다.** 기존 입장·방·대화 데이터를 보존하면서 AI 설정 기능을 추가한다. 이 프로젝트의 지정한 OrbStack 개발 DB만 대상으로 하며 공유·운영 DB에는 사용하지 않는다.
 
-1. 운영자는 이 프로젝트 루트의 Node.js 24 터미널에서 아래 명령을 실행한다. 컨테이너의 프로젝트·고정 ID·로컬 DB 포트·소유한 임시 작업 위치와 SQL 파일 hash를 검사한다. 기존001–009의 필수 함수, SQL005의 기기 삭제 관련 외래키 3개의 지연 검사 설정, SQL008의 질문자 확인 함수·공개 호출 함수의 원문을 먼저 조회하고 적용 transaction에서도 같은 조건을 확인한다. 새 설정 schema가 이미 있으면 적용하지 않는다. 네 변경은 한 transaction으로 적용하며 SQL 오류는 전체 rollback한다. PostgREST cache 갱신 알림도 같은 commit에 포함한다.
+1. 운영자는 이 프로젝트 루트의 Node.js 24 터미널에서 아래 명령을 실행한다. 컨테이너의 프로젝트·고정 ID·로컬 DB 포트·소유한 임시 작업 위치와 SQL 파일 hash를 검사한다. 기존001–009의 필수 함수, SQL005의 기기 삭제 관련 외래키 3개의 지연 검사 설정, SQL008의 질문자 확인 함수·공개 호출 함수의 원문을 먼저 조회하고 적용 transaction에서도 같은 조건을 확인한다. 새 설정 schema가 없으면 SQL010–016을 한 transaction으로 적용한다. SQL010–013이 이미 설치된 DB는 현재 함수 원문이 검토한 기존·보정 상태와 정확히 일치할 때만 남은 SQL014–016을 적용한다. 다른 원문·부분 schema·알 수 없는 설치 상태는 거절하며 SQL 오류는 전체 rollback한다. PostgREST cache 갱신 알림도 같은 commit에 포함한다.
 
    ```sh
    node scripts/apply-local-ai-settings.mjs --apply
    ```
 
-2. 운영자는 출력의 `status`와 `features`를 확인한다. `APPLIED`와 네 값 `true`는 이 명령의 DB 적용·재조회 완료이며 실제 웹·Claude 답변 통과와 구분한다. `ALREADY_PRESENT`는 함수 설치 표식이 이미 있다는 뜻이며 파일을 재적용하지 않는다.
+2. 운영자는 출력의 `status`와 `features`를 확인한다. `APPLIED`와 네 값 `true`는 이 명령의 DB 적용·재조회 완료이며 실제 웹·Claude 답변 통과와 구분한다. `ALREADY_PRESENT`는 기능 표식과 SQL014–016의 보정된 함수 원문을 확인한 상태이며 쓰기·SQL 재적용은 하지 않는다.
 3. `BLOCKED`나 `APPLY_NOT_CONFIRMED`이면 운영자는 출력을 보존한다. `--apply` 없이 같은 명령으로 설치 표식만 다시 조회하며 자동 재시도·DB reset·이미 적용한 SQL의 덮어쓰기는 하지 않는다. `BASELINE_NOT_READY`는 기존 필수 조건 누락으로 적용 전에 거절한 상태다. 부분 적용이나 다른 작업 위치는 별도 상태 확인이 필요하다.
 
 이 명령은 AI CLI·모델을 실행하거나 웹 서버를 재시작하지 않는다. 현재 실제 검증과 남은 적용 상태는 [진행 정본](../planning/delivery-and-validation.md#현재-진행-상태)을 따른다.
@@ -237,7 +237,7 @@ AI를 제공하는 Mac에는 선택한 공식 CLI와 기존 로그인이 필요�
 
 ### Claude 연결 확인
 
-초기 native 지원은 macOS, 공식 native 설치 2.1.288, 기존 Pro/Max 구독 로그인과 기본 `~/.claude` 프로필이다. 개인 설정·지침·인증 파일은 그대로 둔다. 다른 버전·설치 방식·사용자 지정 프로필과 managed 정책은 검증된 지원 범위에 추가하기 전까지 미지원이다. 파일을 새 프로필로 옮기는 방식으로 해결하지 않는다.
+현재 native 지원 범위는 macOS, 공식 native 설치 2.1.288·2.1.293, 기존 Pro/Max 구독 로그인과 기본 `~/.claude` 프로필이다. 개인 설정·지침·인증 파일은 그대로 둔다. 다른 버전·설치 방식·사용자 지정 프로필과 managed 정책은 검증된 지원 범위에 추가하기 전까지 미지원이다. 파일을 새 프로필로 옮기는 방식으로 해결하지 않는다.
 
 다음 점검은 AI 질문을 보내지 않는다. 진단은 실패 단계만 출력하며 인증·설정 원문을 출력하지 않는다.
 

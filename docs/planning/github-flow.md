@@ -17,31 +17,24 @@
 
 문서 변경은 내부 링크·경로·상태와 지침의 독립 리뷰를 확인한다. 소스 변경은 해당 명세의 타입·lint·빌드·테스트를 확인하며 실제 AI·DB 통합의 결과와 격리된 검사를 구분한다. 필수 검사를 생략한 PR은 준비 완료로 표시하지 않는다. 이 문서는 별도 CI나 자동 배포를 설정했다는 뜻이 아니다.
 
-## 현재 누적 작업의 일회성 전환
+## 누적 작업의 전환 결과
 
-첫 전환 브랜치를 준비할 때 `main`은 초기 snapshot이고, 누적 구현38개 커밋이 뒤에 이어져 있었다. 기존 Git 이력을 재작성하지 않고 아래 누적 구현과 문서 정리부터 순서대로 PR을 준비한다. 이후 완료된 채팅 UI·회사 코드 입장은 [고정 병합 순서](#완료된-범위의-병합-준비)의 세 번째 PR로 이어간다.
+사용자는 “개발 완료된거 main에 잘 합치고”라고 요청했다. 기존 병합 승인을 재사용해 2026-10-08에 검토된 세 PR을 정상 merge commit으로 병합했다. 원래 커밋의 포함 관계를 보존했으며 `--admin`이나 강제 push는 사용하지 않았다.
 
-- `chore/implementation-baseline`: 문서 정리 직전까지의 누적 구현·검증·기록을 보존하고 `main`으로 검토하는 draft PR. 이번 누적 PR은 원래 커밋의 포함 관계를 보존하는 merge commit으로 병합한다.
-- `docs/organize-project-docs`: 문서 폴더·탐색·프로젝트 지침·GitHub Flow를 변경하는 PR. 전환 중에는 위 누적 브랜치를 기준으로 diff를 분리한다. 누적 PR의 merge commit 병합 후 원격을 갱신하고 `git merge-base --is-ancestor chore/implementation-baseline origin/main`의 성공을 확인한 경우에만 문서 PR의 base를 `main`으로 갱신한다.
+| PR | 포함한 검토 tip | main의 병합 커밋 |
+|---|---|---|
+| [1 · 누적 구현](https://github.com/sangjun-pullim/ai-collaboration-platform/pull/1) | `04db9d00e4e28f9733d61bade79758b8f9cb0760` | `a9d9ef8d65665734ed8dc33de7ce003b7fbb5c7e` |
+| [2 · 문서 정리](https://github.com/sangjun-pullim/ai-collaboration-platform/pull/2) | `88db6862b9e29f4fdce17d9c8f280e4b8e7ef555` | `2066e12612f48dcbcd260426f62b59db3d9e9329` |
+| [3 · 채팅 화면과 회사 코드 입장](https://github.com/sangjun-pullim/ai-collaboration-platform/pull/3) | `782c3b3cb33751934d4d62b656eeac42707e0802` | `7a26120b73cb4de88170d1aadb5368be1968d322` |
 
-과거 로컬 브랜치들은 누적 브랜치의 원격 보존과 모든 tip의 커밋 포함 여부를 확인한 경우만 정리한다. 과거 tip과 삭제 목록은 로컬 작업 기록에 보관한다. 이 예외는 계속 사용할 통합 브랜치를 만드는 규칙이 아니다. 전환이 끝나면 모든 새 작업은 `origin/main`에서 시작한다.
+각 tip이 `origin/main`의 조상임을 확인했다. 완료된 `chore/implementation-baseline`, `docs/organize-project-docs`는 로컬·원격에서 정리했다. 로컬 `main`과 `origin/main`은 세 번째 병합 커밋을 가리킨다.
 
-누적 PR에도 실제 Claude 수용·두 PC 검증·전체 사용자 개입·Realtime·파일럿·배포는 미완료로 표시한다. 세부 상태는 [개발·검증 상태](delivery-and-validation.md#현재-진행-상태)에 유지한다. GitHub Flow 전환은 Claude 추가 실제 입력의 실행 상한이나 기존 승인 경계를 변경하지 않는다.
+## 현재 작업 브랜치
 
-## 완료된 범위의 병합 준비
+로컬 AI 설정·Claude·폴더 탐색·자료 이력·명령 한 번 연결은 `feat/local-ai-chat-20261008`에서 이어간다. 검토된 main을 이 브랜치에 병합한 커밋은 `671760ee264d64f0c7462ec37953bf7c2152dbb2`다. [PR4](https://github.com/sangjun-pullim/ai-collaboration-platform/pull/4)는 main 대상 draft이며 실제 검증과 보정을 포함한다. 완료된 세 PR의 고정 범위에 후속 변경을 추가하지 않았다.
 
-사용자는 2026-10-07 “개발 완료된거 main에 잘 합치고”라고 명시적으로 요청했다. 아래 완료 범위의 병합 승인은 받았으며 다시 요청하지 않는다. 각 PR의 필수 검사·리뷰와 실제 원격 커밋을 확인한 뒤 정상 merge commit으로 병합한다. 이 표는 병합 결과가 아니라 준비한 경계다.
+`feat/chat-first-experience`의 로컬 tip에는 아직 main에 포함되지 않은 후속 변경이 있다. 이 브랜치는 포함 관계 확인 전까지 유지한다. `feat/team-code-entry`는 별도 worktree에서 사용 중이며 그곳의 사용자 변경을 보존한다. 다른 worktree나 미병합 tip을 현재 작업 정리의 대상으로 삭제하지 않는다.
 
-| 순서 | 원격 브랜치·예상 tip | PR의 변경 범위 | main 반영 후 확인 |
-|---|---|---|---|
-| 1 | `chore/implementation-baseline` · `04db9d00e4e28f9733d61bade79758b8f9cb0760` | 초기 snapshot 이후 구현·검증의38개 커밋. 실제 Claude·두 PC·운영 배포의 미완료는 유지 | 해당 tip이 origin/main의 조상이며 원래 커밋 포함 관계를 보존 |
-| 2 | `docs/organize-project-docs` · `88db6862b9e29f4fdce17d9c8f280e4b8e7ef555` | 기본 문서를 docs 바로 아래에 유지하고 보조 폴더·목차·GitHub Flow를 정리한1개 커밋. 프로젝트 AGENTS 변경의 독립 리뷰 포함 | baseline 포함 확인 후 PR base를 main으로 바꾸고 이 tip 포함 확인 |
-| 3 | `feat/chat-first-experience`의 검증된 원격 tip · `782c3b3cb33751934d4d62b656eeac42707e0802` | 문서 정리 이후 채팅 UI·회사 코드 입장과 완료020·021의3개 커밋 | 원격 tip이 정확히 이 값인 경우만 병합하고 완료 계획·검증 기록 보존 |
+PR4의 필수 검사·리뷰와 준비된 변경을 확인한 뒤 기존 사용자 요청에 따라 병합한다. 실제 Claude 답변·같은 대화 재개·중단, 두 Mac 수용과 제품 배포의 완료는 코드 병합과 별도로 판정한다. 병합한 현재 기능과 남은 수용은 [개발·검증 상태](delivery-and-validation.md#현재-진행-상태)에서 확인한다. 새 작업은 이 전환 작업을 끝낸 뒤 최신 `origin/main`에서 짧은 브랜치로 시작한다.
 
-원래 로컬 `feat/chat-first-experience`에는 위 완료 tip 뒤로 실제 수용이 남은 로컬 AI 설정·Claude·폴더 탐색·자료 이력과 명령 한 번 연결의 후속 커밋이 이어져 있었다. 이 작업은 `feat/local-ai-chat-20261008`에 원격 보존하고 해당 브랜치에서 이어간다. 위3번째 PR을 준비한다는 이유로 후속 커밋을 기존 원격 브랜치에 push하지 않는다. 실제 원격 tip이 달라지면 완료 커밋을 가리키는 별도 브랜치로 PR 범위를 고정하고 필요한 검증을 다시 확인한다. 원격과 로컬에 보존한 미완료 커밋이나 사용자 작업을 삭제·재작성하지 않는다.
-
-초기 병합 준비에서는 `.git/index.lock: Operation not permitted`와 GitHub DNS·연결 오류로 진행하지 못했다. 이후 일반 Git 커밋과 기존 PR 조회가 가능한 것을 확인했으나 PR 상태 변경은 API 연결 오류로 실패했다. 실제 원격 상태와 실행별 성공·실패는 [검증 기록](delivery-and-validation.md#현재-브랜치-운영-점검)에 유지한다. 제한을 다른 Git 저장소·외부 터미널·권한 확대 경로로 우회하지 않으며, 병합 준비나 PR 조회 성공을 실제 main 병합으로 기록하지 않는다.
-
-병합 후 원격 커밋 포함 여부를 확인한 브랜치만 정리한다. 후속 작업이 남은 현재 작업 브랜치는 유지한다. `feat/team-code-entry`는 별도 worktree에 사용 중이므로 포함 여부와 그 worktree의 사용자 작업·사용 종료를 확인하기 전에는 브랜치나 worktree를 삭제하지 않는다. 사용자의 미완료 작업 계속 진행 지시에 따라 같은 채팅 연결 작업인031은 현재 위치에서 구현·검토·커밋했다. 이 신규 변경은 위42개 완료 커밋의 고정 병합 범위에 넣지 않는다. 후속 작업의 draft PR은 기존 `feat/chat-first-experience`를 base로 범위를 분리하고, 그 고정 tip이 main에 포함된 뒤 base를 main으로 바꾼다. 원격 보존은 완료했지만 draft PR 생성은 API 연결 오류로 실패했으므로 PR 준비·병합 완료로 표시하지 않는다. 이후 다른 작업은 최신 origin/main의 별도 브랜치로 시작한다.
-
-고정 완료 범위는 새 독립 reviewer의 병합 준비 검토를 통과했다. 기존 리뷰의 입력·로그 일치와 이번 격리 검사의 범위·제한은 [개발·검증 상태](delivery-and-validation.md#완료된-범위의-병합-준비-검증)에 기록했다. 원격 커밋 일치와 실제 PR 병합의 성공을 각각 확인한 뒤에만 완료를 기록한다.
+환경 전환 전의 Git·GitHub 접근 실패는 [과거 실행 기록](delivery-and-validation.md#2026-10-08-goal-재개와-실행-환경-확인)에 남겼다. 현재 실행 환경에서는 정상 커밋·push·PR 생성·main 병합을 실제로 확인했다. GitHub Flow 전환이 Claude 입력 예산이나 UNKNOWN 실행의 재시도 제한을 변경하지는 않는다.

@@ -152,3 +152,25 @@ Docker 접근이 거절되어도 웹 준비 명령은 `LOCAL_STACK_UNVERIFIED`�
 [자료 이력 회귀](../tests/integration/shared-input-source-history.test.ts)는 설치 완료 상태의8개 검사만 유지하고, 기존 업그레이드1개는 [별도 파일](../tests/integration/shared-input-source-upgrade.test.ts)로 옮겼다. 검사 본문·제한 시간·기존 guard·정리 driver는 유지했다. 통합 명령은 설치된 DB의4개 파일을 선택하고 업그레이드 검사는 선택하지 않는다.
 
 검사 선언과 기존 guard를 사용하는 합성 재현에서 잘못된 선택의 실패와 보정 후 제외를 확인했다. 실제 DB 검증의 완료는 주장하지 않는다. 독립 재검토와 원문 보존 근거는 [검증 정본](planning/delivery-and-validation.md#2026-10-08-설정-검증-보완과-커밋)에 기록한다.
+
+## 2026-10-08 — 실제 설정과 자료 이력의 DB 함수 오류
+
+실제 DB·HTTP 검사에서 모델 목록의 SQL 별칭, 자료 요약의 JSON 연산자, 설정 적용의 receipt 변수 이름이 기존 함수와 충돌했다. 유효한 목록 등록·자료 확정·binding 적용이 각각 거절됐다.
+
+기존 SQL010·013을 덮어쓰지 않고 [목록 검증 보정](../supabase/migrations/20261008001400-runtime-settings-catalog-validation.sql), [자료 요약 보정](../supabase/migrations/20261008001500-source-history-summary-validation.sql), [적용 receipt 보정](../supabase/migrations/20261008001600-runtime-settings-binding-receipt.sql)을 추가했다. 함수 계약·권한·기존 데이터를 유지하고 모호한 식별자와 연산 순서만 보정한다. [로컬 설치 helper](../scripts/apply-local-ai-settings.mjs)는 같은 transaction 안에서도 기존 상태와 함수 원문을 확인하며 설치 완료 상태에 SQL을 다시 적용하지 않는다.
+
+각 오류의 원본 실패와 rollback 검증 뒤 실제 DB·HTTP 회귀 및 독립 리뷰를 통과했다. 기존 DB의 warm upgrade와 최종 수치는 [진행 정본](planning/delivery-and-validation.md#현재-진행-상태)에 기록한다.
+
+## 2026-10-08 — Claude 갱신 캐시와 새 내장 플러그인의 실행 확인 실패
+
+공식 2.1.293이 모델 목록 캐시와 `additionalModelOptionsAnsweredAt`을 함께 갱신해 권한 변경으로 오판했고 입력 전에 준비를 거절했다. [설정 비교](../packages/local-connector/src/claude/configuration.ts)는 이 캐시 시각만 실행 권한 비교에서 제외한다. 계정·조직·실행 권한·알 수 없는 설정의 변경은 계속 거절한다.
+
+이후 실제 첫 입력의 초기화 응답에는 2.1.293의 새 내장 `cc-plugin-plugin-authoring`이 남아 빈 플러그인 목록 조건을 통과하지 못했다. [작업 정책](../packages/local-connector/src/claude/native-policy.ts)에 이 버전의 내장 플러그인 비활성화만 추가했다. 2.1.288의 설정과 엄격한 초기화 검증은 유지하고 개인 설정 파일은 수정하지 않는다.
+
+실패 입력은 UNKNOWN으로 보존하고 소유 프로세스 종료를 확인했다. 보정 소스·격리 회귀·독립 리뷰는 통과했으며 실제 새 입력 성공으로 표시하지 않는다. 기존 입력 예산과 자동 재시도 금지를 유지한다.
+
+## 2026-10-08 — lease 충돌 경계에서 정확한 중단 요청 누락
+
+중단 요청이 저장된 뒤 lease 갱신이 CONFLICT를 반환하면 실행 감시가 현재 중단 요청을 확인하기 전에 실패할 수 있었다. [실행기](../packages/local-connector/src/workflow-runner.ts)는 로컬 종결이 없는 이 충돌에서만 guarded poll을 수행한다. 현재 실행과 정확히 같은 시도·미만료 lease·REQUESTED 제어를 요구하며 검증된 ACK를 저장한 뒤에만 중단 전달을 확인한다.
+
+다른 요청·시도·만료·거절·ACK 오류는 성공으로 처리하지 않는다. 로컬 종결과 결과 발행 복구도 유지한다. 시계·응답을 고정한 실패 재현과 경계 회귀, 실제 DB·HTTP의 가짜 Claude 도구 중단 검사 및 독립 리뷰를 확인했다. 이 결과를 공식 Claude의 실제 중단 성공으로 해석하지 않는다.
