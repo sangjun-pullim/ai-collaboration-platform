@@ -674,3 +674,41 @@ test(
     });
   },
 );
+
+test(
+  "should confirm one selected source and omit raw entries from its public summary",
+  options,
+  async () => {
+    await workflowCase("source-summary-validation", async (f) => {
+      // Retain the long profile ID that previously overflowed only its display alias.
+      const s = await f.scene("source-reservation-confirmation"),
+        admission = await f.start(s),
+        attempt = await f.run(s.origin, admission.requestId!),
+        source = sourceFixtureManifest(["src/selected.ts"]);
+      assert.equal(source.manifest.readMode, "SELECTED");
+      assert.equal(fixtureSourcePackets(source.bytes, source.manifestHash).length, 1);
+      await uploadFixtureSource(f, s, attempt, source);
+      const confirmation = await sourceDevice(f, s.origin, "source-confirm", {
+        ...sourceAttemptIdentity(attempt),
+        manifestHash: source.manifestHash,
+      });
+      assert.equal(confirmation.status, 200);
+      assert.equal((confirmation.data.data as { state: string }).state, "CONFIRMED");
+      await f.complete(s.origin, attempt);
+      const event = (await f.history(s)).events.find(
+        (entry) => entry.kind === "SPEECH" && entry.requestId === attempt.requestId,
+      );
+      assert.ok(event);
+      const page = await sourceRead(f, s, event.eventId);
+      assert.equal(page.state, "CONFIRMED");
+      assert.equal(page.manifestHash, source.manifestHash);
+      assert.ok(page.summary);
+      assert.equal(page.summary.readMode, "SELECTED");
+      assert.equal(page.summary.fileCount, 1);
+      assert.equal(page.summary.input.files.entryCount, 1);
+      assert.equal(Object.hasOwn(page.summary.input.files, "entries"), false);
+      assert.equal(page.files.length, 1);
+      assert.equal(page.files[0].pathJson, JSON.stringify("src/selected.ts"));
+    });
+  },
+);

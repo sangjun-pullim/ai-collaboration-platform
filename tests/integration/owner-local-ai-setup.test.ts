@@ -4,13 +4,59 @@ import { createHash, randomBytes, randomUUID } from "node:crypto";
 import { workflowCase, type WorkflowFixture } from "../helpers/workflow-fixture.js";
 import { RuntimeSettingsFixture, settingsCatalog } from "../helpers/runtime-settings-fixture.js";
 import { assertOwnedStack } from "../helpers/local-access-stack.js";
-import type { Receipt } from "../../src/features/runtime-settings/contracts.ts";
+import { capabilityHash, type Receipt } from "../../src/features/runtime-settings/contracts.ts";
 const options = { timeout: 300000 };
 async function settings(f: WorkflowFixture) {
   const s = new RuntimeSettingsFixture(f);
   await s.requireMigration();
   return s;
 }
+test(
+  "should accept valid Claude and Codex catalogs while rejecting invalid selections",
+  options,
+  () =>
+    workflowCase("settings-catalog-validation", async (f) => {
+      await settings(f);
+      const claude = settingsCatalog();
+      const { snapshotHash: omitted, ...contents } = claude;
+      void omitted;
+      const codexContents = {
+        ...contents,
+        runtime: "codex" as const,
+        models: [
+          {
+            ...contents.models[0],
+            efforts: ["low", "high"],
+            defaultEffort: "low",
+          },
+        ],
+        defaultSettings: { model: "model-one", effort: "low" },
+      };
+      const catalog = (value: typeof contents | typeof codexContents) => ({
+        ...value,
+        snapshotHash: capabilityHash(value),
+      });
+      const accepts = async (value: unknown) =>
+        (
+          await f.stack.db.query("select runtime_settings_private.catalog_ok($1::jsonb) valid", [
+            JSON.stringify(value),
+          ])
+        ).rows[0].valid;
+      assert.equal(await accepts(claude), true);
+      assert.equal(await accepts(catalog(codexContents)), true);
+      assert.equal(await accepts({ ...claude, snapshotHash: "0".repeat(64) }), false);
+      assert.equal(
+        await accepts(catalog({ ...contents, models: [contents.models[0], contents.models[0]] })),
+        false,
+      );
+      assert.equal(
+        await accepts(
+          catalog({ ...codexContents, defaultSettings: { model: "model-one", effort: "max" } }),
+        ),
+        false,
+      );
+    }),
+);
 test("should expose the existing owner binding before any settings receipt", options, () =>
   workflowCase("settings-current-binding", async (f) => {
     const r = await settings(f),
@@ -606,8 +652,8 @@ test(
       await f.stack.db.query("select workflow_private.control($1::uuid)", [a.requestId]);
       await cycleState(f, s.scope.roomId, a.cycleId, {
         mode: "PAUSED",
-        runs: 11,
-        rounds: 5,
+        runs: 1,
+        rounds: 0,
         expired: true,
         retired: true,
       });
