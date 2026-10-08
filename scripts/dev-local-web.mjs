@@ -160,11 +160,26 @@ export async function localWebEnvironment(
 ) {
   await rejectEnvironmentFiles(directory);
   let database;
-  const checked = await runLocalSettingsUpgrade(false, async (args, input) => {
-    const raw = await execute(args, input);
-    if (args[0] === "inspect") database = JSON.parse(raw);
-    return raw;
-  });
+  let dockerUnavailable = false;
+  let checked;
+  try {
+    checked = await runLocalSettingsUpgrade(false, async (args, input) => {
+      let raw;
+      try {
+        raw = await execute(args, input);
+      } catch (error) {
+        dockerUnavailable =
+          error instanceof WebSetupError && error.code === "LOCAL_DOCKER_UNAVAILABLE";
+        throw error;
+      }
+      if (args[0] === "inspect") database = JSON.parse(raw);
+      return raw;
+    });
+  } catch (error) {
+    // The upgrade module wraps foreign errors; retain only our own safe Docker classification.
+    if (dockerUnavailable) throw new WebSetupError("LOCAL_DOCKER_UNAVAILABLE");
+    throw error;
+  }
   if (!Object.values(checked.features).every(Boolean))
     throw new WebSetupError("DATABASE_FEATURES_MISSING");
   let gateway;

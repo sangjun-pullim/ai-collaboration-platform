@@ -85,7 +85,7 @@ async function fixture(t: TestContext) {
   return f;
 }
 
-async function checkCommand(t: TestContext, failure: boolean) {
+async function checkCommand(t: TestContext, failure: boolean, dockerUnavailable = false) {
   const f = await fixture(t);
   const webRoot = join(f.dir, "web");
   await mkdir(join(webRoot, "scripts"), { recursive: true });
@@ -103,6 +103,10 @@ async function checkCommand(t: TestContext, failure: boolean) {
   const config = failure ? "private-admin-value private-signing-value" : consumerConfig();
   const dockerBody = `#!${process.execPath}
 const args = process.argv.slice(2);
+if (${dockerUnavailable}) {
+  process.stderr.write("private-daemon-diagnostic private-admin-value");
+  process.exit(1);
+}
 if (args[2] === "inspect") {
   process.stdout.write(JSON.stringify(args.at(-1).includes("_db_") ? ${JSON.stringify(f.database)} : ${JSON.stringify(f.gateway)}));
 } else if (args[2] === "exec" && args[4] === "cat") {
@@ -558,3 +562,22 @@ test("should prepare the distribution before starting Next and refuse failed pre
     /build-failed/,
   );
 });
+
+test(
+  "should report Docker unavailability without exposing daemon output or starting Next",
+  { skip: process.platform !== "darwin" },
+  async (t) => {
+    const command = await checkCommand(t, false, true);
+    await assert.rejects(command.run(), (error: Error & { stdout?: string; stderr?: string }) => {
+      assert.equal(error.stdout, "");
+      assert.deepEqual(JSON.parse(error.stderr ?? ""), {
+        status: "BLOCKED",
+        code: "LOCAL_DOCKER_UNAVAILABLE",
+        modelInputs: 0,
+      });
+      assert.ok(!error.stderr?.includes("private-"));
+      return true;
+    });
+    await assert.rejects(readFile(command.marker), { code: "ENOENT" });
+  },
+);
