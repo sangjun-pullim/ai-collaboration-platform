@@ -34,8 +34,10 @@ const builtinPlugins = ["cc-plugin-agents-md@builtin", "cc-plugin-telemetry@buil
 
 /** Native authority is discovered lazily at admission, never supplied by a caller flag. */
 export class NativeClaudePolicy implements ClaudePolicy {
-  readonly version = "2.1.288";
   private installation: NativeClaudeInstallation | undefined;
+  get version() {
+    return this.installation?.version ?? "2.1.288";
+  }
   private layout: NativeLayout | undefined;
   private snapshots: SourceSnapshot[] | undefined;
   private rootIdentity: string | undefined;

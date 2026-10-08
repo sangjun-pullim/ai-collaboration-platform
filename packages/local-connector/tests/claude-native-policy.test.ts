@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import { readFile, symlink, unlink, writeFile } from "node:fs/promises";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
 import { createProviderAdapter } from "../src/provider-adapter.ts";
 import { NativeClaudePolicy } from "../src/claude/native-policy.ts";
 import {
@@ -53,6 +53,48 @@ test("should ignore AGENTS sources while their builtin reader is disabled", asyn
   const policy = new NativeClaudePolicy({});
   await policy.admit(f.root, () => {});
   assert.notEqual(policy.fingerprint, "0".repeat(64));
+});
+
+test("should admit the reviewed updated native version without changing personal files", async (t) => {
+  const f = await nativeFixture(t);
+  const updated = join(dirname(f.executable), "2.1.293");
+  await writeFile(updated, "synthetic updated native bytes; do not execute\n", { mode: 0o700 });
+  await unlink(join(f.home, ".local", "bin", "claude"));
+  await symlink(updated, join(f.home, ".local", "bin", "claude"));
+  f.state.installationVersion = "2.1.293";
+  f.state.version = "2.1.293 (Claude Code)\n";
+  const before = await readFile(f.settingsPath);
+  const policy = new NativeClaudePolicy({});
+  await policy.admit(f.root, () => {});
+  assert.equal(policy.version, "2.1.293");
+  const context = claudeRecord(f.record).context!;
+  context.provider = "claude";
+  context.ownedTurns = [];
+  context.materialization = {
+    state: "RESERVED",
+    version: policy.version,
+    policyFingerprint: policy.fingerprint,
+    initHash: null,
+  };
+  const launch = policy.launch(context, null, nativeToolNames("SELECTED", false), false);
+  assert.equal(launch.executable, updated);
+  assert.equal(launch.args[launch.args.indexOf("--session-id") + 1], context.threadId);
+  assert.deepEqual(await readFile(f.settingsPath), before);
+  assert.equal(fs.realpathSync(join(f.home, ".local", "bin", "claude")), updated);
+});
+
+test("should reject an unreviewed updated native version before probes or model input", async (t) => {
+  const f = await nativeFixture(t);
+  const updated = join(dirname(f.executable), "2.1.294");
+  await writeFile(updated, "synthetic unreviewed bytes; do not execute\n", { mode: 0o700 });
+  await unlink(join(f.home, ".local", "bin", "claude"));
+  await symlink(updated, join(f.home, ".local", "bin", "claude"));
+  const policy = new NativeClaudePolicy({});
+  await assert.rejects(
+    policy.admit(f.root, () => {}),
+    { code: "POLICY_UNCONFIRMED" },
+  );
+  assert.equal(f.probes.length, 0);
 });
 
 for (const failure of [

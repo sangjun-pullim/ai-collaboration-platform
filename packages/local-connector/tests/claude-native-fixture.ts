@@ -40,6 +40,7 @@ export async function nativeFixture(t: TestContext) {
   await writeFile(globalPath, JSON.stringify(global), { mode: 0o600 });
   const state = {
     signature: true,
+    installationVersion: "2.1.288",
     version: "2.1.288 (Claude Code)\n",
     managed: false,
     managedPath: "",
@@ -84,7 +85,7 @@ export async function nativeFixture(t: TestContext) {
     const failed = (message: string) => Object.assign(new Error(message), { code: 1 });
     if (executable === "/usr/bin/codesign") {
       assert.ok(values[3].includes("com.anthropic.claude-code"));
-      assert.equal(values.at(-1), join(versions, "2.1.288"));
+      assert.equal(values.at(-1), join(versions, state.installationVersion));
       if (!state.signature) {
         error = failed("synthetic publisher rejected");
         stderr = "synthetic rejected";
@@ -99,7 +100,7 @@ export async function nativeFixture(t: TestContext) {
           : "Domain com.anthropic.claudecode does not exist";
       }
     } else {
-      assert.equal(executable, join(versions, "2.1.288"));
+      assert.equal(executable, join(versions, state.installationVersion));
       if (values.length === 1 && values[0] === "--version") stdout = state.version;
       else {
         assert.deepEqual(values, ["auth", "status"]);

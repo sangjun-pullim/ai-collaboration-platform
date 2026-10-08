@@ -14,11 +14,12 @@ import { object } from "./owned-history.ts";
 import { assertNoManagedSources } from "./native-sources.ts";
 
 const admitted = new WeakSet<object>();
+const supportedVersions = ["2.1.288", "2.1.293"] as const;
 const publisher =
   'anchor apple generic and identifier "com.anthropic.claude-code" and certificate leaf[subject.OU] = "Q6L2SF6YDW"';
 export interface NativeClaudeInstallation {
   readonly kind: "NATIVE";
-  readonly version: "2.1.288";
+  readonly version: (typeof supportedVersions)[number];
   readonly home: string;
   readonly entry: string;
   readonly entryIdentity: string;
@@ -92,8 +93,10 @@ function installationEntry(home: string) {
   if (!link.isSymbolicLink() || link.uid !== process.getuid?.() || link.nlink !== 1)
     throw unavailable();
   const executable = realpathSync(entry);
-  if (executable !== join(home, ".local", "share", "claude", "versions", "2.1.288"))
-    throw unavailable();
+  const version = supportedVersions.find(
+    (value) => executable === join(home, ".local", "share", "claude", "versions", value),
+  );
+  if (!version) throw unavailable("VERSION");
   installationAncestors(executable, home);
   const stat = lstatSync(executable);
   if (
@@ -104,7 +107,7 @@ function installationEntry(home: string) {
     (stat.mode & 0o022) !== 0
   )
     throw unavailable();
-  return { entry, executable, entryIdentity: fileIdentity(link) };
+  return { entry, executable, entryIdentity: fileIdentity(link), version };
 }
 
 /** Parent-owned provenance only. JSON objects and environment flags cannot authorize a binary. */
@@ -118,6 +121,7 @@ export function assertNativeInstallation(
   const binary = snapshotBinary(current.executable, installation.binary);
   if (
     current.entry !== installation.entry ||
+    current.version !== installation.version ||
     current.entryIdentity !== installation.entryIdentity ||
     current.executable !== installation.executable ||
     binary.identity !== installation.binary.identity ||
@@ -181,7 +185,7 @@ async function verifyInstallation(
       stage = "VERSION";
       if (
         (await probe(current.executable, ["--version"], env, root)).trim() !==
-        "2.1.288 (Claude Code)"
+        `${current.version} (Claude Code)`
       )
         throw unavailable(stage);
     }
@@ -228,7 +232,6 @@ async function verifyInstallation(
     if (prior && accountHash !== prior.accountHash) throw new RuntimeError("SNAPSHOT_CHANGED");
     const installation: NativeClaudeInstallation = Object.freeze({
       kind: "NATIVE",
-      version: "2.1.288",
       home,
       ...current,
       binary: Object.freeze(binary),
