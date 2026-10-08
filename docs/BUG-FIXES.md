@@ -143,7 +143,7 @@ Docker 접근이 거절되어도 웹 준비 명령은 `LOCAL_STACK_UNVERIFIED`�
 
 [웹 실행기](../scripts/dev-local-web.mjs)는 자신의 Docker 실행 함수에서 확인한 고정 오류 분류만 보존한다. 원본 stderr·키·임의 오류 코드는 출력하지 않으며 기존 DB·게이트웨이 확인 순서와 실행 조건을 유지한다.
 
-실제 명령을 실행하는 격리 회귀가 수정 전 실패했고 수정 후 통과했다. Docker 실패의 고정 JSON·비공개 출력 부재·Next 미실행을 확인했다. 관련 검사와 독립 리뷰 결과는 [검증 정본](planning/delivery-and-validation.md#2026-10-08-goal-재개와-실행-환경-확인)에 기록한다. 실제 실행 환경에서도 명령은 `LOCAL_DOCKER_UNAVAILABLE`로 종료했으며 Docker가 꺼졌다는 의미로 해석하지 않는다.
+실제 명령을 실행하는 격리 회귀가 수정 전 실패했고 수정 후 통과했다. Docker 실패의 고정 JSON·비공개 출력 부재·Next 미실행을 확인했다. 관련 검사와 독립 리뷰 결과는 [검증 정본](records/verification-history-20261008.md#2026-10-08-goal-재개와-실행-환경-확인)에 기록한다. 실제 실행 환경에서도 명령은 `LOCAL_DOCKER_UNAVAILABLE`로 종료했으며 Docker가 꺼졌다는 의미로 해석하지 않는다.
 
 ## 2026-10-08 — 설치된 DB의 자료 이력 검사에 업그레이드 검사 포함
 
@@ -151,7 +151,7 @@ Docker 접근이 거절되어도 웹 준비 명령은 `LOCAL_STACK_UNVERIFIED`�
 
 [자료 이력 회귀](../tests/integration/shared-input-source-history.test.ts)는 설치 완료 상태의8개 검사만 유지하고, 기존 업그레이드1개는 [별도 파일](../tests/integration/shared-input-source-upgrade.test.ts)로 옮겼다. 검사 본문·제한 시간·기존 guard·정리 driver는 유지했다. 통합 명령은 설치된 DB의4개 파일을 선택하고 업그레이드 검사는 선택하지 않는다.
 
-검사 선언과 기존 guard를 사용하는 합성 재현에서 잘못된 선택의 실패와 보정 후 제외를 확인했다. 실제 DB 검증의 완료는 주장하지 않는다. 독립 재검토와 원문 보존 근거는 [검증 정본](planning/delivery-and-validation.md#2026-10-08-설정-검증-보완과-커밋)에 기록한다.
+검사 선언과 기존 guard를 사용하는 합성 재현에서 잘못된 선택의 실패와 보정 후 제외를 확인했다. 실제 DB 검증의 완료는 주장하지 않는다. 독립 재검토와 원문 보존 근거는 [검증 정본](records/verification-history-20261008.md#2026-10-08-설정-검증-보완과-커밋)에 기록한다.
 
 ## 2026-10-08 — 실제 설정과 자료 이력의 DB 함수 오류
 
@@ -195,3 +195,18 @@ Docker 접근이 거절되어도 웹 준비 명령은 `LOCAL_STACK_UNVERIFIED`�
 - 원인: 기존 도구 검증은 이전 메타 형식만 허용했고 `rate_limit_event` 처리가 없었다. 첫 보정의 독립 리뷰에서는 입력 접수 기록 저장이 보류된 동안 먼저 도착한 알림을 뒤의 종결 메시지가 봉인하는 경합도 확인했다.
 - 수정: [input-proof.ts](../packages/local-connector/src/claude/input-proof.ts)는 현재 입력에서 이미 확인한 도구 ID·이름·인자와 최신 메타를 대조한다. 기존 메타 호환과 중복 호출 차단을 유지한다. 사용량 알림은 공식 SDK의 알려진 필드를 제한된 비공개 관찰로만 검증한다. [adapter.ts](../packages/local-connector/src/claude/adapter.ts)는 알림을 수신 순서대로 검증한 뒤 입력 접수 기록 저장과 권한 재검사를 기다린다. 종결 이후 알림은 거절하며 알림으로 도구·입력·종결 권한을 만들지 않는다.
 - 검증: 실제 메시지의 읽기 전용 재생과 도구·형식·순서·입력 접수 기록 실패의 회귀를 확인했다. 독립 리뷰1의 HIGH1건을 수정했고 리뷰2는 C0/H0/M0/L0/INFO1로 통과했다. 실제 정상 답변·동일 대화 재개·중단은 별도 수용이다. 기존 `UNKNOWN`5개와 예산·승인·실행 기록은 보존한다.
+
+## 2026-10-08 — Claude 자동 업데이트 이후 검증 버전 선택
+
+개인 CLI 링크가 지원 범위 밖 버전으로 자동 업데이트되면 이미 설치된 검증 버전도 선택하지 못해 입력 전에 연결이 거절됐다. [설치 선택](../packages/local-connector/src/claude/native-installation.ts)은 지원되는 현재 버전을 우선하고, 미지원 현재 링크에서는 같은 개인 설치의 검증된 지원 버전을 선택한다. 개인 링크·설정은 바꾸지 않으며 선택한 실행 파일의 소유권·서명·해시·변경 검사는 유지한다. 실패 재현·관련 회귀·독립 리뷰를 통과했다.
+
+## 2026-10-08 — Claude 대화의 보조 기록 대조
+
+2.1.293의 실제 native JSONL에는 대화 외에도 입력 queue·환경·개인 지침·사용량 보조 기록이 저장된다. 이를 모르는 형식으로 거절해 typed 정상 완료 뒤 후속 대화를 차단했다. [보조 기록 검증](../packages/local-connector/src/claude/native-history-records.ts)을 분리하고 queue 짝·입력 본문 hash·부모 UUID·소유 세션과 알려진 형식만 검증한다. 전체 prefix hash·실시간 대화·실제 도구 반환 대조는 유지한다. 기존 미확인 보고는 보존하고 원래 typed 완료·저장 대화의 읽기 전용 재대조로 확인된 결과를 별도 기록한다. 실패 재현·관련 회귀·독립 리뷰를 통과했다.
+
+## 2026-10-08 — Claude 중단의 공식 MCP 알림과 native 취소 기록 거절
+
+- 현상: 실제 읽기 대기에서 중단하면 공식 `notifications/cancelled` 알림에 JSON-RPC 요청 `id`가 없어 처리기가 UNKNOWN으로 끝났다. typed result가 없는 원래 실행은 미확정으로 보존했다.
+- 수정: [input-proof.ts](../packages/local-connector/src/claude/input-proof.ts)와 [adapter.ts](../packages/local-connector/src/claude/adapter.ts)는 취소할 요청 번호를 이미 확인한 입력·도구·내구 중단에 연결한다. 종결 수신 전의 소유 읽기만 취소하고 늦은 도구 응답은 보내지 않는다. [native-interruption-records.ts](../packages/local-connector/src/claude/native-interruption-records.ts)는 native 취소 설명을 입력·읽기·종결을 만들지 않는 보조 기록으로 분리한다. 원본 전체 이력 해시는 유지한다.
+- 리뷰 보정: 첫 독립 리뷰에서 종결 수신 뒤 취소가 내구 증거에 추가되는 경합을 확인했다. 진입과 ACK 저장 대기 뒤 모두 차단하고 실패 재현 회귀를 통과시켰다. 두 번째 독립 소스 리뷰에서 해소를 확인했다.
+- 검증: 신규 경계·adapter 재접속 회귀와 전체 연결기·타입·lint·format/check를 통과했다. 수치와 실제 중단의 남은 조건은 [개발·검증 상태](planning/delivery-and-validation.md#현재-진행-상태)에 유지한다. 이 소스 검증을 실제 INTERRUPTED 수용으로 표시하지 않는다.

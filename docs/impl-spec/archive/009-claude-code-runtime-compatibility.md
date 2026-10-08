@@ -1,5 +1,5 @@
 ---
-status: active
+status: "superseded-by: 030"
 date: 2026-10-02
 risk-surface: auth, permission
 ---
@@ -9,7 +9,7 @@ risk-surface: auth, permission
 
 ## Context
 
-[PRD](../PRD.md)의 Claude 지원을 웹 모델 선택보다 먼저 검증한다. 동료 대부분이 macOS에서 Claude를 사용하고, 두 번째 PC도 Claude만 사용할 수 있다. 먼저 공식 로컬 실행의 권한·저장 맥락·질문 도구·종결을 확인한다. 서버 등록과 실제 두 PC 왕복은 다음 구현 단위다.
+[PRD](../../PRD.md)의 Claude 지원을 웹 모델 선택보다 먼저 검증한다. 동료 대부분이 macOS에서 Claude를 사용하고, 두 번째 PC도 Claude만 사용할 수 있다. 먼저 공식 로컬 실행의 권한·저장 맥락·질문 도구·종결을 확인한다. 서버 등록과 실제 두 PC 왕복은 다음 구현 단위다.
 
 기존 Codex 실험의 `thread/start` 계약을 Claude에 복사하지 않는다. 신규 독립 실험에서 공식 비변조 Claude Code를 직접 실행한다. 사용자는 기존 공식 CLI 로그인으로 인증하며 제품이 인증 토큰을 읽거나 전달하지 않는다. 최초 조사는 CLI 2.1.286과 SDK 0.3.286의 공개 타입을 기준으로 했다. 2026-10-02 실행 전 실제 설치 버전이 2.1.287로 변경되어 공식 SDK 0.3.287의 타입을 추가 대조한다. SDK를 실행하거나 자체 로그인 화면을 제공하지 않는다. 버전이 달라지면 호환성 근거를 다시 확인한다.
 
@@ -47,7 +47,7 @@ risk-surface: auth, permission
 - host의 UUID 예약, native 초기화 확인, native 이력 생성, 입력 ACK, typed 종결을 별도 상태로 기록한다. host 파일의 존재를 native 세션 생성으로 표시하지 않는다.
 - 개인·기존 세션을 탐색하거나 임의 ID를 재개하지 않는다. 부분 실행·UNKNOWN은 보존하고 자동 재시도하지 않는다.
 
-> Step 1 검증: 내구 기록·단일 입력·공유 예산의 합성 검사와 독립 보정 리뷰를 통과했다. supervisor가 고정 상한의 실제 승인 예산 하나를 만들었다. 현재 소비와 실행 허가·관찰 결과는 [진행 상태](../planning/delivery-and-validation.md#현재-진행-상태)에 유지하며 host 예약과 실제 native 생성은 구분한다.
+> Step 1 검증: 내구 기록·단일 입력·공유 예산의 합성 검사와 독립 보정 리뷰를 통과했다. supervisor가 고정 상한의 실제 승인 예산 하나를 만들었다. 현재 소비와 실행 허가·관찰 결과는 [진행 상태](../../planning/delivery-and-validation.md#현재-진행-상태)에 유지하며 host 예약과 실제 native 생성은 구분한다.
 
 ### [ ] Step 2: 개인 설정을 유지하는 실행 제한
 **File**: `src/task-policy.ts`, `src/native-transport.ts`
@@ -90,7 +90,7 @@ risk-surface: auth, permission
 - 구체적인 사용자 결정 기록과 검토한 드라이버·원래 UNKNOWN/슬롯의 hash를 실행 permit에 결합한다. 사용자의 “이 프로그램의 의도대로 동작되게 해줘”를 앞서 제시한 후속안의 진행 지시로 기록하고 해당 범위만 실행했다. 선택지 클릭을 받았다고 기록하지 않는다. 실행 중 이전 UNKNOWN과 첫 슬롯의 불변 조건을 확인했다.
 - 이 안에는 실제 interrupt 입력이 없다. 실제 중단, 공개 CLI의 native 실행 허용, 제품 adapter와 두 PC 지원은 별도의 미완료 범위로 유지한다. 앞 항목의 자동 재시도 금지는 계속 적용한다.
 
-> 후속 실행 관찰: 새 합성 저장소의 첫 입력 전송 뒤 native 시작 응답에 기본 활성화된 내장 plugin 두 개가 포함되어 엄격한 시작 검사가 `NATIVE_IDENTITY`로 거절했다. 입력 ACK·assistant·도구·typed 종결은 확인하지 못했고 재개 단계는 실행하지 않았다. 원래 UNKNOWN/첫 슬롯, 새 UNKNOWN/두 번째 슬롯을 보존하고 소유 child REAPED와 개인 설정 hash 불변을 확인했다. 실행 permit은 다시 FALSE로 종료했다. 공식 소스에서 두 내장 plugin의 작업별 설정 키를 확인했으며, 빈 plugin 조건을 완화하지 않고 시작 설정을 보정한다. 최신 수치는 [개발·검증 상태](../planning/delivery-and-validation.md#현재-진행-상태)에 유지한다.
+> 후속 실행 관찰: 새 합성 저장소의 첫 입력 전송 뒤 native 시작 응답에 기본 활성화된 내장 plugin 두 개가 포함되어 엄격한 시작 검사가 `NATIVE_IDENTITY`로 거절했다. 입력 ACK·assistant·도구·typed 종결은 확인하지 못했고 재개 단계는 실행하지 않았다. 원래 UNKNOWN/첫 슬롯, 새 UNKNOWN/두 번째 슬롯을 보존하고 소유 child REAPED와 개인 설정 hash 불변을 확인했다. 실행 permit은 다시 FALSE로 종료했다. 공식 소스에서 두 내장 plugin의 작업별 설정 키를 확인했으며, 빈 plugin 조건을 완화하지 않고 시작 설정을 보정한다. 최신 수치는 [개발·검증 상태](../../planning/delivery-and-validation.md#현재-진행-상태)에 유지한다.
 
 ### [ ] Step 5: 호환성 판정과 다음 provider 계약
 **File**: `README.md`, `../../docs/planning/delivery-and-validation.md`, `../../docs/research/ai-runtime-integration.md`
@@ -119,7 +119,7 @@ risk-surface: auth, permission
 
 ## Risks
 
-- 공식 CLI 직접 로그인과 제품의 구독 인증 제공은 조건이 다르다. 이 실험은 개인의 native 인증을 사용한다. 범용 제품 배포의 적격성은 [AI 연동](../research/ai-runtime-integration.md)의 조건과 별도로 판단한다.
+- 공식 CLI 직접 로그인과 제품의 구독 인증 제공은 조건이 다르다. 이 실험은 개인의 native 인증을 사용한다. 범용 제품 배포의 적격성은 [AI 연동](../../research/ai-runtime-integration.md)의 조건과 별도로 판단한다.
 - CLI/SDK control 필드는 버전별로 달라질 수 있다. 명시적 관찰과 constructor-only 합성 transport를 사용하고 확인되지 않은 필드는 성공으로 해석하지 않는다.
 - managed 필수 설정과 공동 조사 제한이 양립하지 않으면 제한을 제거하지 않는다. native 실행 전에 원인과 필요한 정책 변경 주체를 보고한다.
 - native 도구 callback과 입력의 연결, 무입력 저장, typed 중단이 미지원이면 제품 provider 계약의 변경이 필요할 수 있다. 이 단계에서 서버·runner를 먼저 확대하지 않는다.
@@ -160,7 +160,7 @@ risk-surface: auth, permission
 
 private 검증 드라이버에 `system/thinking_tokens` 상태 정보와 소유한 보류 파일 callback의 `control_cancel_request` 해석을 적용했다. 정상 진행 알림은 개수와 마지막 값만 보관한다. 형식·입력 UUID가 맞지 않는 알림은 기존 private 원문 상한 안에 보존하고 같은 거절 오류를 유지한다. 취소 정보는 같은 활성 입력에서 실제 연결된 소유 도구 요청에만 적용하며, 도구 결과나 typed 종결로 사용하지 않는다.
 
-실제 transport·엄격한 입력/도구 proof·정리·내구 저장을 합성 Node 실행기의 stdio에 연결했다. 정상 도구→같은 ID 재개→보류 callback의 취소·중단 종결·정리와, 종결 유실·외부 취소·신호 중단·저장 실패의 UNKNOWN/슬롯 보존을 검사했다. 신호 검사에는 중단 함수의 전달 지점을 사용하며 실제 OS 신호나 native 이력의 재개를 입증하지 않는다. 모든 실패를 허용하던 음성 검사는 각 원인의 정확한 코드와 다음 입력 차단 사유를 확인하도록 보정했다. 독립 구현 재검토의 차단 지적은 없으며 현재 수치는 [진행 정본](../planning/delivery-and-validation.md#현재-진행-상태)에 유지한다.
+실제 transport·엄격한 입력/도구 proof·정리·내구 저장을 합성 Node 실행기의 stdio에 연결했다. 정상 도구→같은 ID 재개→보류 callback의 취소·중단 종결·정리와, 종결 유실·외부 취소·신호 중단·저장 실패의 UNKNOWN/슬롯 보존을 검사했다. 신호 검사에는 중단 함수의 전달 지점을 사용하며 실제 OS 신호나 native 이력의 재개를 입증하지 않는다. 모든 실패를 허용하던 음성 검사는 각 원인의 정확한 코드와 다음 입력 차단 사유를 확인하도록 보정했다. 독립 구현 재검토의 차단 지적은 없으며 현재 수치는 [진행 정본](../../planning/delivery-and-validation.md#현재-진행-상태)에 유지한다.
 
 검토한 추가안은 원래 세 UNKNOWN·종결 없음·소비 슬롯·승인/예산/설정 hash를 유지한 별도 최대 3회다. 새 합성 저장소의 정상 도구 입력 1회, 완전한 정리 뒤 같은 native ID의 새 프로세스 재개 1회, 보류 파일 callback에서 중단 확인 1회로 구성한다. 전체 직접 입력의 최대 합계는 6회다. 하나라도 미확인·저장/정리 오류가 있으면 다음 입력을 만들지 않는다. 원래 예산을 변경하거나 이전 UNKNOWN을 재전송하지 않는다.
 
@@ -169,9 +169,9 @@ private 검증 드라이버에 `system/thinking_tokens` 상태 정보와 소유�
 
 #### 공개 보정 뒤 실제 검사 준비 참조 갱신
 
-[공개 프로토콜 보정](archive/018-claude-runtime-protocol.md)을 완료하면서 TaskPolicy의 컴파일 hash가 달라졌다. 원래 준비안과 실제 입력 기록은 고정하고, 별도 준비 파일에서 현재 코드 hash와 permit·사용자 결정·추가 승인·단회 예약·최종 저장의 파일 참조를 갱신했다. 도구 실행·같은 대화 재개·보류 파일 중단의 제어 흐름과 기존 입력 증명·정리·저장 계약은 유지한다.
+[공개 프로토콜 보정](018-claude-runtime-protocol.md)을 완료하면서 TaskPolicy의 컴파일 hash가 달라졌다. 원래 준비안과 실제 입력 기록은 고정하고, 별도 준비 파일에서 현재 코드 hash와 permit·사용자 결정·추가 승인·단회 예약·최종 저장의 파일 참조를 갱신했다. 도구 실행·같은 대화 재개·보류 파일 중단의 제어 흐름과 기존 입력 증명·정리·저장 계약은 유지한다.
 
-변경 대상의 격리 검사를 새로 실행하고 새 독립 리뷰를 통과했다. 변경 없는 검증 모듈과 공개 TaskPolicy의 기존 리뷰는 hash가 같은 범위에서 재사용했다. 검증 수치와 현재 준비 상태는 [진행 정본](../planning/delivery-and-validation.md#현재-진행-상태)에 유지한다.
+변경 대상의 격리 검사를 새로 실행하고 새 독립 리뷰를 통과했다. 변경 없는 검증 모듈과 공개 TaskPolicy의 기존 리뷰는 hash가 같은 범위에서 재사용했다. 검증 수치와 현재 준비 상태는 [진행 정본](../../planning/delivery-and-validation.md#현재-진행-상태)에 유지한다.
 
 현재 준비 파일도 실행 허가는 FALSE이며 사용자 결정·새 승인/예산·root·state·단회 예약은 생성하지 않았다. 이 참조 갱신은 추가 실제 입력 승인이나 실제 Claude·두 PC 수용을 만들지 않는다. 원래 세 UNKNOWN과 입력 상한·기록을 보존하고, 위에 정한 추가 실제 입력의 명시적 확인 조건을 유지한다.
 
@@ -189,4 +189,4 @@ private 검증 드라이버에 `system/thinking_tokens` 상태 정보와 소유�
 
 첫 시도는 캐시 시각 갱신을 권한 변경으로 오판해 입력 전 중지했다. 입력0·모델 목록 프로세스 REAPED와 원본 기록을 확인한 뒤 원인을 보정했다. 다음 실행의 첫 입력1개는 새 내장 플러그인이 초기화 응답에 남아 UNKNOWN으로 종료됐다. 입력 ACK·도구·정상 답변은 확인하지 못했다. 다음 입력 자동 실행0과 소유 프로세스 REAPED를 확인했다. 원본 예산·슬롯·session·lock·private 감사 기록을 변경하지 않았다.
 
-버전별 임시 플러그인 제한과 캐시 시각 비교 보정은 격리 회귀·새 독립 리뷰를 통과했다. 추가 실행 묶음은 아직 승인된 것으로 처리하지 않는다. 기존 전체 상한6과 UNKNOWN 후 자동 새 입력 금지는 유지하고, 보정한 실제 답변·재개·중단의 수용은 [030](030-native-claude-chat-and-follow-up.md)과 [개발·검증 상태](../planning/delivery-and-validation.md#현재-진행-상태)에서 이어간다.
+버전별 임시 플러그인 제한과 캐시 시각 비교 보정은 격리 회귀·새 독립 리뷰를 통과했다. 추가 실행 묶음은 아직 승인된 것으로 처리하지 않는다. 기존 전체 상한6과 UNKNOWN 후 자동 새 입력 금지는 유지하고, 보정한 실제 답변·재개·중단의 수용은 [030](../030-native-claude-chat-and-follow-up.md)과 [개발·검증 상태](../../planning/delivery-and-validation.md#현재-진행-상태)에서 이어간다.

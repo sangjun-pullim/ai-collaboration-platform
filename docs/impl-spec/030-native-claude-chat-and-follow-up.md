@@ -22,7 +22,7 @@ risk-surface: auth, permission
 1. 신규 `packages/local-connector/src/claude/native-installation.ts` — macOS 공식 설치 발견, 실행 파일 identity·지원 버전·게시자·읽기 전용 로그인 상태 검증, 실제 설정 위치와 managed source 확인.
 2. 신규 `packages/local-connector/src/claude/{native-policy,native-sources}.ts`, 기존 `configuration.ts` — 공식 admission·설정 발견과 작업별 제한을 분리한다. 실행 파일을 제한된 크기로 해시하고 정확한 owned transcript와 UUID resume를 제공한다. 기존 합성 `launch-policy.ts`는 변경하지 않는다.
 3. `packages/local-connector/src/provider-adapter.ts` — 세 운영 호출자가 공유하는 factory에 기본 native 정책 공급. 합성 constructor seam과 catalog 차단은 유지.
-4. 신규 `packages/local-connector/src/claude/native-history-proof.ts`, `claude/{adapter,owned-history,history-proof}.ts` — native JSONL 전용 검증·체크포인트와 실시간 typed result 연결. 기존 합성 stream 이력 증명은 보존.
+4. 신규 `packages/local-connector/src/claude/{native-history-proof,native-interruption-records}.ts`, `claude/{adapter,input-proof,owned-history,history-proof}.ts` — native JSONL 전용 검증·체크포인트와 실시간 typed result 연결. 기존 합성 stream 이력 증명은 보존.
 5. `packages/local-connector/src/{runtime-contracts,runtime-store,workflow-runner}.ts` — Claude 전용 선택적 native 이력 체크포인트를 정상 완료 입력에 내구 저장하고 보관 뒤에도 재개에 사용. Codex v1과 기존 Claude 증거의 호환을 유지.
 6. 관련 connector 테스트·fixture와 `docs/{README,PRD,ARCHITECTURE,BUSINESS-LOGIC}.md`, `docs/guides/onboarding-and-settings.md`, `docs/research/ai-runtime-integration.md`, `docs/planning/{delivery-and-validation,decisions-and-open-items}.md` — 회귀 검사, 기본 채팅의 완료 조건과 실제 미검증 조건 정리.
 
@@ -76,7 +76,7 @@ risk-surface: auth, permission
 
 **File**: 격리 검증 산출물, 실제 실행의 준비 기록
 
-개발 도구 환경의 입력 없는 기본 admission은 `POLICY_UNCONFIRMED`, `stage: PUBLISHER`로 종료됐다. 원본 실패는 보존한다. 2026-10-07 사용자 Mac 터미널의 [연결 확인 절차](../guides/onboarding-and-settings.md#claude-연결-확인)에서 `VERIFIED`, 버전 `2.1.288`, AI 입력 `0`이라는 응답을 전달받았다. 이 사용자 보고는 설치·로그인·설정 점검의 통과이며 실제 답변·재개·중단과 native 이력 쓰기는 아직 검증하지 않았다. 2026-10-08 환경 전환 후 공식 2.1.293의 설치·모델 목록과 소유 프로세스 종료를 확인했다. 캐시 시각 갱신의 오판을 보정한 뒤 추가 첫 입력1개가 새 내장 플러그인 초기화 조건에서 UNKNOWN이 됐다. 실패 기록·예산·lock과 소유 프로세스 REAPED를 보존했다. 해당 버전의 임시 플러그인 제한·격리 회귀·독립 리뷰는 PASS였다. 새 검증 승인과 실행 준비의 독립 리뷰 뒤 첫 입력에서 공식 초기화·입력 ACK·파일 읽기 요청을 확인했으나 최신 도구 metadata 형식에서 UNKNOWN이 됐다. 기록을 보존하고 다음 입력0으로 중지했다. 도구 metadata·사용량 알림·동시 수신의 회귀를 보정했고 새 독립 리뷰2를 통과했다. 실제 답변·재개·중단 수용은 아직 남아 있어 이 Step은 `[ ]`로 둔다. 실행 환경의 조건이며 개인 설명·방향 수정·추가 사용자 결정 때문에 기본 채팅을 멈추는 조건이 아니다.
+2026-10-08 같은 승인 묶음의 첫 정상 답변과 같은 UUID의 후속 답변은 실제 typed COMPLETED·도구·이력 대조·REAPED와 독립 리뷰를 통과했다. 보조 기록 형식 때문에 driver가 남겼던 원래 UNKNOWN은 불변 보존하고 검증된 상태만 별도 projection에 연결했다. 세 번째 중단 입력은 공식 MCP 취소 알림 뒤 typed result가 없어 UNKNOWN이다. 입력3/3과 누적상한8을 소비했으며 다음 실제 입력은 자동 실행하지 않는다. 보정 소스·회귀·독립 리뷰는 통과했지만 실제 중단 수용과 종료 검토가 남아 Step4는 `[ ]`다. 구체적 증거와 현재 입력 승인 상태는 [진행 정본](../planning/delivery-and-validation.md#현재-진행-상태)을 따른다.
 
 - 최종 소스·설치 identity·공식 프로토콜·정확한 설정/이력 위치·합성 root/state·기존 승인·입력 예산과 소유 정리 조건을 묶어 독립 리뷰를 받는다.
 - 현재 환경에서 서명·이력 쓰기·개인 설정 보존을 확인할 수 있는지 실제 결과로 판단한다. 도구의 제한을 외부 터미널·새 프로필·권한 확대·토큰 복사로 우회하지 않는다.
@@ -93,6 +93,9 @@ risk-surface: auth, permission
 - 실제 수용을 포함한 이 계획의 모든 항목이 완료된 경우에만 done/archive로 옮긴다.
 
 ## Tests
+
+- `claude-mcp-cancellation.test.ts` — 소유 입력의 typed MCP ID·내구 중단과 cancellation 결합, 다른 입력·반복·늦은 취소와 ACK 경합 차단.
+- `claude-native-interruption.test.ts` — 취소 설명은 종결·읽기 권한이 아닌 보조 기록이며 typed interruption과 같은 도구의 내구 취소에 결합한다. 실제형 adapter의 checkpoint·소유 종료·재접속을 격리 검사한다.
 
 - `should admit a verified native Claude installation through the default factory` — 공식/합성 분리, 기본 경로의 실제 정책 공급.
 - `should reject unverified installation, publisher, version, managed sources and account changes before model input` — 위조 객체·설치 교체·미지원 managed/login·다른 config·새 source/command helper·drift.
@@ -130,6 +133,7 @@ risk-surface: auth, permission
 | 대화 기록을 끄는 설정이 후속 질문을 차단함 | HIGH | ACCEPTED | 작업 env·overlay에서 기록을 켜고 같은 UUID resume 인자를 유지한다. 개인 파일은 바꾸지 않는다. |
 | 실행 파일 상위 디렉터리의 교체가 가능함 | HIGH | ACCEPTED | 전체 상위 경로의 소유권·쓰기 권한을 admission과 재검증에서 확인한다. private 경로는 본인 소유를 요구하고 외부 root-owned sticky 시스템 디렉터리의 조건을 명시한다. |
 | 입력 접수 기록 저장 중 동시 수신한 알림이 뒤 종결의 봉인을 먼저 봄 | HIGH | ACCEPTED | 최신 CLI 메시지 보정의 독립 리뷰1에서 확인했다. 사용량 알림만 수신 즉시 검증하고 내구 기록 저장·권한 재검사를 기다리도록 보정했다. 실제로 늦게 도착한 알림은 거절하며 새 독립 리뷰2에서 해소를 확인했다. |
+| 종결 수신 뒤 도착한 native MCP 취소가 내구 종결 증거를 늘릴 수 있음 | HIGH | ACCEPTED | 수신 진입과 ACK 저장 대기 뒤 terminalReceived를 검사하고 두 경합의 실패 재현을 보정했다. 별도 소스 리뷰2에서 해소를 확인했다. |
 
 ### 2026-10-08 최신 CLI 메시지 보정
 

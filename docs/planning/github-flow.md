@@ -27,14 +27,14 @@
 | [2 · 문서 정리](https://github.com/sangjun-pullim/ai-collaboration-platform/pull/2) | `88db6862b9e29f4fdce17d9c8f280e4b8e7ef555` | `2066e12612f48dcbcd260426f62b59db3d9e9329` |
 | [3 · 채팅 화면과 회사 코드 입장](https://github.com/sangjun-pullim/ai-collaboration-platform/pull/3) | `782c3b3cb33751934d4d62b656eeac42707e0802` | `7a26120b73cb4de88170d1aadb5368be1968d322` |
 
-각 tip이 `origin/main`의 조상임을 확인했다. 완료된 `chore/implementation-baseline`, `docs/organize-project-docs`는 로컬·원격에서 정리했다. 로컬 `main`과 `origin/main`은 세 번째 병합 커밋을 가리킨다.
+각 tip이 `origin/main`의 조상임을 확인했다. 완료된 `chore/implementation-baseline`, `docs/organize-project-docs`는 로컬·원격에서 정리했다. 이 전환 시점의 로컬 `main`과 `origin/main`은 세 번째 병합 커밋을 가리켰다. 최신 병합 상태는 아래 PR의 GitHub 기록으로 확인한다.
 
 ## 현재 작업 브랜치
 
-로컬 AI 설정·Claude·폴더 탐색·자료 이력·명령 한 번 연결은 `feat/local-ai-chat-20261008`에서 이어간다. 검토된 main을 이 브랜치에 병합한 커밋은 `671760ee264d64f0c7462ec37953bf7c2152dbb2`다. [PR4](https://github.com/sangjun-pullim/ai-collaboration-platform/pull/4)는 main 대상 draft이며 실제 검증과 보정을 포함한다. 완료된 세 PR의 고정 범위에 후속 변경을 추가하지 않았다.
+로컬 AI 설정·Claude·폴더 탐색·자료 이력·명령 한 번 연결은 `feat/local-ai-chat-20261008`과 [PR4](https://github.com/sangjun-pullim/ai-collaboration-platform/pull/4)에서 검토한다. 검토된 main을 작업 브랜치에 병합한 커밋은 `671760ee264d64f0c7462ec37953bf7c2152dbb2`다. 이후 보정도 같은 작업 브랜치에 기록하고 필수 검사·리뷰 뒤 기존 사용자 승인으로 정상 병합한다. 실제 최신 open/draft/merged 상태와 병합 커밋은 PR의 GitHub 기록을 기준으로 확인한다. 완료된 세 PR의 고정 범위에 후속 변경을 추가하지 않았다.
 
 `feat/chat-first-experience`의 로컬 tip에는 아직 main에 포함되지 않은 후속 변경이 있다. 이 브랜치는 포함 관계 확인 전까지 유지한다. `feat/team-code-entry`는 별도 worktree에서 사용 중이며 그곳의 사용자 변경을 보존한다. 다른 worktree나 미병합 tip을 현재 작업 정리의 대상으로 삭제하지 않는다.
 
-PR4의 필수 검사·리뷰와 준비된 변경을 확인한 뒤 기존 사용자 요청에 따라 병합한다. 실제 Claude 답변·같은 대화 재개·중단, 두 Mac 수용과 제품 배포의 완료는 코드 병합과 별도로 판정한다. 병합한 현재 기능과 남은 수용은 [개발·검증 상태](delivery-and-validation.md#현재-진행-상태)에서 확인한다. 새 작업은 이 전환 작업을 끝낸 뒤 최신 `origin/main`에서 짧은 브랜치로 시작한다.
+PR4의 필수 검사·리뷰와 준비된 변경을 확인한 뒤 기존 사용자 요청에 따라 병합한다. 실제 Claude 수용, 두 Mac 검증과 제품 배포의 완료는 코드 병합과 별도로 판정한다. 병합한 현재 기능과 남은 수용은 [개발·검증 상태](delivery-and-validation.md#현재-진행-상태)에서 확인한다. 새 작업은 이 전환 작업을 끝낸 뒤 최신 `origin/main`에서 짧은 브랜치로 시작한다.
 
-환경 전환 전의 Git·GitHub 접근 실패는 [과거 실행 기록](delivery-and-validation.md#2026-10-08-goal-재개와-실행-환경-확인)에 남겼다. 현재 실행 환경에서는 정상 커밋·push·PR 생성·main 병합을 실제로 확인했다. GitHub Flow 전환이 Claude 입력 예산이나 UNKNOWN 실행의 재시도 제한을 변경하지는 않는다.
+환경 전환 전의 Git·GitHub 접근 실패는 [과거 실행 기록](../records/verification-history-20261008.md#2026-10-08-goal-재개와-실행-환경-확인)에 남겼다. 현재 실행 환경에서는 정상 커밋·push·PR 생성·main 병합을 실제로 확인했다. GitHub Flow 전환이 Claude 입력 예산이나 UNKNOWN 실행의 재시도 제한을 변경하지는 않는다.

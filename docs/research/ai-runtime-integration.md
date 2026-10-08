@@ -74,7 +74,7 @@ interface AgentRuntime {
 
 ### Claude native 상태 정보와 실행 증거
 
-[009의 공식 CLI 관찰](../impl-spec/009-claude-code-runtime-compatibility.md#review-notes)에서 `command_lifecycle`은 입력 명령의 상태 정보다. `command_uuid`는 보낸 입력 UUID이고 `queued`, `started`, `completed`, `cancelled`, `discarded`, `refused`를 사용한다. 같은 예약 session과 입력의 정보만 읽고 원문 대신 hash를 기록한다. 이 이벤트로 도구 권한을 열거나 입력 ACK·typed 종결을 확정하지 않는다. `completed`나 `cancelled`라는 이름만으로 다음 입력을 만들지 않는다.
+[009의 공식 CLI 관찰](../impl-spec/archive/009-claude-code-runtime-compatibility.md#review-notes)에서 `command_lifecycle`은 입력 명령의 상태 정보다. `command_uuid`는 보낸 입력 UUID이고 `queued`, `started`, `completed`, `cancelled`, `discarded`, `refused`를 사용한다. 같은 예약 session과 입력의 정보만 읽고 원문 대신 hash를 기록한다. 이 이벤트로 도구 권한을 열거나 입력 ACK·typed 종결을 확정하지 않는다. `completed`나 `cancelled`라는 이름만으로 다음 입력을 만들지 않는다.
 
 예약한 native UUID의 이력 파일 생성과 같은 입력 UUID·본문 hash의 사용자 기록은 저장 사실이다. 초기화가 보고한 ID·cwd, 입력 echo ACK, assistant tool-use, MCP dispatch, typed result는 각각 별도 증거다. 파일이 생성되어도 실제 답변·재개·중단을 확인하지 못하면 실행을 `UNKNOWN`으로 보존한다. 현재 판정과 다음 실제 검사 조건은 [진행 상태](../planning/delivery-and-validation.md#현재-진행-상태)를 따른다.
 

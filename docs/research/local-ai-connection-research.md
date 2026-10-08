@@ -91,7 +91,7 @@ Chrome은 공용 웹에서 loopback/로컬 네트워크로 보내는 요청에 �
 
 ## Claude의 연결 지점
 
-[009 계획](../impl-spec/009-claude-code-runtime-compatibility.md)은 공식 비변조 Claude Code를 직접 실행하는 독립 호환성 검사를 정의한다. 기존 로컬 로그인과 개인 설정을 유지하며 native 저장·재개·도구·중단의 차이를 먼저 확인한다. 계획의 리뷰 통과는 실제 Claude 연결 완료 증거가 아니다.
+[009 계획](../impl-spec/archive/009-claude-code-runtime-compatibility.md)은 공식 비변조 Claude Code를 직접 실행하는 독립 호환성 검사를 정의한다. 기존 로컬 로그인과 개인 설정을 유지하며 native 저장·재개·도구·중단의 차이를 먼저 확인한다. 계획의 리뷰 통과는 실제 Claude 연결 완료 증거가 아니다.
 
 Agent SDK는 connector가 운영하는 프로세스에서 Claude Code 실행을 관리하는 후보다. 공식 문서에서 cwd·저장 session 조회·resume·fork·stream·interrupt 경로를 확인할 수 있다. 개인 지침과 설정의 로딩 범위도 검증해야 하며 원래 앱과 동일한 도구·개인 맥락이 보존된다고 자동 표시하지 않는다. [SDK 근거](sources.md#s5), [설정 근거](sources.md#s14)
 

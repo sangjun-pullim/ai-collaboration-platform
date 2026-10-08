@@ -13,7 +13,7 @@ risk-surface: auth, permission, db-schema, public-api
 
 기존 대상 답변 요청인 `PEER`를 재사용한다. 이는 답변 실행의 종류이며 발신자가 AI라는 뜻으로 사용하지 않는다. 사람 질문은 실제 HUMAN 발신자와 별도 질문 원천으로 저장한다. 가짜 origin binding·run·native session을 만들지 않는다. 기존 `PEER` payload·claim·terminal receipt의 정확한 형태를 유지하면 로컬 실행기와 과거 저널을 재사용할 수 있다. `WorkflowRunner.performTool`의 PEER 질문 재귀 차단과 Codex의 PEER 지침도 유지한다.
 
-현재 계약과 provider는 Codex다. 승인된 [009](../009-claude-code-runtime-compatibility.md)의 공식 Claude 호환성 검사를 병행하고, Claude 제품 adapter·등록 계약은 그 결과를 반영한 별도 작은 명세에서 연결한다. 이 단계 성공을 Claude나 실제 두 PC 완료로 확대하지 않는다. 모델 catalog·다자 대기열·개인 설명·Realtime·파일 수정은 포함하지 않는다.
+현재 계약과 provider는 Codex다. 승인된 [009](009-claude-code-runtime-compatibility.md)의 공식 Claude 호환성 검사를 병행하고, Claude 제품 adapter·등록 계약은 그 결과를 반영한 별도 작은 명세에서 연결한다. 이 단계 성공을 Claude나 실제 두 PC 완료로 확대하지 않는다. 모델 catalog·다자 대기열·개인 설명·Realtime·파일 수정은 포함하지 않는다.
 
 한 방의 현재 작업 하나와 실행/UNKNOWN 충돌 차단을 유지한다. 준비된 상대 연결이 정확히 하나일 때만 기본 대상으로 지정한다. 여러 연결이면 명시적으로 선택한다. 직접 질문은 한 번의 대상 실행이며 재개·자동 재시도는 제공하지 않는다. 확인된 종결 후 사람이 제출하는 추가 질문은 새 작업이다.
 

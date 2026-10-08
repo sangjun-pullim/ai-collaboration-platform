@@ -11,7 +11,7 @@ risk-surface: permission
 
 `WorkflowRunner.guardLocalRemoval`에 모인 소유 정보 검증·파일 삭제를 내부 모듈로 분리한다. 실행기의 잠금과 종료 상태는 기존 클래스가 계속 소유한다. [아키텍처](../../ARCHITECTURE.md)의 공개 실행·제거 계약을 유지하며, 큰 파일 정리를 실제 공급자·두 PC 검증 완료로 표현하지 않는다.
 
-사용자가 계획·구현·검증까지 자율 진행하도록 승인한 범위다. 실제 Claude 추가 입력은 [009](../009-claude-code-runtime-compatibility.md)의 별도 상한 확인에 계속 의존한다. 이번 명세는 실제 AI 입력·새 승인·예산·제품 Claude 등록·DB·API·개인 설정 변경을 포함하지 않는다.
+사용자가 계획·구현·검증까지 자율 진행하도록 승인한 범위다. 실제 Claude 추가 입력은 [009](009-claude-code-runtime-compatibility.md)의 별도 상한 확인에 계속 의존한다. 이번 명세는 실제 AI 입력·새 승인·예산·제품 Claude 등록·DB·API·개인 설정 변경을 포함하지 않는다.
 
 ## Affected Files
 
