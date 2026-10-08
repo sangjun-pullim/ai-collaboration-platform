@@ -87,7 +87,7 @@ async function fixture(t: TestContext) {
       f.confirmations++;
       return f.confirmed;
     },
-    pause: (signal: AbortSignal) => f.pause(signal),
+    pause: () => f.pause(),
     now: () => f.now,
   };
   const run = (overrides = {}) =>
