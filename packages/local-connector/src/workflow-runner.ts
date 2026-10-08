@@ -1692,6 +1692,13 @@ export class WorkflowRunner {
         try {
           renewed = (await this.transmit(lease, guard)) as AttemptSnapshot;
         } catch (error) {
+          if (
+            error instanceof WorkflowError &&
+            error.code === "CONFLICT" &&
+            !this.attemptJournal(authority.attempt).terminal &&
+            (await this.interruptLeaseConflict(authority, guard))
+          )
+            return;
           const pending = publication();
           if (
             !(error instanceof WorkflowError && error.code === "CONFLICT") ||
@@ -1756,6 +1763,27 @@ export class WorkflowRunner {
       }
     }
   }
+  private async interruptLeaseConflict(authority: AttemptAuthority, guard: () => void) {
+    guard();
+    const poll = await this.poll();
+    guard();
+    const a = this.attemptJournal(authority.attempt);
+    if (a.terminal) return false;
+    if (!poll.attempt) return false;
+    matchAttempt(poll.attempt, a.snapshot!);
+    if (
+      !["LEASED", "EXECUTING"].includes(poll.attempt.state) ||
+      Date.parse(poll.attempt.leaseExpiresAt) <= Date.now() ||
+      poll.control?.state !== "REQUESTED"
+    )
+      return false;
+    this.observeRoom(poll);
+    guard();
+    this.toolOpen = false;
+    const acknowledged = await this.interrupt(authority, poll.control, guard);
+    guard();
+    return acknowledged;
+  }
   private async interrupt(authority: AttemptAuthority, control: Control, guard = this.check) {
     guard();
     const a = this.attemptJournal(authority.attempt);
@@ -1786,6 +1814,7 @@ export class WorkflowRunner {
       await this.transmit(op, guard);
       guard();
     }
+    return acknowledged;
   }
   private denied(a?: AttemptJournal) {
     return [
