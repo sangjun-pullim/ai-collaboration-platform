@@ -418,3 +418,58 @@ test("should reject changed attachment payload after a verified completion", () 
     code: "CONTEXT_UNCONFIRMED",
   });
 });
+
+function native293ModeConversation() {
+  const f = native293Conversation();
+  f.history.records.push({ type: "mode", sessionId: f.context.threadId, mode: "normal" });
+  const checkpoint = f.context.ownedTurns[0].nativeHistory!;
+  if (checkpoint.state === "VERIFIED") {
+    checkpoint.recordCount = f.history.records.length;
+    checkpoint.prefixHash = digest(stableJson(f.history.records));
+  }
+  return f;
+}
+
+test("should retain native 293 normal mode as a scoped advisory without adding a conversation", () => {
+  const f = native293ModeConversation();
+  assert.equal(proveOwnedHistory(f.context, f.history, "2.1.293"), null);
+});
+
+for (const [label, change] of [
+  [
+    "foreign session",
+    (frame: Record<string, unknown>) => {
+      frame.sessionId = randomUUID();
+    },
+  ],
+  [
+    "unsupported value",
+    (frame: Record<string, unknown>) => {
+      frame.mode = "bypassPermissions";
+    },
+  ],
+  [
+    "hidden input",
+    (frame: Record<string, unknown>) => {
+      frame.message = { role: "user", content: "foreign" };
+    },
+  ],
+  [
+    "authority field",
+    (frame: Record<string, unknown>) => {
+      frame.permissionMode = "bypassPermissions";
+    },
+  ],
+] as const) {
+  test(`should reject native mode advisory with ${label}`, () => {
+    const f = native293ModeConversation();
+    const frame = f.history.records.at(-1)!;
+    change(frame);
+    const checkpoint = f.context.ownedTurns[0].nativeHistory!;
+    if (checkpoint.state === "VERIFIED")
+      checkpoint.prefixHash = digest(stableJson(f.history.records));
+    assert.throws(() => proveOwnedHistory(f.context, f.history, "2.1.293"), {
+      code: "CONTEXT_UNCONFIRMED",
+    });
+  });
+}

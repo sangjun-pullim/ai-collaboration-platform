@@ -20,7 +20,11 @@ export function nativeHistoryMetadata(
   parent: string | null,
   nextPromptHash: string | undefined,
 ): "ENQUEUE" | "DEQUEUE" | "ADVISORY" | null {
-  if (!["queue-operation", "atis-latch", "last-prompt", "cost-state"].includes(String(frame.type)))
+  if (
+    !["queue-operation", "atis-latch", "last-prompt", "cost-state", "mode"].includes(
+      String(frame.type),
+    )
+  )
     return null;
   requireValue(frame.sessionId === sessionId);
   if (frame.type === "queue-operation") {
@@ -33,7 +37,9 @@ export function nativeHistoryMetadata(
     requireValue(frame.operation === "dequeue" && !Object.hasOwn(frame, "content"));
     return "DEQUEUE";
   }
-  if (frame.type === "atis-latch") {
+  if (frame.type === "mode") {
+    requireValue(keys(frame, ["type", "sessionId", "mode"]) && frame.mode === "normal");
+  } else if (frame.type === "atis-latch") {
     requireValue(keys(frame, ["type", "sessionId", "atis"]) && text(frame.atis, 8192));
   } else if (frame.type === "last-prompt") {
     requireValue(keys(frame, ["type", "sessionId", "leafUuid", "lastPrompt"]));
