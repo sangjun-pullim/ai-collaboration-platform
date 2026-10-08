@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { readFile, symlink, unlink, writeFile } from "node:fs/promises";
+import { chmod, readFile, symlink, unlink, writeFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
 import { createProviderAdapter } from "../src/provider-adapter.ts";
 import { NativeClaudePolicy } from "../src/claude/native-policy.ts";
@@ -443,3 +443,144 @@ for (const version of ["2.1.288", "2.1.293"] as const) {
     }
   });
 }
+
+async function fallbackNativeFixture(t: import("node:test").TestContext) {
+  const f = await nativeFixture(t);
+  const reviewed = join(dirname(f.executable), "2.1.293");
+  const updated = join(dirname(f.executable), "2.1.294");
+  await writeFile(reviewed, "synthetic reviewed bytes; do not execute\n", { mode: 0o700 });
+  await writeFile(updated, "synthetic unreviewed bytes; do not execute\n", { mode: 0o700 });
+  const entry = join(f.home, ".local", "bin", "claude");
+  await unlink(entry);
+  await symlink(updated, entry);
+  f.state.installationVersion = "2.1.293";
+  f.state.version = "2.1.293 (Claude Code)\n";
+  return { ...f, reviewed, updated, entry };
+}
+
+test("should use the latest reviewed installed native version without changing the updated personal CLI", async (t) => {
+  const f = await fallbackNativeFixture(t);
+  const before = await readFile(f.settingsPath);
+  const native = new FakeTransport();
+  const launches: import("../src/claude/transport.ts").Launch[] = [];
+  const adapter = createProviderAdapter("claude", {
+    profile: f.profile,
+    claude: {
+      environment: {},
+      transport(launch) {
+        launches.push(launch);
+        return native;
+      },
+    },
+  });
+  try {
+    const capability = await adapter.capabilities(f.root, () => {});
+    assert.equal(capability.version, "2.1.293");
+    assert.equal(launches[0].executable, f.reviewed);
+    assert.equal(
+      f.probes.some((probe) => probe.executable === f.updated),
+      false,
+    );
+    assert.equal(
+      f.probes.find((probe) => probe.executable === "/usr/bin/codesign")!.args.at(-1),
+      f.reviewed,
+    );
+    assert.equal(fs.realpathSync(f.entry), f.updated);
+    assert.deepEqual(await readFile(f.settingsPath), before);
+    assert.equal(native.writes.length, 0);
+  } finally {
+    await adapter.close();
+  }
+});
+
+test("should reject a reviewed fallback whose publisher cannot be verified before catalog or input", async (t) => {
+  const f = await fallbackNativeFixture(t);
+  f.state.signature = false;
+  let transports = 0;
+  const adapter = createProviderAdapter("claude", {
+    profile: f.profile,
+    claude: {
+      environment: {},
+      transport() {
+        transports++;
+        return new FakeTransport();
+      },
+    },
+  });
+  try {
+    await assert.rejects(
+      adapter.capabilities(f.root, () => {}),
+      { code: "POLICY_UNCONFIRMED" },
+    );
+    assert.equal(transports, 0);
+    assert.equal(f.probes.length, 1);
+    assert.equal(f.probes[0].args.at(-1), f.reviewed);
+    assert.equal(
+      f.probes.some((probe) => probe.executable === f.updated),
+      false,
+    );
+    assert.equal(fs.realpathSync(f.entry), f.updated);
+  } finally {
+    await adapter.close();
+  }
+});
+
+test("should reject a symlinked reviewed fallback before any executable probe", async (t) => {
+  const f = await fallbackNativeFixture(t);
+  await unlink(f.reviewed);
+  await symlink(f.executable, f.reviewed);
+  await assert.rejects(
+    new NativeClaudePolicy({}).admit(f.root, () => {}),
+    { code: "POLICY_UNCONFIRMED" },
+  );
+  assert.equal(f.probes.length, 0);
+});
+
+test("should reject a group writable reviewed fallback before any executable probe", async (t) => {
+  const f = await fallbackNativeFixture(t);
+  await chmod(f.reviewed, 0o720);
+  await assert.rejects(
+    new NativeClaudePolicy({}).admit(f.root, () => {}),
+    { code: "POLICY_UNCONFIRMED" },
+  );
+  assert.equal(f.probes.length, 0);
+});
+
+test("should reject an entry outside the native version directory even when a reviewed fallback exists", async (t) => {
+  const f = await fallbackNativeFixture(t);
+  const foreign = join(f.directory, "foreign-claude");
+  await writeFile(foreign, "synthetic foreign bytes; do not execute\n", { mode: 0o700 });
+  await unlink(f.entry);
+  await symlink(foreign, f.entry);
+  await assert.rejects(
+    new NativeClaudePolicy({}).admit(f.root, () => {}),
+    { code: "POLICY_UNCONFIRMED" },
+  );
+  assert.equal(f.probes.length, 0);
+});
+
+test("should retain live binary drift detection for the reviewed fallback", async (t) => {
+  const f = await fallbackNativeFixture(t);
+  const installation = await verifyNativeInstallation(f.root, {}, () => {});
+  assert.equal(installation.executable, f.reviewed);
+  await writeFile(f.reviewed, "changed synthetic reviewed bytes\n", { mode: 0o700 });
+  assert.throws(() => assertNativeInstallation(installation, () => {}), {
+    code: "SNAPSHOT_CHANGED",
+  });
+  assert.equal(fs.realpathSync(f.entry), f.updated);
+});
+
+test("should keep using a reviewed current CLI instead of preferring a different cached version", async (t) => {
+  const f = await fallbackNativeFixture(t);
+  await unlink(f.entry);
+  await symlink(f.executable, f.entry);
+  f.state.installationVersion = "2.1.288";
+  f.state.version = "2.1.288 (Claude Code)\n";
+  const installation = await verifyNativeInstallation(f.root, {}, () => {});
+  assert.equal(installation.version, "2.1.288");
+  assert.equal(installation.executable, f.executable);
+  assert.equal(
+    f.probes.some((probe) => probe.executable === f.reviewed),
+    false,
+  );
+});

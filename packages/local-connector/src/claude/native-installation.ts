@@ -1,5 +1,5 @@
 import { execFile } from "node:child_process";
-import { lstatSync, realpathSync } from "node:fs";
+import { existsSync, lstatSync, realpathSync } from "node:fs";
 import { homedir } from "node:os";
 import { dirname, join } from "node:path";
 import { digest, RuntimeError, stableJson } from "../runtime-contracts.ts";
@@ -86,20 +86,11 @@ function installationAncestors(path: string, home: string) {
   }
 }
 
-function installationEntry(home: string) {
-  const entry = join(home, ".local", "bin", "claude");
-  installationAncestors(entry, home);
-  const link = lstatSync(entry);
-  if (!link.isSymbolicLink() || link.uid !== process.getuid?.() || link.nlink !== 1)
-    throw unavailable();
-  const executable = realpathSync(entry);
-  const version = supportedVersions.find(
-    (value) => executable === join(home, ".local", "share", "claude", "versions", value),
-  );
-  if (!version) throw unavailable("VERSION");
+function assertNativeExecutable(executable: string, home: string) {
   installationAncestors(executable, home);
   const stat = lstatSync(executable);
   if (
+    realpathSync(executable) !== executable ||
     !stat.isFile() ||
     stat.nlink !== 1 ||
     stat.uid !== process.getuid?.() ||
@@ -107,6 +98,33 @@ function installationEntry(home: string) {
     (stat.mode & 0o022) !== 0
   )
     throw unavailable();
+}
+
+function installationEntry(home: string) {
+  const entry = join(home, ".local", "bin", "claude");
+  installationAncestors(entry, home);
+  const link = lstatSync(entry);
+  if (!link.isSymbolicLink() || link.uid !== process.getuid?.() || link.nlink !== 1)
+    throw unavailable();
+  const target = realpathSync(entry);
+  const versionsDirectory = join(home, ".local", "share", "claude", "versions");
+  let version = supportedVersions.find((value) => target === join(versionsDirectory, value));
+  let executable = target;
+  if (!version) {
+    // A personal auto-update never authorizes execution of an unreviewed binary.
+    if (
+      dirname(target) !== versionsDirectory ||
+      !/^\d+\.\d+\.\d+$/.test(target.slice(versionsDirectory.length + 1))
+    )
+      throw unavailable("VERSION");
+    assertNativeExecutable(target, home);
+    const fallbackVersion = supportedVersions.at(-1)!;
+    const fallback = join(versionsDirectory, fallbackVersion);
+    if (!existsSync(fallback)) throw unavailable("VERSION");
+    executable = fallback;
+    version = fallbackVersion;
+  }
+  assertNativeExecutable(executable, home);
   return { entry, executable, entryIdentity: fileIdentity(link), version };
 }
 
