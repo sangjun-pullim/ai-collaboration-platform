@@ -11,6 +11,7 @@ import { isId as uuid } from "../contracts.ts";
 import { validateToolArguments, isNativeRepositoryTool } from "../workspace/tool-contracts.ts";
 import { validToolPolicy } from "../workspace/repository-access.ts";
 import { object } from "./owned-history.ts";
+import { isInterruptionUserContent } from "./native-interruption-records.ts";
 
 export const OWNED_SERVER = scopedNamespace;
 export const TOOL_NAMES = ["read_workspace_file", "ask_peer"] as const;
@@ -168,6 +169,8 @@ interface Control {
   cancel: () => void;
   progressToken?: string | number;
 }
+const requestId = (value: unknown): value is string | number =>
+  bounded(value) || (typeof value === "number" && Number.isSafeInteger(value));
 export interface InputTerminal {
   kind: "COMPLETED" | "FAILED" | "INTERRUPTED";
   evidenceHash: string;
@@ -185,6 +188,7 @@ export class NativeInputProof {
   #interruptReceipt = false;
   readonly #tools = new Map<string, Tool>();
   readonly #controls = new Map<string, Control>();
+  readonly #mcpControls = new Map<string | number, string>();
   readonly #commands = new Map<string, string>();
   readonly #rateLimits = new Map<string, string>();
   #progressCount = 0;
@@ -243,7 +247,9 @@ export class NativeInputProof {
     }
   }
 
-  user(frame: Record<string, unknown>): "INPUT_ACK" | "NATIVE_TOOL_RESULT" {
+  user(
+    frame: Record<string, unknown>,
+  ): "INPUT_ACK" | "NATIVE_TOOL_RESULT" | "NATIVE_INTERRUPTION_ADVISORY" {
     this.same(frame);
     if (frame.type !== "user" || !uuid(frame.uuid)) throw new RuntimeError("UNKNOWN");
     const message = object(frame.message);
@@ -258,6 +264,19 @@ export class NativeInputProof {
       this.#ack = true;
       return "INPUT_ACK";
     }
+    if (
+      this.#anchored &&
+      this.#interruptRequested &&
+      isInterruptionUserContent(
+        message,
+        (id) =>
+          [...this.#controls.values()].some(
+            (control) => control.toolId === id && control.cancelled,
+          ),
+        this.#interruptReceipt || [...this.#controls.values()].some((control) => control.cancelled),
+      )
+    )
+      return "NATIVE_INTERRUPTION_ADVISORY";
     if (
       !this.#anchored ||
       !Array.isArray(message.content) ||
@@ -339,6 +358,7 @@ export class NativeInputProof {
     controlId: string,
     params: Record<string, unknown>,
     identityVerified: boolean,
+    mcpRequestId?: string | number,
   ): {
     toolId: string;
     name: string;
@@ -358,6 +378,11 @@ export class NativeInputProof {
       !this.allowedTools.includes(`mcp__${OWNED_SERVER}__${params.name}`)
     )
       throw new RuntimeError("TOOL_REJECTED");
+    if (
+      mcpRequestId !== undefined &&
+      (!requestId(mcpRequestId) || this.#mcpControls.has(mcpRequestId))
+    )
+      throw new RuntimeError("UNKNOWN");
     const args = validateToolArguments(
       this.toolPolicy.mode,
       null,
@@ -434,6 +459,7 @@ export class NativeInputProof {
       written: false,
       progressToken,
     });
+    if (mcpRequestId !== undefined) this.#mcpControls.set(mcpRequestId, controlId);
     return { toolId, name: params.name, args: structuredClone(args), cancellation };
   }
 
@@ -516,6 +542,26 @@ export class NativeInputProof {
     control.cancelled = true;
     control.cancelHash = digest(stableJson(frame));
     control.cancel();
+  }
+
+  cancelMcp(message: Record<string, unknown>): string {
+    const params = object(message.params);
+    if (
+      !exact(message, ["jsonrpc", "method", "params"]) ||
+      message.jsonrpc !== "2.0" ||
+      message.method !== "notifications/cancelled" ||
+      !exact(params, Object.hasOwn(params, "reason") ? ["requestId", "reason"] : ["requestId"]) ||
+      !requestId(params.requestId) ||
+      (Object.hasOwn(params, "reason") &&
+        (typeof params.reason !== "string" || Buffer.byteLength(params.reason) > 2048))
+    )
+      throw new RuntimeError("UNKNOWN");
+    const controlId = this.#mcpControls.get(params.requestId);
+    if (controlId === undefined) throw new RuntimeError("UNKNOWN");
+    // Normalize only a native notification matched to this input's claimed read request.
+    // The stored cancellation hash remains the existing canonical control representation.
+    this.cancel({ type: "control_cancel_request", request_id: controlId });
+    return controlId;
   }
 
   cancellationReceipts(): NativeToolCancellation[] {

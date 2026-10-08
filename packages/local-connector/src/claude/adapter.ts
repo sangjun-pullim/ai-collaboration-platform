@@ -463,6 +463,7 @@ export class ClaudeAdapter implements RuntimeAdapter {
               active.intent,
               active.liveFrames,
               [...active.toolReceipts.values()],
+              evidence,
             );
       } catch {
         // A confirmed live terminal remains publishable even when its resume file is unavailable.
@@ -521,16 +522,7 @@ export class ClaudeAdapter implements RuntimeAdapter {
     }
     if (frame.type === "control_cancel_request") {
       active.proof.cancel(frame);
-      const cancellation = active.proof
-        .cancellationReceipts()
-        .find((c) => c.controlId === frame.request_id)!;
-      if (!active.authority.cancelledTool) throw new RuntimeError("CONTEXT_UNCONFIRMED");
-      // Fence each exact call immediately; only its durable write joins the terminal barrier.
-      const written = active.authority.cancelledTool(cancellation);
-      active.cancellationsWritten = Promise.all([active.cancellationsWritten, written]).then(
-        () => {},
-      );
-      await active.cancellationsWritten;
+      await this.recordCancellation(active, String(frame.request_id));
       return;
     }
     if (frame.type === "system" && frame.subtype === "thinking_tokens") {
@@ -604,6 +596,24 @@ export class ClaudeAdapter implements RuntimeAdapter {
       });
       return;
     }
+    if (mcp.method === "notifications/cancelled") {
+      if (
+        !active?.ack ||
+        active.terminalReceived ||
+        Object.keys(frame).length !== 3 ||
+        Object.keys(request).length !== 3
+      )
+        throw new RuntimeError("UNKNOWN");
+      await active.ack;
+      if (active.terminalReceived || this.active !== active) throw new RuntimeError("UNKNOWN");
+      const controlId = active.proof.cancelMcp(mcp);
+      await this.recordCancellation(active, controlId);
+      // Acknowledge the host bridge notification, never the cancelled tools/call request.
+      await this.transport!.reply(frame.request_id, {
+        mcp_response: { jsonrpc: "2.0", id: 0, result: {} },
+      });
+      return;
+    }
     if (!(
       typeof mcp.id === "string" ||
       (typeof mcp.id === "number" && Number.isSafeInteger(mcp.id))
@@ -637,6 +647,7 @@ export class ClaudeAdapter implements RuntimeAdapter {
         frame.request_id,
         object(mcp.params),
         active.initHash !== null,
+        mcp.id,
       );
       validateToolArguments(
         repositoryMode(active.settings, active.authority.context),
@@ -686,6 +697,17 @@ export class ClaudeAdapter implements RuntimeAdapter {
     await this.transport!.reply(frame.request_id, {
       mcp_response: { jsonrpc: "2.0", id: mcp.id, result },
     });
+  }
+  private async recordCancellation(active: Active, controlId: string): Promise<void> {
+    const cancellation = active.proof.cancellationReceipts().find((c) => c.controlId === controlId);
+    if (!cancellation || !active.authority.cancelledTool)
+      throw new RuntimeError("CONTEXT_UNCONFIRMED");
+    // Fence each exact call immediately; only its durable write joins the terminal barrier.
+    const written = active.authority.cancelledTool(cancellation);
+    active.cancellationsWritten = Promise.all([active.cancellationsWritten, written]).then(
+      () => {},
+    );
+    await active.cancellationsWritten;
   }
   async interrupt(authority: AttemptAuthority): Promise<boolean> {
     const active = this.active;

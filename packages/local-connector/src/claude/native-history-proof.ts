@@ -12,13 +12,18 @@ import {
 } from "../runtime-contracts.ts";
 import { object, type OwnedHistory } from "./owned-history.ts";
 import {
+  isNativeInterruptionRecord,
+  type InterruptionEvidence,
+  type InterruptionInput,
+} from "./native-interruption-records.ts";
+import {
   nativeHistoryMetadata,
   validateNativeHistoryAttachment,
 } from "./native-history-records.ts";
 
 type Conversation = { inputId: string; index: number; value: string }[];
 type Receipt = NonNullable<OwnedContext["ownedTurns"][number]["toolReceipts"]>[number];
-type Input = { turnId: string; promptHash: string; receipts: readonly Receipt[] };
+type Input = InterruptionInput & { receipts: readonly Receipt[] };
 const rejected = () => new RuntimeError("CONTEXT_UNCONFIRMED");
 
 function promptText(message: Record<string, unknown>): string | null {
@@ -63,12 +68,14 @@ function parseConversation(
   )
     throw rejected();
   const expected = new Map(inputs.map((input) => [input.turnId, input.promptHash]));
+  const byInput = new Map(inputs.map((input) => [input.turnId, input]));
   if (expected.size !== inputs.length) throw rejected();
   const seen = new Set<string>();
   const started: string[] = [];
   const conversation: Conversation = [];
   let parent: string | null = null;
   let current: string | undefined;
+  let toolBlocks = new Map<string, Record<string, unknown>>();
   let queued = false;
   for (const [index, frame] of history.records.entries()) {
     if (frame.type === "file-history-snapshot") {
@@ -115,6 +122,22 @@ function parseConversation(
       continue;
     }
     const message = object(frame.message);
+    if (frame.type === "assistant" && Array.isArray(message.content)) {
+      for (const block of message.content.map(object))
+        if (block.type === "tool_use" && typeof block.id === "string")
+          toolBlocks.set(block.id, block);
+    }
+    if (
+      version === "2.1.293" &&
+      frame.type === "user" &&
+      isNativeInterruptionRecord(
+        context,
+        current ? byInput.get(current) : undefined,
+        message,
+        toolBlocks,
+      )
+    )
+      continue;
     const prompt = frame.type === "user" ? promptText(message) : null;
     if (prompt !== null) {
       if (digest(prompt) !== expected.get(frame.uuid) || started.includes(frame.uuid))
@@ -122,6 +145,7 @@ function parseConversation(
       if (inputs[started.length]?.turnId !== frame.uuid) throw rejected();
       started.push(frame.uuid);
       current = frame.uuid;
+      toolBlocks = new Map();
     } else {
       if (!current || !Array.isArray(message.content) || message.content.length > 64)
         throw rejected();
@@ -276,7 +300,16 @@ export function proveNativeHistory(
   }
   const inputs: Input[] = context.ownedTurns.map((turn) => {
     if (!turn.promptHash) throw rejected();
-    return { turnId: turn.turnId, promptHash: turn.promptHash, receipts: turn.toolReceipts ?? [] };
+    return {
+      turnId: turn.turnId,
+      promptHash: turn.promptHash,
+      receipts: turn.toolReceipts ?? [],
+      interruption: {
+        terminal: turn.terminal,
+        nativeInterruption: turn.nativeInterruption,
+        toolCancellations: turn.toolCancellations,
+      },
+    };
   });
   if (candidate) {
     const intent = candidate.intent;
@@ -327,6 +360,7 @@ export function checkpointNativeHistory(
   intent: NativeInputIntent,
   liveFrames: readonly Record<string, unknown>[],
   receipts: readonly Receipt[] = [],
+  interruption?: InterruptionEvidence,
 ): NativeHistoryEvidence {
   if (!history.materialized) return { state: "UNVERIFIED", reason: "MISSING_HISTORY" };
   try {
@@ -339,15 +373,25 @@ export function checkpointNativeHistory(
       context.ownedTurns.some((turn) => turn.turnId === intent.inputId)
     )
       throw rejected();
-    const inputs = context.ownedTurns.map((turn) => {
+    const inputs: Input[] = context.ownedTurns.map((turn) => {
       if (!turn.promptHash) throw rejected();
       return {
         turnId: turn.turnId,
         promptHash: turn.promptHash,
         receipts: turn.toolReceipts ?? [],
+        interruption: {
+          terminal: turn.terminal,
+          nativeInterruption: turn.nativeInterruption,
+          toolCancellations: turn.toolCancellations,
+        },
       };
     });
-    inputs.push({ turnId: intent.inputId, promptHash: intent.promptHash, receipts: [...receipts] });
+    inputs.push({
+      turnId: intent.inputId,
+      promptHash: intent.promptHash,
+      receipts: [...receipts],
+      interruption,
+    });
     const conversation = parseConversation(context, history, version, inputs);
     const { count: closedCount, fullHash } = proveClosedPrefixes(context, history, conversation);
     const current = conversation.filter((message) => message.inputId === intent.inputId);
@@ -355,7 +399,7 @@ export function checkpointNativeHistory(
       !current.length ||
       current.some((message) => message.index < closedCount) ||
       stableJson(current.map((message) => message.value)) !==
-        stableJson(liveFrames.map(conversationValue))
+        stableJson(liveConversation(context, inputs.at(-1)!, version, liveFrames))
     )
       throw rejected();
     return {
@@ -367,4 +411,28 @@ export function checkpointNativeHistory(
   } catch {
     return { state: "UNVERIFIED", reason: "HISTORY_REJECTED" };
   }
+}
+
+function liveConversation(
+  context: OwnedContext,
+  input: Input,
+  version: string,
+  frames: readonly Record<string, unknown>[],
+): string[] {
+  const tools = new Map<string, Record<string, unknown>>(),
+    values: string[] = [];
+  for (const frame of frames) {
+    const message = object(frame.message);
+    if (frame.type === "assistant" && Array.isArray(message.content)) {
+      for (const block of message.content.map(object))
+        if (block.type === "tool_use" && typeof block.id === "string") tools.set(block.id, block);
+    }
+    if (
+      version !== "2.1.293" ||
+      frame.type !== "user" ||
+      !isNativeInterruptionRecord(context, input, message, tools)
+    )
+      values.push(conversationValue(frame));
+  }
+  return values;
 }
