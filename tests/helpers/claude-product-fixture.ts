@@ -69,7 +69,18 @@ class ProductTransport {
   }
   async request(body: Frame) {
     if (body.subtype === "initialize")
-      return { models: [{ value: model, supportsEffort: false, isDefault: true }] };
+      return {
+        models: [
+          {
+            value: model,
+            supportsEffort: false,
+            isDefault: true,
+            ...(this.fixture.modelDisplayName
+              ? { displayName: this.fixture.modelDisplayName }
+              : {}),
+          },
+        ],
+      };
     ensure(body.subtype === "interrupt" && this.input, "Unexpected synthetic control");
     this.fixture.interrupts++;
     await this.emit({ type: "control_cancel_request", request_id: `control-${this.input.uuid}` });
@@ -342,6 +353,7 @@ export class ClaudeProductFixture {
   readonly adapters: RuntimeAdapter[] = [];
   readonly toolEntered = runtimeGate();
   readonly toolRelease = runtimeGate();
+  modelDisplayName?: string;
   readMode?: "AUTO_CODE";
   ackLoss = false;
   holdTool = false;
@@ -582,6 +594,19 @@ export class ClaudeProductFixture {
         adapter: (provider, reserve) => {
           if (provider === "codex") {
             const fake = new OwnedFakeAdapter();
+            if (this.modelDisplayName) {
+              const original = fake.capabilities.bind(fake);
+              fake.capabilities = async (...args) => {
+                const value = await original(...args);
+                return {
+                  ...value,
+                  models: value.models.map((item) => ({
+                    ...item,
+                    displayName: this.modelDisplayName!,
+                  })),
+                };
+              };
+            }
             this.adapters.push(fake);
             return fake;
           }

@@ -18,6 +18,7 @@ import { SettingsClient } from "./client.ts";
 import {
   SettingsError,
   capabilityHash,
+  omitOversizedModelDisplayNames,
   projectCapability,
   validateBody,
   validateSelection,
@@ -76,7 +77,9 @@ function catalog(provider: Provider, value: Capabilities): Capability {
     defaultSettings: value.defaultSettings,
     policy: "verified" as const,
   };
-  return projectCapability({ ...contents, snapshotHash: capabilityHash(contents) });
+  return projectCapability(
+    omitOversizedModelDisplayNames({ ...contents, snapshotHash: capabilityHash(contents) }),
+  );
 }
 function receipt(
   j: SetupJournal,
@@ -682,7 +685,9 @@ export class SettingsManager {
       const observed = await this.watched((_signal, check) =>
         this.adapter!.capabilities(j.root!.path, check),
       );
-      if (!same(catalog(body.runtime as Provider, observed), j.receipt!.catalog))
+      const observedCatalog = catalog(body.runtime as Provider, observed);
+      const confirmedCatalog = projectCapability(j.receipt!.catalog);
+      if (observedCatalog.snapshotHash !== confirmedCatalog.snapshotHash)
         throw new RuntimeError("SNAPSHOT_CHANGED");
       const settings: RuntimeSettings = {
         provider: body.runtime as Provider,

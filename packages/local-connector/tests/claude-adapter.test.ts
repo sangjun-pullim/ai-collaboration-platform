@@ -1254,3 +1254,63 @@ for (const kind of ["CONTINUATION", "RESUME"] as const)
       await f.close();
     }
   });
+
+for (const displayName of [
+  "Claude Test (1M context)",
+  "/Users/private/model",
+  "Bearer private-token",
+  "Opus\nprivate",
+]) {
+  test(`should preserve only safe native Claude display names: ${JSON.stringify(displayName)}`, async () => {
+    const f = await fixture();
+    f.native.request = async () => ({ models: models.models.map((m) => ({ ...m, displayName })) });
+    const adapter = f.createAdapter({
+      transport: () => f.native,
+      reserveCatalog: async () => structuredClone(f.context),
+    });
+    try {
+      const caps = await adapter.capabilities(f.context.root.path, () => {});
+      assert.equal(
+        (caps.models[0] as unknown as Record<string, unknown>).displayName,
+        displayName === "Claude Test (1M context)" ? displayName : undefined,
+      );
+      assert.equal(caps.models[0].model, "claude-test");
+      assert.equal(caps.models[0].id, "claude-test");
+      assert.deepEqual(caps.models[0].efforts, []);
+      assert.equal(caps.snapshotHash, f.settings.capabilities.snapshotHash);
+      assert.equal(f.native.writes.length, 0);
+    } finally {
+      await adapter.close();
+      await f.close();
+    }
+  });
+}
+
+test("should omit cosmetic Claude labels without dropping any formerly valid native models", async () => {
+  const f = await fixture();
+  const native = Array.from({ length: 65 }, (_, i) => ({
+    value: `native-${i}-${"x".repeat(50)}`,
+    supportsEffort: false,
+    isDefault: i === 0,
+    displayName: "Native " + "x".repeat(110),
+  }));
+  f.native.request = async () => ({ models: native });
+  const adapter = f.createAdapter({
+    transport: () => f.native,
+    reserveCatalog: async () => structuredClone(f.context),
+  });
+  try {
+    const caps = await adapter.capabilities(f.context.root.path, () => {});
+    assert.equal(caps.models.length, native.length);
+    assert.deepEqual(
+      caps.models.map((m) => m.model),
+      native.map((m) => m.value),
+    );
+    assert.ok(caps.models.every((m) => m.displayName === undefined && m.efforts.length === 0));
+    assert.deepEqual(caps.defaultSettings, { model: native[0].value, effort: null });
+    assert.equal(f.native.writes.length, 0);
+  } finally {
+    await adapter.close();
+    await f.close();
+  }
+});

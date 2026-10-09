@@ -1,3 +1,4 @@
+import { isModelDisplayName } from "../settings/contracts.ts";
 import { isId, isHash } from "../contracts.ts";
 import { serviceOrigin } from "../central-client.ts";
 import { validateBody, projectResponse, type DeviceAction } from "../workflow-contracts.ts";
@@ -86,13 +87,16 @@ const file = exact({
   ctimeMs: number,
   hash: isHash,
 });
-const model = exact({
-  id: string,
-  model: string,
-  efforts: list(string, 12),
-  defaultEffort: string,
-  isDefault: bool,
-});
+const model = optionalExact(
+  {
+    id: string,
+    model: string,
+    efforts: list(string, 12),
+    defaultEffort: string,
+    isDefault: bool,
+  },
+  { displayName: isModelDisplayName },
+);
 const capabilities = exact({
   version: one(codexVersion),
   models: list(model, 256),
@@ -349,13 +353,16 @@ const providerCapabilities = exact({
   runtime: one("codex", "claude"),
   version: string,
   models: list(
-    exact({
-      id: string,
-      model: string,
-      efforts: list(string, 12),
-      defaultEffort: nullable(string),
-      isDefault: bool,
-    }),
+    optionalExact(
+      {
+        id: string,
+        model: string,
+        efforts: list(string, 12),
+        defaultEffort: nullable(string),
+        isDefault: bool,
+      },
+      { displayName: isModelDisplayName },
+    ),
     256,
   ),
   defaultSettings: nullable(providerRequested),

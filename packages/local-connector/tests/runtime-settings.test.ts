@@ -17,7 +17,13 @@ import {
 import { SettingsManager, type SettingsManagerOptions } from "../src/settings/manager.ts";
 import { SettingsClient } from "../src/settings/client.ts";
 import { SettingsStore } from "../src/settings/store.ts";
-import { type Body, type Receipt, type SettingsResponse } from "../src/settings/contracts.ts";
+import {
+  capabilityHash,
+  jsonbTextBytes,
+  type Body,
+  type Receipt,
+  type SettingsResponse,
+} from "../src/settings/contracts.ts";
 import { runtimeFixture, uuid, observation } from "./runtime-fixture.ts";
 import { claudeRecord } from "./provider-runtime-fixture.ts";
 
@@ -123,7 +129,11 @@ async function fixture(provider: "codex" | "claude" = "codex") {
           ...response,
           catalog: receipt.catalog ?? response.catalog,
           applied: receipt.state === "APPLIED" ? receipt : response.applied,
-          operation: { ...response.operation!, state: receipt.state, receipt },
+          operation: {
+            ...response.operation!,
+            state: receipt.state,
+            receipt: { ...receipt, catalog: null },
+          },
         };
       }
     }
@@ -215,7 +225,7 @@ async function fixture(provider: "codex" | "claude" = "codex") {
     new SettingsManager(profile, store, client, { ...options, ...changes });
   const applying = () => {
     const local = response.operation!.receipt!;
-    const selection = local.catalog!.defaultSettings!;
+    const selection = response.catalog!.defaultSettings!;
     response.operation = {
       ...response.operation!,
       state: "APPLYING",
@@ -225,7 +235,7 @@ async function fixture(provider: "codex" | "claude" = "codex") {
         expectedConfigRevision: response.configRevision,
         runtime: local.runtime,
         ...selection,
-        snapshotHash: local.catalog!.snapshotHash,
+        snapshotHash: response.catalog!.snapshotHash,
         localRootReference: local.localRootReference,
         repositoryAlias: local.repositoryAlias,
         sessionAlias: "Session",
@@ -1415,3 +1425,106 @@ test("should submit no provider catalog or input when automatic consent durabili
     await f.close();
   }
 });
+
+for (const provider of ["codex", "claude"] as const) {
+  test(`should apply ${provider} settings when only the native model display name changes`, async () => {
+    const f = await fixture(provider);
+    try {
+      Object.assign(f.observedCaps.models[0], { displayName: "Native name before" });
+      await local(f);
+      assert.equal(
+        (f.response.catalog!.models[0] as unknown as Record<string, unknown>).displayName,
+        "Native name before",
+      );
+      Object.assign(f.observedCaps.models[0], { displayName: "Native name after" });
+      const status = await f.manager().run({ once: true });
+      assert.equal(status.state, "APPLIED", JSON.stringify(status));
+      assert.equal(f.prepares, 1);
+    } finally {
+      await f.close();
+    }
+  });
+  for (const field of (provider === "codex"
+    ? ["model", "efforts", "version", "id", "defaults"]
+    : ["model", "efforts", "id", "defaults"]) as (
+    "model" | "efforts" | "version" | "id" | "defaults"
+  )[]) {
+    test(`should reject changed semantic ${provider} ${field} between folder selection and apply`, async () => {
+      const f = await fixture(provider);
+      try {
+        await local(f);
+        if (field === "version") f.observedCaps.version = "changed-version";
+        else if (field === "id") f.observedCaps.models[0].id = "changed-id";
+        else if (field === "defaults") f.observedCaps.defaultSettings = null;
+        else if (field === "model") {
+          f.observedCaps.models[0].model = "changed-model";
+          f.observedCaps.defaultSettings!.model = "changed-model";
+        } else {
+          f.observedCaps.models[0].efforts.push("changed-effort");
+          if (provider === "claude") {
+            f.observedCaps.models[0].defaultEffort = "changed-effort";
+            f.observedCaps.defaultSettings!.effort = "changed-effort";
+          }
+        }
+        const status = await f.manager().run({ once: true });
+        assert.equal(status.reason, "SNAPSHOT_CHANGED", JSON.stringify(status));
+        assert.equal(f.prepares, 0);
+      } finally {
+        await f.close();
+      }
+    });
+  }
+}
+
+for (const budget of [13000, 15100]) {
+  test(`should preserve all models in a formerly valid ${budget}-byte catalog and fit confirmation envelopes`, async () => {
+    const f = await fixture();
+    try {
+      const models: Capabilities["models"] = [];
+      const original = {
+        runtime: "codex" as const,
+        version: f.observedCaps.version,
+        models,
+        defaultSettings: { model: "large-model-0", effort: "low" },
+        policy: "verified" as const,
+      };
+      for (let i = 0; i < 256; i++) {
+        const model = {
+          id: `large-id-${i}-${"x".repeat(60)}`,
+          model: i === 0 ? "large-model-0" : `large-model-${i}-${"y".repeat(60)}`,
+          efforts: ["low", "high"],
+          defaultEffort: "low",
+          isDefault: i === 0,
+        };
+        const candidate = { ...original, models: [...models, model], snapshotHash: "a".repeat(64) };
+        if (jsonbTextBytes(candidate) > budget) break;
+        models.push(model);
+      }
+      const hash = capabilityHash(original);
+      f.observedCaps = {
+        ...f.observedCaps,
+        models: models.map((m) => ({ ...m, displayName: "Native " + "x".repeat(110) })),
+        defaultSettings: original.defaultSettings,
+      };
+      const status = await f.manager().run({ once: true });
+      assert.equal(status.state, "LOCAL_CONFIRMATION", JSON.stringify(status));
+      assert.deepEqual(f.response.catalog!.models, models);
+      assert.equal(f.response.catalog!.snapshotHash, hash);
+      assert.ok(jsonbTextBytes(f.response.catalog) > budget - 500);
+      const local = f.requests.find(
+        (r) => r.action === "receipt" && r.body.state === "LOCAL_CONFIRMATION",
+      )!.body;
+      assert.ok(jsonbTextBytes(local) <= 16384);
+      assert.ok(jsonbTextBytes(f.response) <= 16200);
+      assert.ok(jsonbTextBytes({ ok: true, data: f.response }) <= 16384);
+      if (budget === 13000) {
+        f.applying();
+        const applied = await f.manager().run({ once: true });
+        assert.equal(applied.state, "APPLIED", JSON.stringify(applied));
+        assert.ok(jsonbTextBytes(f.response) <= 16200);
+      }
+    } finally {
+      await f.close();
+    }
+  });
+}

@@ -1,7 +1,12 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import { CodexAdapter, selectSettings, terminalEvidence } from "../src/codex-adapter.ts";
-import { RuntimeError, type AttemptAuthority } from "../src/runtime-contracts.ts";
+import {
+  RuntimeError,
+  digest,
+  stableJson,
+  type AttemptAuthority,
+} from "../src/runtime-contracts.ts";
 import { FakeProvider } from "./fake-provider.ts";
 import { capabilities, runtimeFixture, observation, uuid } from "./runtime-fixture.ts";
 import { deferred } from "./runner-fixture.ts";
@@ -2272,3 +2277,112 @@ for (const scenario of [
       await f.close();
     }
   });
+
+test("should preserve safe native Codex names without changing executable values or snapshot", async () => {
+  const f = await runtimeFixture(),
+    p = new FakeProvider();
+  let displayName: unknown = "Codex Test (native)";
+  p.response = (method) =>
+    method === "model/list"
+      ? {
+          data: capabilities().models.map((m) => ({
+            id: m.id,
+            model: m.model,
+            displayName,
+            defaultReasoningEffort: m.defaultEffort,
+            isDefault: m.isDefault,
+            supportedReasoningEfforts: m.efforts.map((reasoningEffort) => ({ reasoningEffort })),
+          })),
+          nextCursor: null,
+        }
+      : undefined;
+  const a = new CodexAdapter({ transportFactory: (_root, overrides) => p.launch(overrides) });
+  try {
+    const caps = await a.capabilities(f.root, () => {});
+    assert.equal((caps.models[0] as unknown as Record<string, unknown>).displayName, displayName);
+    assert.equal(caps.snapshotHash, digest(stableJson(capabilities().models)));
+    for (displayName of ["Changed native name", "/Users/private", "Bearer token", null]) {
+      const next = await a.capabilities(f.root, () => {});
+      assert.equal(
+        (next.models[0] as unknown as Record<string, unknown>).displayName,
+        displayName === "Changed native name" ? displayName : undefined,
+      );
+      assert.equal(next.snapshotHash, caps.snapshotHash);
+      assert.deepEqual(
+        next.models.map(({ id, model, efforts, defaultEffort, isDefault }) => ({
+          id,
+          model,
+          efforts,
+          defaultEffort,
+          isDefault,
+        })),
+        capabilities().models,
+      );
+    }
+    assert.equal(
+      p.calls.some((c) => c.method === "turn/start"),
+      false,
+    );
+  } finally {
+    await a.close();
+    await f.close();
+  }
+});
+
+test("should omit cosmetic Codex labels without dropping native models or changing raw model hash", async () => {
+  const f = await runtimeFixture(),
+    p = new FakeProvider();
+  const models = [
+    ...capabilities().models,
+    ...Array.from({ length: 50 }, (_, i) => ({
+      id: `native-${i}-${"x".repeat(50)}`,
+      model: `native-${i}-${"y".repeat(50)}`,
+      efforts: ["low", "high"],
+      defaultEffort: "low",
+      isDefault: false,
+    })),
+  ];
+  p.response = (method) =>
+    method === "model/list"
+      ? {
+          data: models.slice(0, 32).map((m) => ({
+            id: m.id,
+            model: m.model,
+            displayName: "Native " + "x".repeat(110),
+            defaultReasoningEffort: m.defaultEffort,
+            isDefault: m.isDefault,
+            supportedReasoningEfforts: m.efforts.map((reasoningEffort) => ({ reasoningEffort })),
+          })),
+          nextCursor: "second",
+        }
+      : undefined;
+  const response = p.response;
+  p.response = (method, params) =>
+    method === "model/list" && params.cursor === "second"
+      ? {
+          data: models.slice(32).map((m) => ({
+            id: m.id,
+            model: m.model,
+            displayName: "Native " + "x".repeat(110),
+            defaultReasoningEffort: m.defaultEffort,
+            isDefault: m.isDefault,
+            supportedReasoningEfforts: m.efforts.map((reasoningEffort) => ({ reasoningEffort })),
+          })),
+          nextCursor: null,
+        }
+      : response(method, params);
+  const a = new CodexAdapter({ transportFactory: (_root, overrides) => p.launch(overrides) });
+  try {
+    const caps = await a.capabilities(f.root, () => {});
+    assert.deepEqual(caps.models, models);
+    assert.equal(caps.snapshotHash, digest(stableJson(models)));
+    assert.deepEqual(caps.defaultSettings, capabilities().defaultSettings);
+    assert.equal(
+      p.calls.some((c) => c.method === "turn/start"),
+      false,
+    );
+  } finally {
+    await a.close();
+    await f.close();
+  }
+});

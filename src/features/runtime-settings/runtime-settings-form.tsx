@@ -5,7 +5,7 @@ import { Button } from "../../components/ui/button";
 import { Input } from "../../components/ui/input";
 import { Badge } from "../../components/ui/badge";
 import { requestSettings } from "./settings-client";
-import { validateSelection, type ErrorCode, type State } from "./contracts";
+import { validateSelection, type Capability, type ErrorCode, type State } from "./contracts";
 import { SettingsController, confirmedCatalog, selectionSaved } from "./settings-controller";
 
 const messages: Record<ErrorCode, string> = {
@@ -32,6 +32,17 @@ const states: Record<State, string> = {
 };
 const field = "grid gap-2 text-sm";
 const select = "h-9 rounded-md border border-neutral-200 bg-white px-3 disabled:opacity-50";
+
+function modelLabel(
+  model: string | null,
+  catalog: Capability | null | undefined,
+  runtime: unknown = catalog?.runtime,
+  snapshotHash: unknown = catalog?.snapshotHash,
+): string {
+  if (catalog?.runtime !== runtime || catalog?.snapshotHash !== snapshotHash) return model ?? "";
+  const name = catalog?.models.find((item) => item.model === model)?.displayName;
+  return name && name !== model ? `${name} (${model})` : (model ?? "");
+}
 
 export function RuntimeSettingsForm({
   deviceId,
@@ -197,7 +208,7 @@ export function RuntimeSettingsForm({
               </option>
               {catalog.models.map((item) => (
                 <option key={item.id} value={item.model}>
-                  {item.model}
+                  {modelLabel(item.model, catalog)}
                 </option>
               ))}
             </select>
@@ -269,7 +280,7 @@ export function RuntimeSettingsForm({
           <p>
             {operation.requested.runtime === "codex" ? "Codex" : "Claude"}
             {typeof operation.requested.model === "string"
-              ? ` · ${operation.requested.model}`
+              ? ` · ${modelLabel(operation.requested.model, response?.catalog, operation.requested.runtime, operation.requested.snapshotHash)}`
               : " · 모델 선택 전"}
             {typeof operation.requested.effort === "string"
               ? ` · ${operation.requested.effort}`
@@ -282,7 +293,8 @@ export function RuntimeSettingsForm({
         {applied ? (
           <>
             <p>
-              {applied.runtime === "codex" ? "Codex" : "Claude"} · {applied.model}
+              {applied.runtime === "codex" ? "Codex" : "Claude"} ·{" "}
+              {modelLabel(applied.model, response?.catalog, applied.runtime, applied.snapshotHash)}
               {applied.effort !== null ? ` · ${applied.effort}` : ""}
             </p>
             <p>

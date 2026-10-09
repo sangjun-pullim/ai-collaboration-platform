@@ -58,6 +58,7 @@ export interface RequestedSettings {
 export interface ModelCapability {
   id: string;
   model: string;
+  displayName?: string;
   efforts: string[];
   defaultEffort: string | null;
   isDefault: boolean;

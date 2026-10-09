@@ -621,7 +621,7 @@ test("should discover a terminal registration and show the approved room AI sett
   nextCleanup();
   assert.equal(timers.size, 0);
 });
-function formTree(view: SettingsView) {
+function formTree(view: SettingsView, onModel: (model: string) => void = () => {}) {
   const component = loadUI("src/features/runtime-settings/runtime-settings-form.tsx", {
     react: {
       useMemo: (factory: () => unknown) => factory(),
@@ -637,6 +637,7 @@ function formTree(view: SettingsView) {
       confirmedCatalog,
       selectionSaved,
       SettingsController: class {
+        setModel = onModel;
         getSnapshot = () => view;
         subscribe() {}
       },
@@ -1195,4 +1196,56 @@ test("should prepare a room-specific command and expose it when clipboard permis
   assert.equal(nodes(changed).find((node) => node.type === "button")?.props.disabled, true);
   assert.equal(nodes(changed).find((node) => node.type === "textarea")?.props.value, "");
   cleanup();
+});
+
+test("should render the native display name and retain the executable option value", () => {
+  const named = catalog();
+  Object.assign(named.models[0], { displayName: "Claude Native (context)" });
+  let selected = "";
+  const tree = formTree(formView({ response: confirmed(named) }), (model) => {
+    selected = model;
+  });
+  const option = nodes(tree).find(
+    (node) => node.type === "option" && node.props.value === "model-one",
+  )!;
+  assert.equal(textContent(option), "Claude Native (context) (model-one)");
+  assert.equal(option.props.value, "model-one");
+  const select = nodes(tree).find((n) => n.type === "select" && nodes(n).includes(option))!;
+  (select.props.onChange as (event: unknown) => void)({ target: { value: option.props.value } });
+  assert.equal(selected, "model-one");
+  Object.assign(named.models[0], { displayName: "model-one" });
+  const sameTree = formTree(formView({ response: confirmed(named) }));
+  assert.equal(
+    textContent(nodes(sameTree).find((n) => n.type === "option" && n.props.value === "model-one")!),
+    "model-one",
+  );
+});
+
+test("should use a native label for matching requested and applied settings identities only", () => {
+  const c = catalog();
+  c.models[0].displayName = "Native Claude";
+  const selection = { model: "model-one", effort: null, snapshotHash: c.snapshotHash };
+  const current = confirmed(c, selection);
+  current.applied = {
+    ...localReceipt("APPLIED"),
+    runtime: "claude",
+    ...selection,
+    agentId,
+    workspaceId: rootId,
+    bindingEpoch: 7,
+  };
+  const tree = formTree(formView({ response: current }));
+  for (const label of ["요청한 설정", "PC에 적용된 설정"])
+    assert.match(
+      textContent(nodes(tree).find((n) => n.props["aria-label"] === label)),
+      /Native Claude \(model-one\)/,
+    );
+  current.applied.snapshotHash = "b".repeat(64);
+  current.operation!.requested.snapshotHash = "b".repeat(64);
+  const stale = formTree(formView({ response: current }));
+  for (const label of ["요청한 설정", "PC에 적용된 설정"])
+    assert.doesNotMatch(
+      textContent(nodes(stale).find((n) => n.props["aria-label"] === label)),
+      /Native Claude/,
+    );
 });

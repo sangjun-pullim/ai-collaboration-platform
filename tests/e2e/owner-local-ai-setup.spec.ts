@@ -120,6 +120,12 @@ test("should distinguish owner Claude request application and readiness and answ
     await expect(
       form.getByRole("combobox", { name: "모델", exact: true }).getByRole("option"),
     ).toHaveCount(2);
+    await expect(
+      form.getByRole("option", {
+        name: "Synthetic model name (claude-product-synthetic)",
+        exact: true,
+      }),
+    ).toHaveAttribute("value", "claude-product-synthetic");
     await form
       .getByRole("combobox", { name: "모델", exact: true })
       .selectOption("claude-product-synthetic");
@@ -134,7 +140,14 @@ test("should distinguish owner Claude request application and readiness and answ
     );
     await form.getByRole("button", { name: "모델 선택 확인", exact: true }).click();
     const selected = await selection;
-    check(selected.status() === 200 && selected.request().postDataJSON().effort === null);
+    check(
+      selected.status() === 200 &&
+        selected.request().postDataJSON().effort === null &&
+        selected.request().postDataJSON().model === "claude-product-synthetic",
+    );
+    await expect(form.getByLabel("요청한 설정", { exact: true })).toContainText(
+      "Synthetic model name (claude-product-synthetic)",
+    );
     await form.getByLabel("공개 세션 별칭", { exact: true }).fill("브라우저 Claude AI");
     await form.getByRole("button", { name: "PC에 설정 적용", exact: true }).click();
     await expect(form).toContainText("PC 적용 기다림");
@@ -208,6 +221,12 @@ test("should show the observed Codex catalog and wait for PC cancellation cleanu
     await login(requester, scene, "requester");
     await owner.goto("/app/connections");
     const form = await folder(owner, scene, "codex");
+    await expect(
+      form.getByRole("option", {
+        name: "Synthetic model name (owned-synthetic)",
+        exact: true,
+      }),
+    ).toHaveAttribute("value", "owned-synthetic");
     await form.getByRole("combobox", { name: "모델", exact: true }).selectOption("owned-synthetic");
     await expect(
       form.getByRole("combobox", { name: "추론 강도 (effort)", exact: true }),

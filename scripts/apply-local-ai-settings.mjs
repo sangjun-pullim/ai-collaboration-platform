@@ -37,6 +37,10 @@ const migrations = [
     "20261008001600-runtime-settings-binding-receipt.sql",
     "058c0809c4ef9932a331f3e1bff79a3503637a9d6bd20d33f244c3d17931bd7a",
   ],
+  [
+    "20261009001700-runtime-model-display-names.sql",
+    "9e9ffe47f3dbb5e7b312377c91dec7aec29e16c808fbfa6b0c42c46b58e36774",
+  ],
 ];
 const featureChecks = {
   aiSettings: `to_regprocedure('public.runtime_settings_human(text,jsonb)') IS NOT NULL
@@ -54,14 +58,15 @@ const featureChecks = {
 const corrections = [
   {
     key: "catalog",
-    migration: migrations[4][0],
+    migration: migrations[7][0],
     signature: "runtime_settings_private.catalog_ok(jsonb)",
     arguments: ["b"],
     returnType: "boolean",
     securityDefiner: false,
     volatility: "i",
     legacyHash: "832697b9f563f43e138ecbb812538055",
-    fixedHash: "e2a0c2af48bb54566c10ab0a2a6b9a0b",
+    previousHash: "e2a0c2af48bb54566c10ab0a2a6b9a0b",
+    fixedHash: "bbb006cfb7bc9767a4bb25fdff528096",
     error: "CATALOG_SOURCE_UNVERIFIED",
   },
   {
@@ -101,16 +106,23 @@ function reviewedSourceSql(correction, hash) {
     AND p.prolang=(SELECT oid FROM pg_catalog.pg_language WHERE lanname='plpgsql')
     AND p.proconfig=ARRAY['search_path=""']::text[] AND md5(p.prosrc)='${hash}')`;
 }
+const correctionKinds = (correction) =>
+  correction.previousHash
+    ? ["Absent", "Legacy", "Previous", "Fixed"]
+    : ["Absent", "Legacy", "Fixed"];
 const correctionChecks = Object.fromEntries(
   corrections.flatMap((correction) => [
     [`${correction.key}Absent`, `to_regprocedure('${correction.signature}') IS NULL`],
     [`${correction.key}Legacy`, reviewedSourceSql(correction, correction.legacyHash)],
+    ...(correction.previousHash
+      ? [[`${correction.key}Previous`, reviewedSourceSql(correction, correction.previousHash)]]
+      : []),
     [`${correction.key}Fixed`, reviewedSourceSql(correction, correction.fixedHash)],
   ]),
 );
 function assertCorrectionState(state, installed) {
   for (const correction of corrections) {
-    const values = ["Absent", "Legacy", "Fixed"].map((kind) => state[`${correction.key}${kind}`]);
+    const values = correctionKinds(correction).map((kind) => state[`${correction.key}${kind}`]);
     if (values.filter(Boolean).length !== 1 || (installed ? values[0] : !values[0]))
       throw new UpgradeError(correction.error);
   }
@@ -118,7 +130,7 @@ function assertCorrectionState(state, installed) {
 function expectedCorrectionChecks(state) {
   return Object.fromEntries(
     corrections.map((correction) => {
-      const key = ["Absent", "Legacy", "Fixed"]
+      const key = correctionKinds(correction)
         .map((kind) => `${correction.key}${kind}`)
         .find((key) => state[key]);
       return [key, correctionChecks[key]];
@@ -198,10 +210,15 @@ BEGIN
 END;
 $local_settings_guard$;`;
 }
-function correctionGuardSql(correction) {
+function correctionGuardSql(correction, previousMigration = false) {
+  const allowed =
+    correctionChecks[`${correction.key}Legacy`] +
+    (correction.previousHash && !previousMigration
+      ? ` OR (${correctionChecks[`${correction.key}Previous`]})`
+      : "");
   return `DO $local_correction_guard$
 BEGIN
-  IF (${correctionChecks[`${correction.key}Legacy`]}) IS NOT TRUE THEN
+  IF (${allowed}) IS NOT TRUE THEN
     RAISE EXCEPTION USING MESSAGE='${correction.error}', ERRCODE='P0001';
   END IF;
 END;
@@ -289,8 +306,11 @@ async function migrationBodies(selected) {
           throw new UpgradeError("MIGRATION_TRANSACTION_CHANGED");
         sql = sql.replace(/^begin;\s*/i, "").replace(/\s*commit;$/i, "");
       }
-      const correction = corrections.find((entry) => entry.migration === name);
-      return correction ? `${correctionGuardSql(correction)}\n${sql}` : sql;
+      const previousMigration = name === migrations[4][0];
+      const correction = previousMigration
+        ? corrections[0]
+        : corrections.find((entry) => entry.migration === name);
+      return correction ? `${correctionGuardSql(correction, previousMigration)}\n${sql}` : sql;
     }),
   );
 }
@@ -341,7 +361,9 @@ export async function runLocalSettingsUpgrade(apply = false, execute = executeDo
   assertCorrectionState(state, installed);
   const baseline = flags(await inspect(baselineSql), Object.keys(baselineChecks));
   if (!Object.values(baseline).every(Boolean)) throw new UpgradeError("BASELINE_NOT_READY");
-  const pending = corrections.filter((correction) => state[`${correction.key}Legacy`]);
+  const pending = corrections.filter(
+    (correction) => state[`${correction.key}Legacy`] || state[`${correction.key}Previous`],
+  );
   if (installed && pending.length === 0)
     return { status: "ALREADY_PRESENT", features: before, modelInputs: 0 };
   const selected = installed

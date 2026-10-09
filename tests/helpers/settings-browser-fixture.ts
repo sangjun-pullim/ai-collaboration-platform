@@ -59,6 +59,7 @@ export async function runSettingsBrowserParent() {
         sceneNames.add(sceneName);
         const id = randomUUID(),
           fixture = await ClaudeProductFixture.open(workflow, `browser-${fixtures.size}`);
+        fixture.modelDisplayName = "Synthetic model name";
         if (input.scenario === "automatic") fixture.readMode = "AUTO_CODE";
         fixtures.set(id, fixture);
         fixture.suppressRunner = true;
