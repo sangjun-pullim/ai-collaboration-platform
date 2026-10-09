@@ -9,6 +9,26 @@ import { connectionFixture, pins, preloadNames } from "../helpers/local-connecti
 import { localConnectionCommand } from "../../src/features/device-binding/local-connection-command.ts";
 
 const macOnly = { skip: process.platform !== "darwin" };
+test("should import a CLI entry without also executing its direct command", macOnly, async (t) => {
+  const f = await connectionFixture(t, { directEntry: true });
+  const result = await f.run();
+  assert.equal(result.stderr, "");
+  const executed = JSON.parse(await readFile(f.runFile, "utf8"));
+  assert.deepEqual(executed.args, [
+    "connect",
+    "--server",
+    f.args[0],
+    "--profile",
+    f.args[1],
+    "--device-alias",
+    f.args[2],
+    "--organization-id",
+    f.args[3],
+    "--room-id",
+    f.args[4],
+  ]);
+  assert.deepEqual(await readdir(join(f.root, "work")), []);
+});
 test(
   "should reuse a supported runtime and preserve state after verified cleanup",
   macOnly,

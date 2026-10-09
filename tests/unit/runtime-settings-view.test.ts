@@ -471,6 +471,156 @@ function formView(change: Partial<SettingsView> = {}): SettingsView {
     ...change,
   };
 }
+
+test("should discover a terminal registration and show the approved room AI settings without reloading", async () => {
+  const states: unknown[] = [],
+    refs: { current: unknown }[] = [],
+    effects: (() => unknown)[] = [];
+  const timers = new Map<number, () => void>();
+  let cursor = 0,
+    refCursor = 0,
+    refreshed = 0,
+    timerId = 0,
+    time = Date.now();
+  const document = { visibilityState: "visible" };
+  const ui = loadUI(
+    "src/features/device-binding/connection-manager.tsx",
+    {
+      react: {
+        useEffect: (effect: () => unknown) => effects.push(effect),
+        useRef(initial: unknown) {
+          return (refs[refCursor++] ??= { current: initial });
+        },
+        useState(initial: unknown) {
+          const slot = cursor++;
+          if (!(slot in states)) states[slot] = typeof initial === "function" ? initial() : initial;
+          return [
+            states[slot],
+            (next: unknown) => {
+              states[slot] = next;
+            },
+          ];
+        },
+      },
+      "next/link": { default: "link" },
+      "next/navigation": {
+        useRouter: () => ({
+          refresh() {
+            refreshed++;
+          },
+        }),
+      },
+      "./contracts": { messages: {} },
+      "../../components/ui/button": { Button: "button" },
+      "../../components/ui/input": { Input: "input" },
+      "../runtime-settings/runtime-settings-form": { RuntimeSettingsForm: "settings-form" },
+      "./local-connection-guide": { LocalConnectionGuide: "connection-guide" },
+      "./local-connection-command": { consumeConnectionFragment },
+      "../room-access/access.module.css": { default: {} },
+    },
+    {
+      Date: class extends Date {
+        static now() {
+          return time;
+        }
+      },
+      document,
+      FormData: class {
+        get(key: string) {
+          return key === "confirmed" ? "on" : "a".repeat(64);
+        }
+      },
+      async fetch(url: string) {
+        assert.equal(url, "/api/connections/approve");
+        return {
+          ok: true,
+          async json() {
+            return { ok: true, data: { deviceAlias: "내 Mac" } };
+          },
+        };
+      },
+      setInterval(fn: () => void) {
+        timers.set(++timerId, fn);
+        return timerId;
+      },
+      clearInterval(id: number) {
+        timers.delete(id);
+      },
+    },
+  ).ConnectionManager as (props: unknown) => UINode;
+  const props = {
+    devices: [] as {
+      deviceId: string;
+      deviceAlias: string;
+      organizationId: string;
+      roomId: string;
+      state: string;
+      lastSeenAt: null;
+      expiresAt: string;
+    }[],
+    rooms: [deviceId, rootId].map((roomId) => ({
+      roomId,
+      organizationId: agentId,
+      roomTitle: roomId,
+      organizationName: "조직",
+    })),
+    origin: "https://example.com",
+    userId: secondOperationId,
+  };
+  const render = () => {
+    cursor = 0;
+    refCursor = 0;
+    effects.length = 0;
+    return ui(props);
+  };
+  let tree = render();
+  (
+    nodes(tree).find((node) => node.props.name === "roomId")!.props.onChange as (
+      event: unknown,
+    ) => void
+  )({ target: { value: rootId } });
+  tree = render();
+  const submit = nodes(tree).find((node) => node.type === "form")!.props.onSubmit as (
+    event: unknown,
+  ) => Promise<void>;
+  await submit({ preventDefault() {}, currentTarget: { reset() {} } });
+  assert.equal(refreshed, 1);
+  const cleanup = effects[1]() as () => void;
+  for (const tick of timers.values()) tick();
+  assert.equal(refreshed, 2);
+  document.visibilityState = "hidden";
+  for (const tick of timers.values()) tick();
+  assert.equal(refreshed, 2);
+  document.visibilityState = "visible";
+  props.devices.push({
+    deviceId: operationId,
+    deviceAlias: "내 Mac",
+    organizationId: agentId,
+    roomId: rootId,
+    state: "active",
+    lastSeenAt: null,
+    expiresAt: new Date(time + 3600000).toISOString(),
+  });
+  cleanup();
+  tree = render();
+  assert.equal(
+    nodes(tree).find((node) => node.type === "settings-form")?.props.deviceId,
+    operationId,
+  );
+  const nextCleanup = effects[1]() as () => void;
+  for (const tick of timers.values()) tick();
+  assert.equal(refreshed, 2);
+  await (nodes(tree).find((node) => node.type === "form")!.props.onSubmit as typeof submit)({
+    preventDefault() {},
+    currentTarget: { reset() {} },
+  });
+  assert.equal(refreshed, 3);
+  time += 300001;
+  for (const tick of timers.values()) tick();
+  assert.equal(refreshed, 3);
+  nextCleanup();
+  assert.equal(timers.size, 0);
+});
 function formTree(view: SettingsView) {
   const component = loadUI("src/features/runtime-settings/runtime-settings-form.tsx", {
     react: {
