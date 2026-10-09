@@ -1,5 +1,5 @@
 ---
-verified-against: 3e84d8cd2f3754a33154083a23869ca0f5c8cfe8
+verified-against: 498e5ea5bc6948681c2bca6f0063fb53d8d156fa
 sources:
   - src/**
   - packages/local-connector/src/**
@@ -164,7 +164,11 @@ Claude 읽기 도구 중단은 입력·도구·control ID와 payload·취소 프
 
 로컬 실행기의 제거 보호는 내부 `workflow/local-removal.ts`가 소유 정보와 저장 맥락의 검증, 파일 속성 확인·삭제, session 잠금 안의 callback을 담당한다. `WorkflowRunner`는 진입 검사·binding 잠금·같은 실행 권한과 추적 작업·종료 대기·퇴역 상태를 계속 소유한다. 공개 `guardLocalRemoval`과 `removeLocal`, CLI의 전체 profile 제거는 기존 proof 구조와 수명·오류 순서를 유지한다. 제거 모듈은 일반 실행·복구·공급자 종료를 맡지 않는다.
 
-로컬 실행 기록은 `RuntimeStore`가 주 파일과 상태 전이를 관리하고, 내부 `RuntimeArchive`가 완료된 요청의 원문 보관 파일을 검증한다. `WorkflowRunner`는 실행·파일 읽기·서버 응답 저장에 앞서 종결과 완료 전송 공간을 확보한다. 한 저장 안에서는 보관 원문·해석 결과를 재사용하고 이전·다음 기록과의 관계를 각각 검증한다. 내부 모듈이 열린 파일과 현재 경로를 검증 범위 전후에 재대조하고 정리하며, 저장이나 호출 사이에는 결과를 보관하지 않는다. 선택 파일 도구의 저장 예약은 검증한 snapshot의 바이트 크기로 계산하며 실제 읽기 권한·변경 감지는 기존 파일 정책이 계속 확인한다. 보관 증거는 새 실행 권한이나 새 저장 세션으로 사용하지 않는다. [보관·용량 규칙](research/ai-runtime-integration.md#로컬-실행-기록-보관과-용량)과 [현재 검증 상태](planning/delivery-and-validation.md#현재-진행-상태)를 따른다.
+로컬 실행 기록의 파일 I/O·잠금·영속 저장·보관 전환은 `RuntimeStore`가 담당한다. 내부 `runtime/record-schema.ts`는 저장 형식을, `record-validation.ts`는 기록 안의 관계를, `record-transitions.ts`는 이전·다음 기록의 상태 전환을 검증한다. 공통 순수 판정은 `record-helpers.ts`에 두며 기존 공개 함수는 원래 `runtime-store.ts`에서 제공한다. 저장의 잠금 전 기본 검증과 잠금 뒤 상태 검증, 완료 기록의 별도 보관 전환 경로를 유지한다.
+
+내부 `RuntimeArchive`는 완료된 요청의 원문 보관 파일을 검증한다. `WorkflowRunner`는 실행·파일 읽기·서버 응답 저장에 앞서 종결과 완료 전송 공간을 확보한다. 한 저장 안에서는 보관 원문·해석 결과를 재사용하고 이전·다음 기록과의 관계를 각각 검증한다. 내부 모듈이 열린 파일과 현재 경로를 검증 범위 전후에 재대조하고 정리하며, 저장이나 호출 사이에는 결과를 보관하지 않는다. 선택 파일 도구의 저장 예약은 검증한 snapshot의 바이트 크기로 계산하며 실제 읽기 권한·변경 감지는 기존 파일 정책이 계속 확인한다. 보관 증거는 새 실행 권한이나 새 저장 세션으로 사용하지 않는다. [보관·용량 규칙](research/ai-runtime-integration.md#로컬-실행-기록-보관과-용량)과 [현재 검증 상태](planning/delivery-and-validation.md#현재-진행-상태)를 따른다.
+
+실행 권한의 ACK·도구 취소·중단 증거 콜백은 내부 `workflow/attempt-authority.ts`가 구성한다. 현재 기록, 직렬화한 변경, 활성 권한, 호출 목록과 용량 예약은 `WorkflowRunner`가 계속 소유한다. 내부 모듈은 이 소유자의 검사·저장 기능만 전달받으며 별도 실행 상태를 만들지 않는다. 실행과 시작 전 복구의 비공개 헬퍼는 입력 전 증거 저장과 서버 영수증 확인을 나눈다. 호출 순서와 대기 지점, monitor 중단·대기와 `finally`의 저장·호출·예약 정리를 유지한다.
 
 파일 접근의 내부 모듈은 `workspace/safe-file-reader.ts`에서 root·조상·파일 descriptor의 식별자와 소유권·내용을 검사하고 열린 파일을 정리한다. 기존 `RuntimeFilePolicy`는 이를 사용하며 선택 파일의 승인·원문 반환·snapshot 비교를 유지한다. 새 `workspace/repository-reader.ts`의 `RepositoryReader`는 승인한 root의 목록·문자열 검색·UTF-8 바이트 발췌와 누적 탐색 예산을 담당한다. 자동 모드의 내용 검사는 `workspace/automatic-content-policy.ts`가 소유하며 quoted key·JWT를 전진 검사해 반복 문자열의 비용을 제한한다. 기존 선택 파일과 공개 문자열의 비밀 검사 패턴은 유지한다. 반환 코드에는 전체 파일 hash·읽은 시각·바이트 범위·발췌 hash를 연결하고 전체 줄 수는 검증한 원문에서 계산한다. 일반 인증·설정 구현 코드와 비밀 설정 자료를 구분한다. 자동 탐색 권한은 `workspace/repository-access.ts`가 새 설정 세대·등록 root·해당 Mac의 명시적 승인에 묶어 검증한다. `workspace/tool-contracts.ts`는 모드별 도구 정의·인자와 origin 역할 판별을 양 공급자에 제공한다. `workflow/repository-tools.ts`는 실행 한 번의 reader·호출 및 동시성 예산·반환 관찰·상대 질문의 사전 근거 검증을 맡는다. `WorkflowRunner`는 실행 권한·용량 예약·내구 저장·서버 발송 순서를 계속 소유한다. 기존 빈 선택 목록을 자동 탐색 승인으로 해석하지 않으며 입력 전 `SourceObservation v1`과 실제 읽기 자료는 서로 다른 관찰이다. 운영 연결과 중앙 코드 이력의 남은 범위는 [개발·검증 상태](planning/delivery-and-validation.md#다음-작업-순서)를 따른다.
 

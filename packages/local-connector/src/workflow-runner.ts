@@ -1,3 +1,5 @@
+import { createAttemptAuthority } from "./workflow/attempt-authority.ts";
+import { isOriginRoleRequestKind } from "./workspace/tool-contracts.ts";
 import { projectSourceManifest } from "./workflow/source-manifest.ts";
 import { publishSource } from "./workflow/source-publisher.ts";
 import { ownRuntimeRecord } from "./workflow/record-snapshot.ts";
@@ -10,7 +12,6 @@ import {
   peerEvidenceReserveBytes,
 } from "./workflow/repository-tools.ts";
 import { validateToolArguments, isRepositoryTool } from "./workspace/tool-contracts.ts";
-import { isOriginRoleRequestKind } from "./workspace/tool-contracts.ts";
 import { randomUUID } from "node:crypto";
 import { performance } from "node:perf_hooks";
 import { resolve } from "node:path";
@@ -45,6 +46,7 @@ import {
   type AttemptAuthority,
   type AttemptJournal,
   claudeInterruptRequest,
+  type NativeInputIntent,
   type NativeInterruption,
   type RequestedSettings,
   type RuntimeAdapter,
@@ -1274,13 +1276,8 @@ export class WorkflowRunner {
     return "OPEN";
   }
   private async execute(payload: RequestPayload) {
-    this.check();
-    if (
-      payload.agentId !== this.record.scope.agentId ||
-      payload.bindingEpoch !== this.record.scope.bindingEpoch ||
-      Date.parse(payload.deadline) <= Date.now()
-    )
-      throw new RuntimeError("AUTHORITY_LOST");
+    this.assertExecutionPayload(payload);
+
     try {
       await this.admitExecution();
       this.check();
@@ -1308,22 +1305,7 @@ export class WorkflowRunner {
       sourceCapacityKey,
       sourceObservationReserveBytes(this.record.settings!.files),
     );
-    await this.mutate("claim-intent", (record) => {
-      delete record.lastArchive;
-      record.attempts.push({
-        requestId,
-        claimOperationId,
-        scope: structuredClone(record.scope),
-        generation: record.context!.generation,
-        state: "CLAIM_PENDING",
-        snapshot: null,
-        native: null,
-        terminal: null,
-        receipt: null,
-        reason: null,
-        toolCalls: [],
-      });
-    });
+    await this.recordClaimIntent(requestId, claimOperationId);
     try {
       const claim = await this.operation("claim", { requestId }, claimOperationId);
       let snapshot: AttemptSnapshot;
@@ -1336,119 +1318,10 @@ export class WorkflowRunner {
         }
         throw error;
       }
-      if (
-        !same(snapshot.payload, payload) ||
-        snapshot.state !== "LEASED" ||
-        Date.parse(snapshot.leaseExpiresAt) <= Date.now()
-      )
-        throw new RuntimeError("AUTHORITY_LOST");
-      await this.mutate(
-        "claimed",
-        (record) => {
-          const a = this.journal(journalId, record);
-          a.snapshot = snapshot;
-          a.state = "CLAIMED";
-        },
-        this.check,
-        this.snapshotReservation(claim, snapshot, journalId),
-      );
+      this.assertClaimSnapshot(snapshot, payload);
+      await this.recordClaimSnapshot(journalId, claim, snapshot);
       const interruptionStorageClosed = new AbortController();
-      const authority: AttemptAuthority = {
-        scope: structuredClone(this.record.scope),
-        context: structuredClone(this.record.context!),
-        attempt: snapshot,
-        peerTools: isOriginRoleRequestKind(snapshot.payload.requestKind),
-        signal: this.admission.signal,
-        assertLive: () => this.live(journalId),
-        ack: async (threadId, turnId, initHash) => {
-          this.live(journalId);
-          if (
-            threadId !== authority.context.threadId ||
-            authority.context.ownedTurns.some((t) => t.turnId === turnId)
-          )
-            throw new RuntimeError("UNKNOWN");
-          await this.mutate(
-            "native-ack",
-            (record) => {
-              const a = this.journal(journalId, record);
-              if (a.state !== "PROVIDER_INTENT") throw new RuntimeError("UNKNOWN");
-              if (record.settings?.provider === "claude") {
-                if (
-                  !a.nativeIntent ||
-                  a.nativeIntent.sessionId !== threadId ||
-                  a.nativeIntent.inputId !== turnId ||
-                  !isHash(initHash) ||
-                  !record.context?.materialization
-                )
-                  throw new RuntimeError("UNKNOWN");
-                if (record.context.materialization.state === "RESERVED") {
-                  record.context.materialization.state = "MATERIALIZED";
-                  record.context.materialization.initHash = initHash;
-                }
-              }
-              a.native = { threadId, turnId };
-              a.state = "ACKNOWLEDGED";
-            },
-            () => this.live(journalId),
-          );
-          this.live(journalId);
-          this.toolOpen = true;
-        },
-        tool: async (call) => this.admission.track(() => this.tool(journalId, call)),
-        cancelledTool: async (proof) => {
-          const pending = this.calls.get(`${journalId}:${proof.callId}`);
-          if (pending) {
-            if (pending.hash !== proof.payloadHash) throw new RuntimeError("UNKNOWN");
-            // Close this exact call before waiting for its intent write; never wait for reader I/O.
-            pending.closed = true;
-            await pending.intent;
-          }
-          await this.mutate(
-            "native-tool-cancellation",
-            (record) => {
-              const a = this.journal(journalId, record);
-              if (
-                record.settings?.provider !== "claude" ||
-                !a.nativeIntent ||
-                !a.native ||
-                !a.toolCalls.some(
-                  (call) => call.callId === proof.callId && call.payloadHash === proof.payloadHash,
-                ) ||
-                (a.toolCancellations ?? []).some(
-                  (c) => c.callId === proof.callId || c.controlId === proof.controlId,
-                )
-              )
-                throw new RuntimeError("UNKNOWN");
-              (a.toolCancellations ??= []).push(structuredClone(proof));
-            },
-            () => this.live(journalId),
-          );
-        },
-        interruption: async (proof) => {
-          if (this.interruptionStorage(journalId, authority, proof) === "CLOSED") return "CLOSED";
-          const guard = () => {
-            if (interruptionStorageClosed.signal.aborted) throw new RuntimeError("RUNTIME_CLOSED");
-            if (this.interruptionStorage(journalId, authority, proof) === "CLOSED")
-              throw new RuntimeError("AUTHORITY_LOST");
-          };
-          const write = this.mutate(
-            "native-interruption",
-            (record) => {
-              const a = this.journal(journalId, record);
-              if (proof.receipt && !a.nativeInterruption) throw new RuntimeError("UNKNOWN");
-              a.nativeInterruption = structuredClone(proof);
-            },
-            guard,
-          );
-          this.interruptionWrites.add(write);
-          try {
-            await this.waitInterruptionStorage(write, interruptionStorageClosed.signal);
-            return "SAVED";
-          } finally {
-            this.interruptionWrites.delete(write);
-          }
-        },
-      };
+      const authority = this.executionAuthority(journalId, snapshot, interruptionStorageClosed);
       this.active = authority;
       this.repositoryTools =
         repositoryMode(this.record.settings!, authority.context) === "AUTO_CODE"
@@ -1466,73 +1339,17 @@ export class WorkflowRunner {
         },
       );
       try {
-        await this.mutate("server-intent", (record) => {
-          this.journal(journalId, record).state = "SERVER_INTENT_PENDING";
-        });
+        await this.recordServerIntent(journalId);
         const start = await this.operation("start-intent", this.identity(this.journal(journalId)));
         const intent = (await this.transmit(start)) as AttemptSnapshot;
-        matchAttempt(intent, snapshot);
-        if (intent.state !== "EXECUTING" || !intent.startIntentAt)
-          throw new RuntimeError("AUTHORITY_LOST");
-        await this.mutate(
-          "server-intent-confirmed",
-          (record) => {
-            const a = this.journal(journalId, record);
-            a.snapshot = intent;
-            a.state = "SERVER_INTENT_CONFIRMED";
-          },
-          this.check,
-          this.snapshotReservation(start, intent, journalId),
-        );
+        this.assertServerIntent(intent, snapshot);
+
+        await this.recordServerIntentSnapshot(journalId, start, intent);
         authority.attempt = intent;
         const evidence = await this.admission.wait(() =>
-          this.adapter.execute(authority, this.record.settings!, payload, async (intent) => {
-            this.live(journalId);
-            this.assertOrdinaryCapacity();
-            if (this.journal(journalId).state !== "SERVER_INTENT_CONFIRMED")
-              throw new RuntimeError("UNKNOWN");
-            const sourceObservation = await collectSourceObservation(
-              this.record.context!.root,
-              this.record.settings!.files,
-              () => this.live(journalId),
-              authority.signal,
-              this.options.sourceGitExecutor,
-            );
-            this.live(journalId);
-            await this.mutate(
-              "provider-intent",
-              (record) => {
-                const a = this.journal(journalId, record);
-                if (a.state !== "SERVER_INTENT_CONFIRMED") throw new RuntimeError("UNKNOWN");
-                if (record.settings?.provider === "claude") {
-                  if (
-                    !intent ||
-                    intent.provider !== "claude" ||
-                    record.version !== 2 ||
-                    intent.sessionId !== record.context?.threadId ||
-                    intent.generation !== a.generation ||
-                    !same(intent.scope, a.scope) ||
-                    intent.attemptId !== a.snapshot?.attemptId ||
-                    intent.fence !== a.snapshot?.fence ||
-                    intent.policyFingerprint !== record.context?.materialization?.policyFingerprint
-                  )
-                    throw new RuntimeError("UNKNOWN");
-                  a.nativeIntent = structuredClone(intent);
-                } else if (intent) throw new RuntimeError("INVALID_RUNTIME");
-                a.sourceObservation = sourceObservation;
-                a.state = "PROVIDER_INTENT";
-              },
-              () => this.live(journalId),
-              {
-                operationId: sourceCapacityKey,
-                remaining: (record) =>
-                  same(this.journal(journalId, record).sourceObservation, sourceObservation)
-                    ? 0
-                    : undefined,
-              },
-            );
-            this.live(journalId);
-          }),
+          this.adapter.execute(authority, this.record.settings!, payload, (intent) =>
+            this.beforeProviderInput(journalId, sourceCapacityKey, authority, intent),
+          ),
         );
         this.check();
         this.toolOpen = false;
@@ -1557,6 +1374,170 @@ export class WorkflowRunner {
       if (!this.retired) await this.markUnresolvedUnknown(this.lossReason ?? code(error));
     }
   }
+  private assertExecutionPayload(payload: RequestPayload) {
+    this.check();
+    if (
+      payload.agentId !== this.record.scope.agentId ||
+      payload.bindingEpoch !== this.record.scope.bindingEpoch ||
+      Date.parse(payload.deadline) <= Date.now()
+    )
+      throw new RuntimeError("AUTHORITY_LOST");
+  }
+
+  private recordClaimIntent(requestId: string, claimOperationId: string) {
+    return this.mutate("claim-intent", (record) => {
+      delete record.lastArchive;
+      record.attempts.push({
+        requestId,
+        claimOperationId,
+        scope: structuredClone(record.scope),
+        generation: record.context!.generation,
+        state: "CLAIM_PENDING",
+        snapshot: null,
+        native: null,
+        terminal: null,
+        receipt: null,
+        reason: null,
+        toolCalls: [],
+      });
+    });
+  }
+
+  private assertClaimSnapshot(snapshot: AttemptSnapshot, payload: RequestPayload) {
+    if (
+      !same(snapshot.payload, payload) ||
+      snapshot.state !== "LEASED" ||
+      Date.parse(snapshot.leaseExpiresAt) <= Date.now()
+    )
+      throw new RuntimeError("AUTHORITY_LOST");
+  }
+
+  private recordClaimSnapshot(
+    journalId: string,
+    claim: RuntimeOperation,
+    snapshot: AttemptSnapshot,
+  ) {
+    return this.mutate(
+      "claimed",
+      (record) => {
+        const a = this.journal(journalId, record);
+        a.snapshot = snapshot;
+        a.state = "CLAIMED";
+      },
+      this.check,
+      this.snapshotReservation(claim, snapshot, journalId),
+    );
+  }
+
+  private executionAuthority(
+    journalId: string,
+    snapshot: AttemptSnapshot,
+    interruptionStorageClosed: AbortController,
+  ) {
+    return createAttemptAuthority(
+      this.record,
+      snapshot,
+      this.admission.signal,
+      interruptionStorageClosed,
+      {
+        assertLive: () => this.live(journalId),
+        journal: (record) => this.journal(journalId, record),
+        mutate: (kind, update, guard) => this.mutate(kind, update, guard),
+        openTools: () => {
+          this.toolOpen = true;
+        },
+        tool: (call) => this.admission.track(() => this.tool(journalId, call)),
+        pendingTool: (callId) => this.calls.get(`${journalId}:${callId}`),
+        interruptionStorage: (authority, proof) =>
+          this.interruptionStorage(journalId, authority, proof),
+        interruptionWrites: this.interruptionWrites,
+        waitInterruptionStorage: (write, signal) => this.waitInterruptionStorage(write, signal),
+      },
+    );
+  }
+
+  private recordServerIntent(journalId: string) {
+    return this.mutate("server-intent", (record) => {
+      this.journal(journalId, record).state = "SERVER_INTENT_PENDING";
+    });
+  }
+
+  private assertServerIntent(intent: AttemptSnapshot, snapshot: AttemptSnapshot) {
+    matchAttempt(intent, snapshot);
+    if (intent.state !== "EXECUTING" || !intent.startIntentAt)
+      throw new RuntimeError("AUTHORITY_LOST");
+  }
+
+  private recordServerIntentSnapshot(
+    journalId: string,
+    start: RuntimeOperation,
+    intent: AttemptSnapshot,
+  ) {
+    return this.mutate(
+      "server-intent-confirmed",
+      (record) => {
+        const a = this.journal(journalId, record);
+        a.snapshot = intent;
+        a.state = "SERVER_INTENT_CONFIRMED";
+      },
+      this.check,
+      this.snapshotReservation(start, intent, journalId),
+    );
+  }
+
+  private async beforeProviderInput(
+    journalId: string,
+    sourceCapacityKey: string,
+    authority: AttemptAuthority,
+    intent?: NativeInputIntent,
+  ) {
+    this.live(journalId);
+    this.assertOrdinaryCapacity();
+    if (this.journal(journalId).state !== "SERVER_INTENT_CONFIRMED")
+      throw new RuntimeError("UNKNOWN");
+    const sourceObservation = await collectSourceObservation(
+      this.record.context!.root,
+      this.record.settings!.files,
+      () => this.live(journalId),
+      authority.signal,
+      this.options.sourceGitExecutor,
+    );
+    this.live(journalId);
+    await this.mutate(
+      "provider-intent",
+      (record) => {
+        const a = this.journal(journalId, record);
+        if (a.state !== "SERVER_INTENT_CONFIRMED") throw new RuntimeError("UNKNOWN");
+        if (record.settings?.provider === "claude") {
+          if (
+            !intent ||
+            intent.provider !== "claude" ||
+            record.version !== 2 ||
+            intent.sessionId !== record.context?.threadId ||
+            intent.generation !== a.generation ||
+            !same(intent.scope, a.scope) ||
+            intent.attemptId !== a.snapshot?.attemptId ||
+            intent.fence !== a.snapshot?.fence ||
+            intent.policyFingerprint !== record.context?.materialization?.policyFingerprint
+          )
+            throw new RuntimeError("UNKNOWN");
+          a.nativeIntent = structuredClone(intent);
+        } else if (intent) throw new RuntimeError("INVALID_RUNTIME");
+        a.sourceObservation = sourceObservation;
+        a.state = "PROVIDER_INTENT";
+      },
+      () => this.live(journalId),
+      {
+        operationId: sourceCapacityKey,
+        remaining: (record) =>
+          same(this.journal(journalId, record).sourceObservation, sourceObservation)
+            ? 0
+            : undefined,
+      },
+    );
+    this.live(journalId);
+  }
+
   private async monitor(
     authority: AttemptAuthority,
     signal: AbortSignal,
@@ -2420,16 +2401,7 @@ export class WorkflowRunner {
       let key = this.journalKey(original),
         a = this.journal(key);
       const sealed = a.state === "NOT_STARTED";
-      if (
-        (sealed && a.unstartedClosure?.kind !== "SERVER_ABANDONED") ||
-        ["UPLOADED", "TERMINAL", "PROVIDER_INTENT", "ACKNOWLEDGED", "RUNNING"].includes(a.state) ||
-        a.native ||
-        a.terminal ||
-        a.receipt ||
-        a.toolCalls.length ||
-        a.snapshot?.startIntentAt != null
-      )
-        continue;
+      if (this.shouldSkipUnstartedRecovery(a, sealed)) continue;
       const claims = this.record.operations.filter(
         (o) =>
           o.action === "claim" &&
@@ -2454,24 +2426,8 @@ export class WorkflowRunner {
           : claim?.state === "CONFIRMED"
             ? (claim.result as AttemptSnapshot)
             : null);
-      const starts = this.record.operations.filter(
-        (o) =>
-          o.action === "start-intent" &&
-          o.body.requestId === a.requestId &&
-          o.body.bindingEpoch === a.scope.bindingEpoch &&
-          (!known || (o.body.attemptId === known.attemptId && o.body.fence === known.fence)),
-      );
-      const leases = this.record.operations.filter(
-        (o) =>
-          o.action === "lease" &&
-          ["PENDING", "TRANSMITTED"].includes(o.state) &&
-          o.body.agentId === a.scope.agentId &&
-          o.body.requestId === a.requestId &&
-          o.body.bindingEpoch === a.scope.bindingEpoch &&
-          known &&
-          o.body.attemptId === known.attemptId &&
-          o.body.fence === known.fence,
-      );
+      const { starts, leases } = this.unstartedRecoveryOperations(a, known);
+
       if (sealed && !leases.length) continue;
       if (
         known?.startIntentAt != null ||
@@ -2480,30 +2436,7 @@ export class WorkflowRunner {
         )
       )
         continue;
-      const guard = () => {
-        this.check();
-        const current = this.journal(key);
-        if (
-          !same(current.scope, this.record.scope) ||
-          current.generation !== this.record.context?.generation ||
-          (sealed
-            ? !same(current, a)
-            : [
-                "NOT_STARTED",
-                "PROVIDER_INTENT",
-                "ACKNOWLEDGED",
-                "RUNNING",
-                "TERMINAL",
-                "UPLOADED",
-              ].includes(current.state)) ||
-          current.native ||
-          current.terminal ||
-          current.receipt ||
-          current.toolCalls.length ||
-          current.snapshot?.startIntentAt != null
-        )
-          throw new RuntimeError("AUTHORITY_LOST");
-      };
+      const guard = () => this.assertUnstartedRecovery(key, a, sealed);
       guard();
       let proof: AttemptJournal["unstartedClosure"];
       if (!claim || claim.state === "PENDING") {
@@ -2537,16 +2470,8 @@ export class WorkflowRunner {
           throw error;
         }
         guard();
-        if (
-          observed.requestId !== a.requestId ||
-          observed.agentId !== a.scope.agentId ||
-          observed.bindingEpoch !== a.scope.bindingEpoch
-        )
-          throw new RuntimeError("AUTHORITY_LOST");
-        if (known) matchAttempt(observed, known);
-        if (claim.state === "CONFIRMED") matchAttempt(observed, claim.result as AttemptSnapshot);
-        if (sealed && a.unstartedClosure?.kind === "SERVER_ABANDONED")
-          matchAttempt(observed, a.unstartedClosure.snapshot);
+        this.assertUnstartedClaimReceipt(observed, a, known, claim, sealed);
+
         if (observed.state !== "ABANDONED" || observed.startIntentAt !== null) continue;
         proof = {
           kind: "SERVER_ABANDONED",
@@ -2555,33 +2480,122 @@ export class WorkflowRunner {
         };
       }
       guard();
-      await this.mutate(
-        "unstarted-closure",
-        (record) => {
-          const current = this.journal(key, record);
-          // A sealed journal and its original receipts are immutable. Fresh claim evidence authorizes
-          // only closure of this attempt's residual leases; it never renews or replays them.
-          if (!sealed) {
-            current.unstartedClosure = proof;
-            current.state = "NOT_STARTED";
-            current.reason = null;
-          }
-          for (const op of record.operations)
-            if (
-              ["PENDING", "TRANSMITTED"].includes(op.state) &&
-              ((!sealed &&
-                (op.operationId === current.claimOperationId ||
-                  starts.some((start) => start.operationId === op.operationId))) ||
-                (proof?.kind === "SERVER_ABANDONED" &&
-                  leases.some((lease) => lease.operationId === op.operationId)))
-            )
-              op.state = "CLOSED";
-        },
-        guard,
-      );
+      await this.closeUnstartedAttempt(key, sealed, proof, starts, leases, guard);
       this.check();
     }
   }
+  private shouldSkipUnstartedRecovery(a: AttemptJournal, sealed: boolean) {
+    return (
+      (sealed && a.unstartedClosure?.kind !== "SERVER_ABANDONED") ||
+      ["UPLOADED", "TERMINAL", "PROVIDER_INTENT", "ACKNOWLEDGED", "RUNNING"].includes(a.state) ||
+      a.native ||
+      a.terminal ||
+      a.receipt ||
+      a.toolCalls.length ||
+      a.snapshot?.startIntentAt != null
+    );
+  }
+
+  private unstartedRecoveryOperations(a: AttemptJournal, known: AttemptSnapshot | null) {
+    const starts = this.record.operations.filter(
+      (o) =>
+        o.action === "start-intent" &&
+        o.body.requestId === a.requestId &&
+        o.body.bindingEpoch === a.scope.bindingEpoch &&
+        (!known || (o.body.attemptId === known.attemptId && o.body.fence === known.fence)),
+    );
+    const leases = this.record.operations.filter(
+      (o) =>
+        o.action === "lease" &&
+        ["PENDING", "TRANSMITTED"].includes(o.state) &&
+        o.body.agentId === a.scope.agentId &&
+        o.body.requestId === a.requestId &&
+        o.body.bindingEpoch === a.scope.bindingEpoch &&
+        known &&
+        o.body.attemptId === known.attemptId &&
+        o.body.fence === known.fence,
+    );
+    return { starts, leases };
+  }
+
+  private assertUnstartedRecovery(key: string, a: AttemptJournal, sealed: boolean) {
+    this.check();
+    const current = this.journal(key);
+    if (
+      !same(current.scope, this.record.scope) ||
+      current.generation !== this.record.context?.generation ||
+      (sealed
+        ? !same(current, a)
+        : [
+            "NOT_STARTED",
+            "PROVIDER_INTENT",
+            "ACKNOWLEDGED",
+            "RUNNING",
+            "TERMINAL",
+            "UPLOADED",
+          ].includes(current.state)) ||
+      current.native ||
+      current.terminal ||
+      current.receipt ||
+      current.toolCalls.length ||
+      current.snapshot?.startIntentAt != null
+    )
+      throw new RuntimeError("AUTHORITY_LOST");
+  }
+
+  private assertUnstartedClaimReceipt(
+    observed: AttemptSnapshot,
+    a: AttemptJournal,
+    known: AttemptSnapshot | null,
+    claim: RuntimeOperation,
+    sealed: boolean,
+  ) {
+    if (
+      observed.requestId !== a.requestId ||
+      observed.agentId !== a.scope.agentId ||
+      observed.bindingEpoch !== a.scope.bindingEpoch
+    )
+      throw new RuntimeError("AUTHORITY_LOST");
+    if (known) matchAttempt(observed, known);
+    if (claim.state === "CONFIRMED") matchAttempt(observed, claim.result as AttemptSnapshot);
+    if (sealed && a.unstartedClosure?.kind === "SERVER_ABANDONED")
+      matchAttempt(observed, a.unstartedClosure.snapshot);
+  }
+
+  private closeUnstartedAttempt(
+    key: string,
+    sealed: boolean,
+    proof: AttemptJournal["unstartedClosure"],
+    starts: RuntimeOperation[],
+    leases: RuntimeOperation[],
+    guard: () => void,
+  ) {
+    return this.mutate(
+      "unstarted-closure",
+      (record) => {
+        const current = this.journal(key, record);
+        // A sealed journal and its original receipts are immutable. Fresh claim evidence authorizes
+        // only closure of this attempt's residual leases; it never renews or replays them.
+        if (!sealed) {
+          current.unstartedClosure = proof;
+          current.state = "NOT_STARTED";
+          current.reason = null;
+        }
+        for (const op of record.operations)
+          if (
+            ["PENDING", "TRANSMITTED"].includes(op.state) &&
+            ((!sealed &&
+              (op.operationId === current.claimOperationId ||
+                starts.some((start) => start.operationId === op.operationId))) ||
+              (proof?.kind === "SERVER_ABANDONED" &&
+                leases.some((lease) => lease.operationId === op.operationId)))
+          )
+            op.state = "CLOSED";
+      },
+      guard,
+    );
+  }
+
   private async recover() {
     await this.recoverUnstarted();
     this.check();
