@@ -53,6 +53,7 @@
 - [승인 폴더의 코드 탐색 구현 기록](impl-spec/archive/028-bounded-repository-reader.md): 파일 사전 선택을 없애기 위한 제한된 목록·검색·읽기 모듈. 소유자 승인과 실제 AI 연결은 후속 통합에 포함한다.
 - [폴더 승인과 실제 AI 도구 연결 기록](impl-spec/archive/029-owner-approved-repository-tools.md): 로컬 승인·웹 설정·Codex/Claude 탐색 도구와 기록을 연결한 완료 계획. 실제 설정·Mac 선택과 별도의 공식 자동 탐색을 검증하고 보관했다.
 - [공식 Claude 연결과 후속 질문 계획](impl-spec/030-native-claude-chat-and-follow-up.md): 기본 factory의 실제 설치·설정 검증과 같은 소유 대화의 후속 질문을 보정한다. 자동 공동 조사의 방향 수정은 기본 채팅의 선행 조건이 아니다.
+- [모델 표시와 코드 정리 계획](impl-spec/032-model-display-and-maintainability.md): 실행 기록과 실행·복구 책임의 동작 보존 분리, 모델 표시 정보와 채팅 데이터 처리의 정리 범위를 다룬다. 완료한 범위와 승인 대기는 개발·검증 상태를 따른다.
 - [명령 한 번으로 내 Mac 연결 구현 기록](impl-spec/archive/031-one-command-local-connection.md): 별도 앱·저장소·npm 설치 없이 운영 연결 코드를 임시 실행하고 기기 승인부터 웹 AI 설정까지 이어가는 단계. 현재 실행기를 재사용하는 배포·승인·설정 연결이다. 구현·검증 상태는 개발·검증 상태 문서에서 확인한다.
 - [질문 당시 대상·코드 이력 구현 기록](impl-spec/archive/027-shared-input-source-history.md): 중앙 채팅에 예약 당시 대상과 저장한 파일 관찰을 연결한다. 입력 전 허용 파일과 실제 도구 반환을 구분하며 메시지별 상세 조회를 제공하는 단계다.
 - [진행 중인 구현 계획](impl-spec): 실행할 코드 수준 계획.
