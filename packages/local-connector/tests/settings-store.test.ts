@@ -683,3 +683,24 @@ test("should preserve exact local automatic consent and reject saved legacy scop
     await f.close();
   }
 });
+
+for (const labelled of [false, true]) {
+  test(`should roundtrip the settings journal with ${labelled ? "optional model names" : "historical bytes"}`, async () => {
+    const f = await fixture();
+    try {
+      if (labelled)
+        f.state.journal!.settings!.capabilities.models[0].displayName = "Native Test (context)";
+      await f.store.write(f.state);
+      const before = await readFile(f.store.file);
+      const state = (await f.store.read())!;
+      assert.deepEqual(state, f.state);
+      await f.store.write(state);
+      assert.deepEqual(await readFile(f.store.file), before);
+      const invalid = structuredClone(state);
+      invalid.journal!.settings!.capabilities.models[0].displayName = "Bearer private";
+      await assert.rejects(async () => f.store.write(invalid), { code: "UNSAFE_STORAGE" });
+    } finally {
+      await f.close();
+    }
+  });
+}

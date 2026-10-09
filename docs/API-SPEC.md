@@ -1,5 +1,5 @@
 ---
-verified-against: 3e84d8cd2f3754a33154083a23869ca0f5c8cfe8
+verified-against: cecc55c213c3d34b2c6480de55aa20ac10d9b0b9
 sources:
   - src/app/api/**
   - src/features/room-access/contracts.ts
@@ -16,6 +16,7 @@ sources:
   - supabase/migrations/20261006001100-own-ai-input-pause.sql
   - supabase/migrations/20261006001200-owner-approved-repository-access.sql
   - supabase/migrations/20261006001300-shared-input-source-history.sql
+  - supabase/migrations/20261009001700-runtime-model-display-names.sql
 ---
 # 사람 입장·AI 채팅방·기기·실행 조정 계약
 
@@ -120,7 +121,9 @@ Git 기준과 작업트리의 사람 cookie Auth·기기 bearer·내구 조사·
 
 새 폴더의 PC 승인 receipt에는 선택적인 `readMode:"AUTO_CODE"`를 포함한다. 없는 과거 receipt는 선택 파일 모드다. 웹은 본인 receipt의 모드를 apply에 그대로 돌려주고 서버는 승인된 root 참조와 모드의 정확한 일치를 확인한다. 값을 임의로 추가하거나 삭제한 apply는 `CONFLICT`다. 모델 선택의 `select-runtime` 본문에는 이 모드를 넣지 않는다. 로컬 승인 객체·root hash·실제 파일 관찰은 PC에 보관하며 이 설정 계약으로 보내지 않는다. [후속 설정 migration](../supabase/migrations/20261006001200-owner-approved-repository-access.sql)이 기존 요청·권한·확정·복구 계약에 이 선택적 필드를 연결한다.
 
-PC가 확인한 capability는 provider·설치 버전·모델·허용 effort·기본값·`snapshotHash`·실행 정책 검증 상태를 포함한다. 선택은 같은 snapshot의 지원 조합이어야 한다. Claude 모델이 effort를 지원하지 않는 경우 `effort:null`을 유지하고 Codex나 effort 지원 모델의 값으로 바꾸지 않는다. 정책 미검증 catalog는 모델과 기본값 없이 `unsupported`로 보고하며 적용을 허용하지 않는다.
+PC가 확인한 capability는 provider·설치 버전·모델·허용 effort·기본값·`snapshotHash`·실행 정책 검증 상태를 포함한다. 각 모델의 `displayName`은 공급자가 제공한 선택적 공개 표시 이름이다. 최대120바이트의 제한된 ASCII 이름만 수용하며 경로·제어 문자·인증 정보 형식·미지원 필드는 거절한다. `id`·실행 값 `model`·effort·기본값은 유지하고 `snapshotHash` 계산에서 `displayName`만 제외한다. 표시 이름만 바뀌면 기존 설정과 같고, 실행 설정이 바뀌면 다른 목록으로 검증한다. 이름이 없던 목록과 이전 저장 기록은 그대로 수용한다. 선택은 같은 snapshot의 지원 조합이어야 한다. Claude 모델이 effort를 지원하지 않는 경우 `effort:null`을 유지하고 Codex나 effort 지원 모델의 값으로 바꾸지 않는다. 정책 미검증 catalog는 모델과 기본값 없이 `unsupported`로 보고하며 적용을 허용하지 않는다.
+
+표시 이름은 목록·receipt·SQL 응답·HTTP 응답의 기존 상한을 넓히지 않는다. 생산자는 PostgreSQL jsonb의 공백까지 계산한 목록이8,192바이트를 넘으면 표시 이름만 생략하며 실행 가능한 모델·기본값은 자르지 않는다. 카탈로그와 receipt는16,384바이트, SQL 응답은16,200바이트, HTTP envelope는16,384바이트를 유지한다. 응답 안의 receipt catalog와 applied catalog는 기존처럼 null로 투영한다.
 
 응답은 `configRevision`, `catalog`, `operation`, `applied`, `current`, `currentBinding`을 구분한다. `REQUESTED`는 요청 접수, `LOCAL_CONFIRMATION`은 PC의 폴더·범위 확인, `APPLYING`은 서버 예약, `COMMITTED`는 binding과 receipt의 서버 확정, `APPLIED`는 PC의 영속 적용 보고다. `CANCELLED`라도 PC 정리 receipt가 없으면 새 설정을 막는다. `FAILED`·`UNKNOWN`을 새 operation으로 자동 재적용하지 않는다. 같은 단계·operation·본문의 재전달은 현재 인증·소유권·기기 scope 안에서 저장된 결과를 복구하고 다른 본문은 `CONFLICT`다.
 

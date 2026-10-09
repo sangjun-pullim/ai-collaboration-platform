@@ -1,5 +1,5 @@
 ---
-verified-against: 91d9851ec74a8988e56d9bf9f76a15d98748f7ee
+verified-against: cecc55c213c3d34b2c6480de55aa20ac10d9b0b9
 sources: src/features/**, packages/local-connector/src/**, scripts/**, supabase/migrations/**, tests/helpers/local-access-stack.ts, package.json
 ---
 
@@ -85,6 +85,8 @@ Supabase의 신규 로컬 개발 흐름은 CLI·container runtime으로 시작�
 11. 개발자는 **PC에 설정 적용**을 누른다. PC의 적용 상태를 확인한다.
 12. **PC 설정 적용이 확인되었습니다**가 표시되면 개발자는 채팅방을 연다. 질문 대상 선택에서 실제 답변 준비 여부를 확인한다.
 
+공급자가 안전한 표시 이름을 주면 웹은 **표시 이름 (실행 값)**으로 보여 준다. 실제 선택값은 괄호 안의 실행 값이며, 표시 이름만 바뀌어도 같은 설정으로 적용할 수 있다. 이름이 없거나 목록의 기존 용량을 초과하면 실행 값만 표시한다. 특정 최신 버전을 웹에서 임의로 붙이지 않으며 목록의 이름을 실제 답변에 사용한 모델의 증거로 표시하지 않는다.
+
 모델 목록을 검증하지 못하면 설치 버전·로그인·실행 권한 확인 안내를 표시한다. 웹에 임의 모델을 만들거나 다른 모델의 effort를 대신 표시하지 않는다. 등록 확인을 기다리는 웹 갱신은 최대5분이며, 숨겨진 탭에서는 반복 요청을 보내지 않는다.
 
 연결 명령과 기기 등록 성공은 실제 AI 답변의 검증과 다르다. 현재 지원 범위·검사 결과·실제 Mac과 두 PC에서 남은 확인은 [개발·검증 상태](../planning/delivery-and-validation.md#현재-진행-상태)를 따른다.
@@ -156,7 +158,7 @@ node scripts/dev-local-web.mjs --check
 
 공유 DB·운영 Auth에 적용하면 다른 사용자의 접근 정책과 실행 계약이 바뀐다. 운영자는 대상과 변경을 확인한 뒤 적용한다.
 
-1. 운영자는 해당 DB의 미적용 SQL을 번호 순서로 적용한다. [소유자 설정](../../supabase/migrations/20261005001000-owner-local-ai-setup.sql)·[새 답변 제어](../../supabase/migrations/20261006001100-own-ai-input-pause.sql)·[자동 탐색 승인](../../supabase/migrations/20261006001200-owner-approved-repository-access.sql)·[자료 이력](../../supabase/migrations/20261006001300-shared-input-source-history.sql) 뒤에 [모델 목록 검증 보정](../../supabase/migrations/20261008001400-runtime-settings-catalog-validation.sql)·[자료 요약 보정](../../supabase/migrations/20261008001500-source-history-summary-validation.sql)·[설정 적용 영수증 보정](../../supabase/migrations/20261008001600-runtime-settings-binding-receipt.sql)까지 010–016 순서로 설치한다. 이미 설치한 SQL은 재적용하지 않고 남은 번호만 적용한다. DB를 reset하지 않는다.
+1. 운영자는 해당 DB의 미적용 SQL을 번호 순서로 적용한다. [소유자 설정](../../supabase/migrations/20261005001000-owner-local-ai-setup.sql)·[새 답변 제어](../../supabase/migrations/20261006001100-own-ai-input-pause.sql)·[자동 탐색 승인](../../supabase/migrations/20261006001200-owner-approved-repository-access.sql)·[자료 이력](../../supabase/migrations/20261006001300-shared-input-source-history.sql) 뒤에 [모델 목록 검증 보정](../../supabase/migrations/20261008001400-runtime-settings-catalog-validation.sql)·[자료 요약 보정](../../supabase/migrations/20261008001500-source-history-summary-validation.sql)·[설정 적용 영수증 보정](../../supabase/migrations/20261008001600-runtime-settings-binding-receipt.sql)·[모델 표시 이름](../../supabase/migrations/20261009001700-runtime-model-display-names.sql)까지 010–017 순서로 설치한다. 이미 설치한 SQL은 재적용하지 않고 남은 번호만 적용한다. DB를 reset하지 않는다.
 2. 운영자는 같은 DB의 PostgREST schema cache를 갱신한다. 고정 자료 RPC를 사용하는 중앙 API가 준비된다.
 3. AI를 제공하는 개발자는 중앙 API·DB 준비 뒤 자기 Mac의 연결 프로그램을 갱신한다. 연결 프로그램은 현재 연결의 자료 버전 지원을 확인한 뒤 새 입력을 허용한다.
 
@@ -200,13 +202,13 @@ SQL
 
 **로컬 DB 스키마를 변경하는 명령이다.** 기존 입장·방·대화 데이터를 보존하면서 AI 설정 기능을 추가한다. 이 프로젝트의 지정한 OrbStack 개발 DB만 대상으로 하며 공유·운영 DB에는 사용하지 않는다.
 
-1. 운영자는 이 프로젝트 루트의 Node.js 24 터미널에서 아래 명령을 실행한다. 컨테이너의 프로젝트·고정 ID·로컬 DB 포트·소유한 임시 작업 위치와 SQL 파일 hash를 검사한다. 기존001–009의 필수 함수, SQL005의 기기 삭제 관련 외래키 3개의 지연 검사 설정, SQL008의 질문자 확인 함수·공개 호출 함수의 원문을 먼저 조회하고 적용 transaction에서도 같은 조건을 확인한다. 새 설정 schema가 없으면 SQL010–016을 한 transaction으로 적용한다. SQL010–013이 이미 설치된 DB는 현재 함수 원문이 검토한 기존·보정 상태와 정확히 일치할 때만 남은 SQL014–016을 적용한다. 다른 원문·부분 schema·알 수 없는 설치 상태는 거절하며 SQL 오류는 전체 rollback한다. PostgREST cache 갱신 알림도 같은 commit에 포함한다.
+1. 운영자는 이 프로젝트 루트의 Node.js 24 터미널에서 아래 명령을 실행한다. 컨테이너의 프로젝트·고정 ID·로컬 DB 포트·소유한 임시 작업 위치와 SQL 파일 hash를 검사한다. 기존001–009의 필수 함수, SQL005의 기기 삭제 관련 외래키 3개의 지연 검사 설정, SQL008의 질문자 확인 함수·공개 호출 함수의 원문을 먼저 조회하고 적용 transaction에서도 같은 조건을 확인한다. 새 설정 schema가 없으면 SQL010–017을 한 transaction으로 적용한다. SQL010–013이 이미 설치된 DB는 현재 함수 원문이 검토한 기존·보정 상태와 정확히 일치할 때만 남은 SQL014–017을 적용한다. 카탈로그 검증의 기존·014 원문은017로 갱신하고017은014로 되돌리지 않는다. 다른 원문·부분 schema·알 수 없는 설치 상태는 거절하며 SQL 오류는 전체 rollback한다. PostgREST cache 갱신 알림도 같은 commit에 포함한다.
 
    ```sh
    node scripts/apply-local-ai-settings.mjs --apply
    ```
 
-2. 운영자는 출력의 `status`와 `features`를 확인한다. `APPLIED`와 네 값 `true`는 이 명령의 DB 적용·재조회 완료이며 실제 웹·Claude 답변 통과와 구분한다. `ALREADY_PRESENT`는 기능 표식과 SQL014–016의 보정된 함수 원문을 확인한 상태이며 쓰기·SQL 재적용은 하지 않는다.
+2. 운영자는 출력의 `status`와 `features`를 확인한다. `APPLIED`와 네 값 `true`는 이 명령의 DB 적용·재조회 완료이며 실제 웹·Claude 답변 통과와 구분한다. `ALREADY_PRESENT`는 기능 표식과 SQL014–017의 보정된 함수 원문을 확인한 상태이며 쓰기·SQL 재적용은 하지 않는다.
 3. `BLOCKED`나 `APPLY_NOT_CONFIRMED`이면 운영자는 출력을 보존한다. `--apply` 없이 같은 명령으로 설치 표식만 다시 조회하며 자동 재시도·DB reset·이미 적용한 SQL의 덮어쓰기는 하지 않는다. `BASELINE_NOT_READY`는 기존 필수 조건 누락으로 적용 전에 거절한 상태다. 부분 적용이나 다른 작업 위치는 별도 상태 확인이 필요하다.
 
 이 명령은 AI CLI·모델을 실행하거나 웹 서버를 재시작하지 않는다. 현재 실제 검증과 남은 적용 상태는 [진행 정본](../planning/delivery-and-validation.md#현재-진행-상태)을 따른다.

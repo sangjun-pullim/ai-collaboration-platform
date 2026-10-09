@@ -26,7 +26,12 @@ const present: Features = {
   answerSources: true,
 };
 
-type CatalogState = { catalogAbsent: boolean; catalogLegacy: boolean; catalogFixed: boolean };
+type CatalogState = {
+  catalogAbsent: boolean;
+  catalogLegacy: boolean;
+  catalogFixed: boolean;
+  catalogPrevious?: boolean;
+};
 const absentCatalog: CatalogState = {
   catalogAbsent: true,
   catalogLegacy: false,
@@ -90,6 +95,7 @@ const migrationNames = [
   "20261008001400-runtime-settings-catalog-validation.sql",
   "20261008001500-source-history-summary-validation.sql",
   "20261008001600-runtime-settings-binding-receipt.sql",
+  "20261009001700-runtime-model-display-names.sql",
 ];
 
 async function fixture(t: TestContext) {
@@ -138,6 +144,7 @@ async function fixture(t: TestContext) {
       if (f.applied && f.failCatalogConfirmation)
         throw new Error("private confirmation diagnostic");
       return JSON.stringify({
+        catalogPrevious: false,
         ...(f.applied
           ? f.catalogAfter
           : (f.catalogBefore ??
@@ -178,7 +185,7 @@ test("should inspect local settings without applying migrations by default", asy
   assert.equal(f.applied, false);
 });
 
-test("should apply all seven reviewed migrations in one transaction and confirm installed features", async (t) => {
+test("should apply all eight reviewed migrations in one transaction and confirm installed features", async (t) => {
   const f = await fixture(t);
   const result = await f.run(true, f.execute);
   assert.equal(result.status, "APPLIED");
@@ -267,7 +274,7 @@ test("should patch the reviewed catalog on an installed stack without replaying 
   const result = await f.run(true, f.execute);
   assert.equal(result.status, "APPLIED");
   assert.deepEqual(result.features, present);
-  assert.deepEqual(result.migrations, ["20261008001400-runtime-settings-catalog-validation.sql"]);
+  assert.deepEqual(result.migrations, ["20261009001700-runtime-model-display-names.sql"]);
   const writes = f.calls.filter((call) => call.input.startsWith("BEGIN;"));
   assert.equal(writes.length, 1);
   assert.ok(
@@ -291,9 +298,9 @@ test("should select exactly pending corrections across all three legacy and fixe
             f.commitBindingBefore = {
               ...(bindingFixed ? fixedCommitBinding : legacyCommitBinding),
             };
-            const expected = migrationNames
-              .slice(4)
-              .filter((_, index) => ![catalogFixed, sourceFixed, bindingFixed][index]);
+            const expected = [migrationNames[5], migrationNames[6], migrationNames[7]].filter(
+              (_, index) => ![sourceFixed, bindingFixed, catalogFixed][index],
+            );
             const result = await f.run(true, f.execute);
             assert.deepEqual(result.features, present);
             assert.equal(result.modelInputs, 0);
@@ -314,7 +321,7 @@ test("should select exactly pending corrections across all three legacy and fixe
               ].entries()) {
                 assert.equal(
                   sql.includes(`create or replace function ${signature}`),
-                  expected.includes(migrationNames[index + 4]),
+                  expected.includes(migrationNames[index === 0 ? 7 : index + 4]),
                 );
               }
             }
@@ -517,14 +524,14 @@ test("should leave patch commit or confirmation failures unconfirmed without ret
   }
 });
 
-test("should reject modified SQL014 before either installation or patch writes", async (t) => {
+test("should reject modified SQL017 before either installation or patch writes", async (t) => {
   for (const installed of [false, true]) {
     await t.test(
-      `should block changed SQL014 on ${installed ? "installed" : "fresh"} stack`,
+      `should block changed SQL017 on ${installed ? "installed" : "fresh"} stack`,
       async (t) => {
         const f = await fixture(t);
         if (installed) f.before = { ...present };
-        const driverModule = await modifiedMigrationDriver(f.dir, migrationNames[4]);
+        const driverModule = await modifiedMigrationDriver(f.dir, migrationNames[7]);
         await assert.rejects(driverModule.runLocalSettingsUpgrade(true, f.execute), {
           code: "MIGRATION_INPUT_CHANGED",
         });
@@ -541,10 +548,10 @@ test("should apply only pending reviewed catalog and source summary corrections"
       name: "both legacy",
       catalog: legacyCatalog,
       source: legacySourceSummary,
-      expected: [migrationNames[4], migrationNames[5]],
+      expected: [migrationNames[5], migrationNames[7]],
     },
     {
-      name: "only SQL014 fixed",
+      name: "only SQL017 fixed",
       catalog: fixedCatalog,
       source: legacySourceSummary,
       expected: [migrationNames[5]],
@@ -553,7 +560,7 @@ test("should apply only pending reviewed catalog and source summary corrections"
       name: "only SQL015 fixed",
       catalog: legacyCatalog,
       source: fixedSourceSummary,
-      expected: [migrationNames[4]],
+      expected: [migrationNames[7]],
     },
     { name: "both fixed", catalog: fixedCatalog, source: fixedSourceSummary, expected: [] },
   ];
@@ -576,7 +583,7 @@ test("should apply only pending reviewed catalog and source summary corrections"
           writes[0].input.includes(
             "create or replace function runtime_settings_private.catalog_ok",
           ),
-          entry.expected.includes(migrationNames[4]),
+          entry.expected.includes(migrationNames[7]),
         );
         assert.equal(
           writes[0].input.includes(
@@ -675,7 +682,7 @@ test("should apply only SQL016 when catalog and source summary are already fixed
   const tx = writes[0].input;
   const precondition = tx.slice(0, tx.indexOf("$local_correction_guard$"));
   for (const hash of [
-    "e2a0c2af48bb54566c10ab0a2a6b9a0b",
+    "bbb006cfb7bc9767a4bb25fdff528096",
     "342051dce08e88ea3f9d9f7d6bc0cba6",
     "0c34725047c7f1b58d36705c65470f11",
   ])
@@ -683,4 +690,48 @@ test("should apply only SQL016 when catalog and source summary are already fixed
   const precedingGuard = tx.slice(tx.indexOf("$local_correction_guard$"), tx.indexOf(definition));
   assert.ok(precedingGuard.includes("md5(p.prosrc)='0c34725047c7f1b58d36705c65470f11'"));
   assert.ok(precedingGuard.includes("COMMIT_BINDING_SOURCE_UNVERIFIED"));
+});
+
+for (const previous of [false, true]) {
+  test(`should upgrade reviewed ${previous ? "SQL014" : "initial"} catalog directly to SQL017`, async (t) => {
+    const f = await fixture(t);
+    f.before = { ...present };
+    f.catalogBefore = {
+      catalogAbsent: false,
+      catalogLegacy: !previous,
+      catalogPrevious: previous,
+      catalogFixed: false,
+    };
+    const result = await f.run(true, f.execute);
+    assert.deepEqual(result.migrations, [migrationNames[7]]);
+    const sql = f.calls.find((c) => c.input.startsWith("BEGIN;"))!.input;
+    assert.equal(
+      (sql.match(/create or replace function runtime_settings_private.catalog_ok/g) ?? []).length,
+      1,
+    );
+    assert.ok(sql.includes("value-'displayName'"));
+    assert.equal(sql.includes("alter table"), false);
+    assert.equal(sql.includes("create schema"), false);
+    const guard = sql.slice(
+      0,
+      sql.indexOf("create or replace function runtime_settings_private.catalog_ok"),
+    );
+    for (const hash of ["832697b9f563f43e138ecbb812538055", "e2a0c2af48bb54566c10ab0a2a6b9a0b"])
+      assert.ok(guard.includes(hash));
+  });
+}
+
+test("should preserve SQL017 while applying another pending correction without downgrade", async (t) => {
+  const f = await fixture(t);
+  f.before = { ...present };
+  f.catalogBefore = { ...fixedCatalog };
+  f.sourceSummaryBefore = { ...legacySourceSummary };
+  const result = await f.run(true, f.execute);
+  assert.deepEqual(result.migrations, [migrationNames[5]]);
+  const sql = f.calls.find((c) => c.input.startsWith("BEGIN;"))!.input;
+  assert.equal(
+    sql.includes("create or replace function runtime_settings_private.catalog_ok"),
+    false,
+  );
+  assert.ok(sql.includes("bbb006cfb7bc9767a4bb25fdff528096"));
 });

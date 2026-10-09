@@ -1371,3 +1371,38 @@ test("should persist immutable SERVER_INPUT_PAUSED closure and reject forged pri
     }
   }
 });
+
+for (const version of [1, 2] as const) {
+  for (const labelled of [false, true]) {
+    test(`should roundtrip version ${version} records with ${labelled ? "optional names" : "historical bytes"}`, async () => {
+      const f = await runtimeFixture();
+      try {
+        const record = structuredClone(f.record);
+        record.version = version;
+        if (version === 2) {
+          record.settings!.capabilities.runtime = "codex";
+          const cap = record.settings!.capabilities;
+          cap.snapshotHash = capabilityHash({
+            runtime: "codex",
+            version: cap.version,
+            models: cap.models,
+            defaultSettings: cap.defaultSettings,
+            policy: "verified",
+          });
+        }
+        if (labelled) record.settings!.capabilities.models[0].displayName = "Native Test (context)";
+        await f.store.write(record);
+        const before = await readFile(f.store.file);
+        const read = (await f.store.read())!;
+        assert.deepEqual(read, record);
+        await f.store.write(read);
+        assert.deepEqual(await readFile(f.store.file), before);
+        const invalid = structuredClone(read);
+        invalid.settings!.capabilities.models[0].displayName = "/Users/private";
+        assert.throws(() => f.store.write(invalid), { code: "UNSAFE_STORAGE" });
+      } finally {
+        await f.close();
+      }
+    });
+  }
+}

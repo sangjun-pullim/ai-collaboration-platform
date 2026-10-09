@@ -25,6 +25,7 @@ import {
   isId,
   isHash,
   projectCapability,
+  isModelDisplayName,
   projectResponse,
   validateBody,
   validateSelection,
@@ -150,13 +151,16 @@ const capabilitiesSchema = exact(
   {
     version: string,
     models: list(
-      exact({
-        id: string,
-        model: string,
-        efforts: list(string, 12),
-        defaultEffort: nullable(string),
-        isDefault: (v) => typeof v === "boolean",
-      }),
+      exact(
+        {
+          id: string,
+          model: string,
+          efforts: list(string, 12),
+          defaultEffort: nullable(string),
+          isDefault: (v) => typeof v === "boolean",
+        },
+        { displayName: isModelDisplayName },
+      ),
       256,
     ),
     defaultSettings: nullable(requestedSchema),

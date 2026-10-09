@@ -58,6 +58,50 @@ const safeText = (v: unknown): v is string =>
   !/^[a-f0-9]{24,}$/i.test(v) &&
   !/^sk-/i.test(v) &&
   !/token|secret|credential|bearer/i.test(v);
+/** Only provider-supplied, bounded public labels are display metadata. */
+export const isModelDisplayName = (v: unknown): v is string =>
+  typeof v === "string" &&
+  v === v.trim() &&
+  /^[A-Za-z0-9][A-Za-z0-9 ._()+-]{0,119}$/.test(v) &&
+  !v.includes("..") &&
+  !/[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}/i.test(v) &&
+  !/[a-f0-9]{24,}/i.test(v) &&
+  !/sk-|token|secret|credential|bearer/i.test(v);
+
+/** PostgreSQL jsonb text inserts spaces after separators; labels are ASCII only. */
+export function jsonbTextBytes(value: unknown): number {
+  const text = (v: unknown): string => {
+    if (Array.isArray(v)) return `[${v.map(text).join(", ")}]`;
+    if (v !== null && typeof v === "object")
+      return `{${Object.entries(v)
+        .map(([key, item]) => `${JSON.stringify(key)}: ${text(item)}`)
+        .join(", ")}}`;
+    return JSON.stringify(v);
+  };
+  return new TextEncoder().encode(text(value)).length;
+}
+
+/** Reserve ample room for the closed receipt/response schemas and HTTP envelope. */
+export function omitOversizedModelDisplayNames<T extends { models: { displayName?: string }[] }>(
+  catalog: T,
+): T {
+  if (
+    catalog.models.some(
+      (m) => Object.hasOwn(m, "displayName") && !isModelDisplayName(m.displayName),
+    ) ||
+    !catalog.models.some((m) => Object.hasOwn(m, "displayName")) ||
+    jsonbTextBytes(catalog) <= 8192
+  )
+    return catalog;
+  return {
+    ...catalog,
+    models: catalog.models.map((model) => {
+      const semantic = { ...model };
+      delete semantic.displayName;
+      return semantic;
+    }),
+  } as T;
+}
 const alias = (v: unknown): v is string =>
   typeof v === "string" &&
   v === v.trim() &&
@@ -115,6 +159,7 @@ export type Capability = {
   models: {
     id: string;
     model: string;
+    displayName?: string;
     efforts: string[];
     defaultEffort: string | null;
     isDefault: boolean;
@@ -135,7 +180,15 @@ function canonical(value: unknown): string {
   return JSON.stringify(value);
 }
 export function capabilityHash(input: Omit<Capability, "snapshotHash">): string {
-  const raw = new TextEncoder().encode(canonical(input));
+  const semantic = {
+    ...input,
+    models: input.models.map((model) => {
+      const semantic = { ...model };
+      delete semantic.displayName;
+      return semantic;
+    }),
+  };
+  const raw = new TextEncoder().encode(canonical(semantic));
   const bytes = new Uint8Array(Math.ceil((raw.length + 9) / 64) * 64);
   bytes.set(raw);
   bytes[raw.length] = 128;
@@ -197,14 +250,19 @@ export function projectCapability(input: unknown): Capability {
   });
   const models = (b.models as unknown[]).map(
     (m) =>
-      exact(m, {
-        id: safeText,
-        model: safeText,
-        efforts: (v) =>
-          Array.isArray(v) && v.length <= 12 && v.every(safeText) && new Set(v).size === v.length,
-        defaultEffort: nullable(safeText),
-        isDefault: (v) => typeof v === "boolean",
-      }) as Capability["models"][number],
+      exact(
+        m,
+        {
+          id: safeText,
+          model: safeText,
+          efforts: (v) =>
+            Array.isArray(v) && v.length <= 12 && v.every(safeText) && new Set(v).size === v.length,
+          defaultEffort: nullable(safeText),
+          isDefault: (v) => typeof v === "boolean",
+        },
+        "INVALID_BODY",
+        { displayName: isModelDisplayName },
+      ) as Capability["models"][number],
   );
   if (
     new Set(models.map((m) => m.id)).size !== models.length ||

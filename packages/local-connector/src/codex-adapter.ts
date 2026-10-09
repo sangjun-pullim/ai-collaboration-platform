@@ -1,3 +1,4 @@
+import { isModelDisplayName, omitOversizedModelDisplayNames } from "./settings/contracts.ts";
 import {
   codexVersion,
   digest,
@@ -759,6 +760,7 @@ export class CodexAdapter implements RuntimeAdapter {
         models.push({
           id: m.id,
           model: m.model,
+          ...(isModelDisplayName(m.displayName) ? { displayName: m.displayName } : {}),
           efforts,
           defaultEffort: m.defaultReasoningEffort,
           isDefault: m.isDefault,
@@ -785,13 +787,21 @@ export class CodexAdapter implements RuntimeAdapter {
       selected && typeof effort === "string" && selected.efforts.includes(effort)
         ? { model: selected.model, effort }
         : null;
-    return {
+    return omitOversizedModelDisplayNames({
       version: codexVersion,
       models,
       defaultSettings,
-      snapshotHash: digest(stableJson(models)),
-      policy: "CONFIRMED",
-    };
+      snapshotHash: digest(
+        stableJson(
+          models.map((model) => {
+            const semantic = { ...model };
+            delete semantic.displayName;
+            return semantic;
+          }),
+        ),
+      ),
+      policy: "CONFIRMED" as const,
+    });
   }
   async prepare(
     root: RootIdentity,

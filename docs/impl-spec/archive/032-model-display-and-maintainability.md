@@ -1,5 +1,5 @@
 ---
-status: active
+status: done
 date: 2026-10-09
 risk-surface: public-api, permission, db-schema
 ---
@@ -42,7 +42,7 @@ risk-surface: public-api, permission, db-schema
 
 ## Implementation Steps
 
-### [ ] Step 1: 모델 표시 버그 재현과 선택·해시 호환 보정
+### [x] Step 1: 모델 표시 버그 재현과 선택·해시 호환 보정
 
 - 먼저 공급자가 `displayName`을 주는데 목록에 남지 않고 웹에서 이름을 보여주지 않는 실패 테스트를 작성한다.
 - `displayName?: string`을 제한된 표시 정보로 추가한다. 제어 문자·경로·인증 정보와 지나치게 긴 값은 표시 이름으로 채택하지 않고 기존 실행 값을 표시한다. 미지원 필드는 계속 거절한다.
@@ -51,7 +51,7 @@ risk-surface: public-api, permission, db-schema
 - `SettingsManager.prepare`의 전체 카탈로그 비교도 표시 정보를 제외한 검증된 설정 identity로 비교한다. 폴더 선택 때 이름 A, apply 때 이름 B여도 같은 모델·effort·설정이면 준비를 계속하고, 의미가 바뀌면 기존처럼 `SNAPSHOT_CHANGED`로 거절한다.
 - 과거 v1/v2 기록과 설정 journal을 읽고 다시 쓰는 호환성을 검증한다. 카탈로그 크기 제한을 늘리지 않는다. 표시 정보 때문에 카탈로그·LOCAL_CONFIRMATION receipt·SQL response(16,200바이트)·HTTP envelope(16,384바이트) 중 하나라도 초과할 수 있으면 표시 이름만 생략한다. PostgreSQL jsonb 표현의 공백과 envelope overhead도 계산하고 실행 가능한 목록·기본값은 보존한다. 중앙 response에서 receipt의 catalog와 applied catalog가 null인 기존 조건도 유지한다.
 
-### [ ] Step 2: 중앙 카탈로그 검증과 로컬 적용 검사
+### [x] Step 2: 중앙 카탈로그 검증과 로컬 적용 검사
 
 - 후속 migration은 `runtime_settings_private.catalog_ok(jsonb)`만 교체한다. 선택적 표시 이름의 길이·문자 검증과 해시에서 제외하는 처리를 Node/Web 계약과 일치시킨다.
 - 기존 객체, 함수 속성·search path·권한, 의미 검증, 예외 거절을 유지한다. 기존 migration 파일과 저장한 JSON을 수정하지 않는다.
@@ -73,14 +73,14 @@ risk-surface: public-api, permission, db-schema
 - 시작 전 복구의 기존 증거 확인을 내부 헬퍼로 나눈다. 원래 scope·generation·fence와 서버 영수증이 확인되지 않으면 새 입력을 만들거나 실행을 재시도하지 않는다.
 - 지연 ACK, 중단·도구 race, 저장 실패, stale generation, 같은 미시작 시도 복구 테스트로 결과를 확인한다.
 
-### [ ] Step 5: 채팅 데이터 처리와 화면 분리
+### [x] Step 5: 채팅 데이터 처리와 화면 분리
 
 - 데이터 처리 모듈이 폴링 timer·abort와 질문 mutation을 소유한다. 화면은 입력 초안·스크롤·컴포넌트 배치 책임을 갖는다.
 - 하나의 폴링 소유자와 같은 간격 정책을 유지한다. mutation 동안 폴링을 멈추고 완료 시 다시 시작한다. unmount와 접근 철회는 모든 요청을 중단하며 늦게 온 결과가 상태를 복구하지 못하게 한다.
 - actor/room별 대기 중 질문을 HTTP보다 먼저 저장하고 확정된 결과에만 지운다. 같은 입력 재전송, responder epoch 고정, 답변 제공자 변경 시 초안 보존, source 상세 접근 철회 처리를 유지한다.
 - 테스트는 hook 인덱스 대신 새 데이터 모듈의 공개 동작과 렌더 결과를 검증한다. browser에서 실제 질문 제출·답변 표시·재전송·설정 표시를 확인한다.
 
-### [ ] Step 6: 검증·리뷰·문서·GitHub Flow 종료
+### [x] Step 6: 검증·리뷰·문서·GitHub Flow 종료
 
 - 필수 검사를 완료하고 독립 `reviewer`가 전체 변경·권한·DB·호환성·정리 시퀀스를 검토한다. 차단 지적을 보정하고 영향받은 검사를 다시 실행한다.
 - 표준 문서는 `docs/` 바로 아래에 유지한다. 새 실제 AI 호출 없이 확인한 사실과 실제 Claude 중단/두 Mac 검증 대기를 구분한다.
@@ -125,3 +125,10 @@ risk-surface: public-api, permission, db-schema
 | 동작 보존 분리의 승인 범위 | INFO | RECORDED | 사용자에게 전체 계획 승인을 요청했다. 답변을 기다리는 동안 AGENTS의 기계적 변경 예외에 해당하는 Step 3·4만 실행했다. 모델 표시·API·DB와 채팅 화면 분리는 아직 실행하지 않았다. |
 | 실행 기록·권한 콜백 분리 검토 | INFO | PASS | `quality032_mechanical_review`가 기존 스키마·관계·상태 전환과 ACK·취소·중단 본문을 대조해 C0/H0/M0/L0로 통과했다. |
 | 실행·미시작 복구 헬퍼 검토 | INFO | PASS | `quality032_runner_review`가 변경 없는 저장·권한 모듈의 앞선 리뷰를 재사용하고 새 private helper 14개를 대조했다. 대기·검사·저장·전송·finally와 기존 소유권이 유지되며 C0/H0/M0/L0다. |
+| 남은 단계 실행 승인 | INFO | APPROVED | 2026-10-09 사용자가 제품 개선을 끝까지 진행하고 직접 계획·실행하도록 목표를 재개했다. Step1·2·5·6을 이어가며 기존 구현·리뷰·병합은 재사용한다. |
+| 모델 표시·DB·설치기 구현 독립 검토 | INFO | PASS | quality032_metadata_review: 운영11개·테스트10개와 보충fixture/테스트4개 지문 일치. 의미 hash·이전 기록·JS/SQL·함수 속성·검토된 소스 갱신과 하향 교체 거절을 확인했고 C0/H0/M0/L0다. 실제PG20·설정HTTP39·설정browser8 통과를 별도 기록한다. |
+| 채팅 데이터 분리 독립 검토 | INFO | PASS | quality032_chat_review: 단일poll·직렬mutation·취소와 generation·사용자/방 intent 보존을 확인했다. 운영3개와 관련테스트3개 검토 C0/H0/M0/L0. 실제 React/browser 확인은 Step5의 종료 조건이다. 테스트의 국소 lint 보정은 모델 보충 리뷰가 확인했다. |
+| 실제 채팅·설정 화면 수용 | INFO | PASS | 합쳐진 최신 소스의 settings desktop/mobile8건·workflow desktop/mobile14건 모두 통과했고 parent fixture 정리 종료0이다. native 이름/실행값·상대 직접 질문·재전송·대상교체·초안·스크롤·접근철회 기대값을 유지했다. 실제 AI 입력0. |
+| 전체 종료 검증 | INFO | PASS | 웹425/425·연결기897/897(파일순차)·설정HTTP39/39·실제PG20·설정browser8/8·workflowbrowser14/14, 타입·production/distribution 빌드·lint·format/check를 완료했다. 첫 용량 검사 실패와 임시경로 설정 거절은 원본 보존; 제품·assertion·시간 제한을 바꾸지 않았으며 원인을 고쳤다고 주장하지 않는다. |
+| 안내 문서 검증 기준 커밋 누락 | MEDIUM | ACCEPTED | 최종 문서 리뷰에서 발견한 onboarding-and-settings.md의 오래된 verified-against를 검증한 최신 소스 cecc55c로 갱신했다. 동작 변경은 없다. |
+| 완료 문서·검증 기록 독립 검토 | INFO | PASS | quality032_closure_review가 파일40개·로그15개의 지문과 검증 수치를 확인했다. 앞선 모델·채팅·기록·실행 리뷰를 재사용했고 차단 지적0건이다. 032 완료와 실제 Claude 중단·두 Mac·배포 대기를 구분했다. |

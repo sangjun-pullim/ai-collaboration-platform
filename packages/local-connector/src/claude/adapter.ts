@@ -27,7 +27,12 @@ import {
 } from "../workspace/tool-contracts.ts";
 import { RuntimeFilePolicy } from "../runtime-file-policy.ts";
 import { selectRuntimeSettings } from "../runtime-settings-policy.ts";
-import { capabilityHash, projectCapability } from "../settings/contracts.ts";
+import {
+  capabilityHash,
+  projectCapability,
+  isModelDisplayName,
+  omitOversizedModelDisplayNames,
+} from "../settings/contracts.ts";
 import type { RequestPayload } from "../workflow-contracts.ts";
 import { NativeInputProof, nativeIdentity, OWNED_SERVER } from "./input-proof.ts";
 import { object, type OwnedHistory } from "./owned-history.ts";
@@ -227,7 +232,9 @@ export class ClaudeAdapter implements RuntimeAdapter {
           : null,
       policy: "verified" as const,
     };
-    return projectCapability({ ...contents, snapshotHash: capabilityHash(contents) });
+    return projectCapability(
+      omitOversizedModelDisplayNames({ ...contents, snapshotHash: capabilityHash(contents) }),
+    );
   }
   private models(response: Record<string, unknown>): Capabilities["models"] {
     if (
@@ -256,6 +263,7 @@ export class ClaudeAdapter implements RuntimeAdapter {
       return {
         id: m.value,
         model: m.value,
+        ...(isModelDisplayName(m.displayName) ? { displayName: m.displayName } : {}),
         efforts: Array.isArray(levels) ? ([...levels] as string[]) : [],
         defaultEffort: typeof m.defaultEffort === "string" ? m.defaultEffort : null,
         isDefault: m.isDefault === true,

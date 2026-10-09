@@ -1,5 +1,5 @@
 ---
-verified-against: 3e84d8cd2f3754a33154083a23869ca0f5c8cfe8
+verified-against: cecc55c213c3d34b2c6480de55aa20ac10d9b0b9
 sources:
   - supabase/migrations/**
   - src/features/room-access/access-service.ts
@@ -102,6 +102,8 @@ question의 `source:HUMAN`에는 `requester_user_id`가 있고 origin request·e
 [설정 migration 소스](../supabase/migrations/20261005001000-owner-local-ai-setup.sql)는 `runtime_settings_private.configurations`와 `operations`를 정의한다. configurations는 기기별 설정 revision·capability catalog·적용 receipt를, operations는 같은 기기·operation의 단계별 본문·후보·서버 확정·PC 적용 receipt를 보관한다. 직접 조회·변경과 private 함수 실행은 anon/authenticated에 허용하지 않는다. 사람은 고정 human RPC로 자기 기기를, PC는 현재 device bearer로 자기 기기만 처리한다. 경로·native session·선택 파일 원문·provider key는 저장하지 않는다.
 
 [자동 탐색 모드 migration 소스](../supabase/migrations/20261006001200-owner-approved-repository-access.sql)는 기존 receipt·후보·apply의 정확한 본문 검사에 선택적인 `readMode:"AUTO_CODE"`를 연결한다. absent는 기존 선택 파일 모드이며 승인 receipt와 apply·COMMITTED·APPLIED 사이의 모드를 임의로 추가하거나 제거하지 못한다. 새 로컬 승인 객체와 root hash는 중앙 설정 모델에 저장하지 않는다. 기존 기기 소유권·설정 revision·binding epoch·미종결 예약·새 입력 제어는 계속 적용한다. 소스 정의와 실제 설치·upgrade 통과는 [검증 정본](planning/delivery-and-validation.md#현재-진행-상태)에서 구분한다.
+
+[모델 표시 이름 migration](../supabase/migrations/20261009001700-runtime-model-display-names.sql)은 `runtime_settings_private.catalog_ok(jsonb)`만 교체한다. 선택적 `displayName`의 문자·길이를 검증하고 모델의 표시 이름만 제외한 의미 hash를 비교한다. 이름이 없는 이전 목록, 함수 identity·owner·권한·immutable 속성·빈 search_path와 기존 테이블·데이터를 유지한다. 표시 정보는 실행 모델이나 저장된 설정을 변경하는 근거가 아니다.
 
 기기별 유일 제약은 미종결 설정을 하나로 제한하며 `CANCELLED`도 PC 정리 receipt가 없으면 미종결로 취급한다. 현재 권한·credential·scope를 재검사하며 credential 회전을 과거 operation 삭제나 새 설정으로 바꾸지 않는다. 공개 binding의 runtime 제약·projection은 Codex와 Claude를 표현하되 연결 수준·`unverified`와 실제 공급자 실행 검증을 분리한다.
 

@@ -1,10 +1,17 @@
 import test from "node:test";
+import { readFile } from "node:fs/promises";
 import assert from "node:assert/strict";
 import { createHash, randomBytes, randomUUID } from "node:crypto";
 import { workflowCase, type WorkflowFixture } from "../helpers/workflow-fixture.js";
 import { RuntimeSettingsFixture, settingsCatalog } from "../helpers/runtime-settings-fixture.js";
 import { assertOwnedStack } from "../helpers/local-access-stack.js";
-import { capabilityHash, type Receipt } from "../../src/features/runtime-settings/contracts.ts";
+import {
+  capabilityHash,
+  projectCapability,
+  omitOversizedModelDisplayNames,
+  jsonbTextBytes,
+  type Receipt,
+} from "../../src/features/runtime-settings/contracts.ts";
 const options = { timeout: 300000 };
 async function settings(f: WorkflowFixture) {
   const s = new RuntimeSettingsFixture(f);
@@ -782,6 +789,246 @@ test(
           applied,
         );
         assert.equal((await r.human(scene.owner, "apply", forgedApply)).status, 409);
+      }
+    }),
+);
+
+test(
+  "should preserve catalog function identity and attributes through SQL017 and repeat application",
+  options,
+  () =>
+    workflowCase("settings-model-label-function", async (f) => {
+      await settings(f);
+      await assertOwnedStack(f.stack.config);
+      const metadata = async () =>
+        (
+          await f.stack.db.query(`select oid,proowner,prolang,procost,prorows,
+      prokind,prosecdef,proleakproof,proisstrict,proretset,provolatile,proparallel,pronargs,prorettype,
+      proargtypes::text,proargnames,proargmodes,proconfig,proacl::text from pg_catalog.pg_proc
+      where oid='runtime_settings_private.catalog_ok(jsonb)'::regprocedure`)
+        ).rows[0];
+      const previous = await readFile(
+        "supabase/migrations/20261008001400-runtime-settings-catalog-validation.sql",
+        "utf8",
+      );
+      const migration = await readFile(
+        "supabase/migrations/20261009001700-runtime-model-display-names.sql",
+        "utf8",
+      );
+      await f.stack.db.query("begin");
+      try {
+        await f.stack.db.query(previous);
+        const before = await metadata();
+        await f.stack.db.query(migration);
+        assert.deepEqual(await metadata(), before);
+        const source = (
+          await f.stack.db.query(
+            "select md5(prosrc) hash from pg_catalog.pg_proc where oid='runtime_settings_private.catalog_ok(jsonb)'::regprocedure",
+          )
+        ).rows[0].hash;
+        assert.equal(source, "bbb006cfb7bc9767a4bb25fdff528096");
+        await f.stack.db.query(migration);
+        assert.deepEqual(await metadata(), before);
+        assert.equal(
+          (
+            await f.stack.db.query(
+              "select md5(prosrc) hash from pg_catalog.pg_proc where oid='runtime_settings_private.catalog_ok(jsonb)'::regprocedure",
+            )
+          ).rows[0].hash,
+          source,
+        );
+      } finally {
+        await f.stack.db.query("rollback");
+      }
+    }),
+);
+
+test(
+  "should agree with the web contract on native labels and reject forged semantic identity in SQL017",
+  options,
+  () =>
+    workflowCase("settings-model-label-validation", async (f) => {
+      await settings(f);
+      const original = settingsCatalog();
+      const accepts = async (value: unknown) =>
+        (
+          await f.stack.db.query("select runtime_settings_private.catalog_ok($1::jsonb) valid", [
+            JSON.stringify(value),
+          ])
+        ).rows[0].valid;
+      assert.equal(await accepts(original), true);
+      for (const displayName of [
+        "Native Claude",
+        "Native Claude (1M context)",
+        "N".repeat(120),
+        "Native\nlabel",
+        "Native\tlabel",
+        "/Users/private",
+        "Bearer token",
+        "Native secret",
+        "sk-private",
+        " Native",
+        "Native ",
+        "Native .. label",
+        "a".repeat(121),
+        null,
+        4,
+        "",
+        "Native 😀",
+        "Native 00000000-0000-4000-8000-000000000001",
+        "Native " + "f".repeat(24),
+      ]) {
+        const candidate = {
+          ...original,
+          models: original.models.map((m) => ({ ...m, displayName })),
+        };
+        let valid = true;
+        try {
+          projectCapability(candidate);
+        } catch {
+          valid = false;
+        }
+        assert.equal(await accepts(candidate), valid, JSON.stringify(displayName));
+      }
+      const named = {
+        ...original,
+        models: original.models.map((m) => ({ ...m, displayName: "Native Claude" })),
+      };
+      assert.equal(await accepts(named), true);
+      const labelHash = (
+        await f.stack.db.query(
+          `select encode(extensions.digest(runtime_settings_private.canonical($1::jsonb-'snapshotHash'),'sha256'),'hex') hash`,
+          [JSON.stringify(named)],
+        )
+      ).rows[0].hash;
+      assert.equal(await accepts({ ...named, snapshotHash: labelHash }), false);
+      assert.equal(
+        await accepts({
+          ...named,
+          models: named.models.map((m) => ({ ...m, model: "changed-model" })),
+        }),
+        false,
+      );
+      assert.equal(
+        await accepts({ ...named, models: named.models.map((m) => ({ ...m, unknown: true })) }),
+        false,
+      );
+    }),
+);
+
+test(
+  "should fit formerly valid near-limit native catalogs through actual SQL receipt and HTTP response bounds",
+  options,
+  () =>
+    workflowCase("settings-model-label-budget", async (f) => {
+      const r = await settings(f);
+      for (const budget of [6000, 15100]) {
+        const scene = await f.directScene(`label-budget-${budget}`);
+        const current = r.accepted(
+          await r.human(scene.owner, "list", { deviceId: scene.responder.deviceId }),
+        );
+        const base = {
+          operationId: randomUUID(),
+          deviceId: scene.responder.deviceId!,
+          expectedConfigRevision: current.configRevision,
+          runtime: "claude",
+        };
+        r.accepted(await r.human(scene.owner, "select-folder", base));
+        const models: ReturnType<typeof settingsCatalog>["models"] = [];
+        const contents = {
+          runtime: "claude" as const,
+          version: "synthetic-1",
+          models,
+          defaultSettings: { model: "large-model-0", effort: null },
+          policy: "verified" as const,
+        };
+        for (let i = 0; i < 256; i++) {
+          const m = {
+            id: `large-id-${i}-${"x".repeat(60)}`,
+            model: i === 0 ? "large-model-0" : `large-model-${i}-${"y".repeat(60)}`,
+            efforts: [],
+            defaultEffort: null,
+            isDefault: i === 0,
+          };
+          if (
+            jsonbTextBytes({ ...contents, models: [...models, m], snapshotHash: "a".repeat(64) }) >
+            budget
+          )
+            break;
+          models.push(m);
+        }
+        const catalog = projectCapability(
+          omitOversizedModelDisplayNames({
+            ...contents,
+            models: models.map((m) => ({
+              ...m,
+              displayName: "Native " + "x".repeat(budget === 6000 ? 1 : 110),
+            })),
+            snapshotHash: capabilityHash(contents),
+          }),
+        );
+        const receipt: Receipt = {
+          operationId: base.operationId,
+          state: "LOCAL_CONFIRMATION",
+          configRevision: current.configRevision,
+          runtime: "claude",
+          model: null,
+          effort: null,
+          snapshotHash: null,
+          localRootReference: randomUUID(),
+          repositoryAlias: "공유 저장소",
+          sessionAlias: null,
+          catalog,
+          bindingEpoch: null,
+          agentId: null,
+          workspaceId: null,
+        };
+        const receiptBytes = (
+          await f.stack.db.query("select octet_length($1::jsonb::text) bytes", [
+            JSON.stringify(receipt),
+          ])
+        ).rows[0].bytes;
+        assert.equal(receiptBytes, jsonbTextBytes(receipt));
+        assert.ok(receiptBytes <= 16384);
+        assert.ok(scene.responder.credential);
+        const http = await fetch(`${f.stack.config.app}/api/runtime-settings/receipt`, {
+          method: "POST",
+          redirect: "error",
+          signal: AbortSignal.timeout(10000),
+          headers: {
+            "Content-Type": "application/json",
+            Authorization: `Bearer ${scene.responder.credential}`,
+          },
+          body: JSON.stringify(receipt),
+        });
+        const bytes = new Uint8Array(await http.arrayBuffer());
+        assert.ok(bytes.byteLength <= 16384);
+        const result = {
+          status: http.status,
+          data: JSON.parse(new TextDecoder("utf-8", { fatal: true }).decode(bytes)),
+        };
+        const response = r.accepted(result);
+        assert.equal(response.catalog!.models.length, models.length);
+        assert.deepEqual(response.catalog!.defaultSettings, contents.defaultSettings);
+        assert.equal(response.catalog!.snapshotHash, capabilityHash(contents));
+        if (budget === 15100) assert.deepEqual(response.catalog!.models, models);
+        else assert.ok(response.catalog!.models.every((m) => m.displayName === "Native x"));
+        const sql = (
+          await f.stack.db.query(
+            "select runtime_settings_private.response($1::uuid,$2::uuid) body",
+            [base.deviceId, base.operationId],
+          )
+        ).rows[0].body;
+        const sqlBytes = (
+          await f.stack.db.query(
+            "select octet_length(runtime_settings_private.response($1::uuid,$2::uuid)::text) bytes",
+            [base.deviceId, base.operationId],
+          )
+        ).rows[0].bytes;
+        assert.equal(sqlBytes, jsonbTextBytes(sql));
+        assert.ok(sqlBytes <= 16200);
+        assert.ok(Buffer.byteLength(JSON.stringify(result.data)) <= 16384);
+        assert.equal(response.operation!.receipt!.catalog, null);
       }
     }),
 );
