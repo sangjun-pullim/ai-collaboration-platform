@@ -4,27 +4,12 @@ import { readFileSync } from "node:fs";
 import { runInNewContext } from "node:vm";
 import ts from "typescript";
 import * as contracts from "../../src/features/investigation-coordinator/contracts.ts";
-import { callInvestigation } from "../../src/features/investigation-coordinator/investigation-client.ts";
-import {
-  emptyHistory,
-  mergeHistory,
-} from "../../src/features/investigation-coordinator/history-state.ts";
+import { RoomChatController } from "../../src/features/investigation-coordinator/room-chat-controller.ts";
 
 const roomId = "00000000-0000-4000-8000-000000000001";
 const actorA = "00000000-0000-4000-8000-000000000011";
 const actorB = "00000000-0000-4000-8000-000000000012";
 const fixture = JSON.parse(readFileSync("tests/fixtures/human-direct-contracts.json", "utf8"));
-const view = ts.transpileModule(
-  readFileSync("src/features/investigation-coordinator/investigation-view.tsx", "utf8"),
-  {
-    compilerOptions: {
-      module: ts.ModuleKind.CommonJS,
-      target: ts.ScriptTarget.ES2022,
-      jsx: ts.JsxEmit.ReactJSX,
-    },
-  },
-).outputText;
-
 const directIntents = ts.transpileModule(
   readFileSync("src/features/investigation-coordinator/direct-intents.ts", "utf8"),
   { compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2022 } },
@@ -36,86 +21,36 @@ async function restore(
   failure?: "access" | "legacy" | "get" | "remove",
 ) {
   const storage = new Map(entries);
-  const states: unknown[] = [];
-  const effects: (() => unknown)[] = [];
-  const jsx = (type: unknown, props: unknown) => ({ type, props });
-  const react = {
-    useState(initial: unknown) {
-      const index = states.length;
-      states.push(typeof initial === "function" ? initial() : initial);
-      return [
-        states[index],
-        (value: unknown) => {
-          states[index] = value;
-        },
-      ];
+  const controller = new RoomChatController(
+    { userId, roomId, role: "participant" },
+    async () => {
+      throw new Error("Restoration must not submit a request");
     },
-    useLayoutEffect: () => {},
-    useRef: (current: unknown) => ({ current }),
-    useEffect: (effect: () => unknown) => {
-      effects.push(effect);
-    },
-  };
-  const exports: Record<
-    string,
-    (props: unknown) => { type: (props: unknown) => unknown; props: unknown }
-  > = {};
-  const context = {
-    exports,
-    require(name: string) {
-      if (name === "react") return react;
-      if (name === "react/jsx-runtime") return { jsx, jsxs: jsx };
-      if (name === "./contracts") return contracts;
-      if (name === "./direct-intents") return policies().module;
-      if (name === "./investigation-client") return { callInvestigation };
-      if (name === "./history-state") return { emptyHistory, mergeHistory };
-      if (name === "./polling-policy") return { pollingDelay: () => 10_000 };
-      if (
-        [
-          "./chat-timeline",
-          "./own-input-controls",
-          "./chat-composer",
-          "./advanced-controls",
-          "../../components/ui/button",
-        ].includes(name)
-      )
-        return new Proxy({}, { get: (_, key) => ({ displayName: String(key) }) });
-      if (name === "./chat-presentation") return { nearTimelineBottom: () => true };
-      throw new Error("Unexpected isolated UI dependency");
-    },
-    sessionStorage: {
-      getItem: (key: string) => {
-        if (failure === "get") throw new Error("Storage read denied");
-        return storage.get(key) ?? null;
+    {
+      storage: () => {
+        if (failure === "access") throw new Error("Storage access denied");
+        return {
+          getItem: (key: string) => {
+            if (failure === "get") throw new Error("Storage read denied");
+            return storage.get(key) ?? null;
+          },
+          removeItem: (key: string) => {
+            if (
+              failure === "remove" ||
+              (failure === "legacy" && key === `human-direct-question:${roomId}`)
+            )
+              throw new Error("Storage removal denied");
+            return storage.delete(key);
+          },
+        } as unknown as Storage;
       },
-      removeItem: (key: string) => {
-        if (
-          failure === "remove" ||
-          (failure === "legacy" && key === `human-direct-question:${roomId}`)
-        )
-          throw new Error("Storage removal denied");
-        return storage.delete(key);
-      },
+      hidden: () => false,
+      now: () => 0,
     },
-    queueMicrotask,
-    AbortController,
-    Date,
-    TextEncoder,
-  };
-  if (failure === "access")
-    Object.defineProperty(context, "sessionStorage", {
-      get() {
-        throw new Error("Storage access denied");
-      },
-    });
-  runInNewContext(view, context, { timeout: 1000 });
-  const component = exports.InvestigationView({ roomId, userId, role: "participant" });
-  component.type(component.props);
-  // Exercise only the real restoration effect, never polling or native execution.
-  const cleanup = effects[0]() as () => void;
-  await new Promise<void>((resolve) => setImmediate(resolve));
-  const pending = states.find((value) => !!value && typeof value === "object" && "action" in value);
-  cleanup();
+  );
+  controller.start();
+  const pending = controller.getSnapshot().pendingDirect;
+  controller.stop();
   return { pending: pending ? JSON.parse(JSON.stringify(pending)) : null, storage };
 }
 

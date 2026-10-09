@@ -73,7 +73,7 @@ risk-surface: public-api, permission, db-schema
 - 시작 전 복구의 기존 증거 확인을 내부 헬퍼로 나눈다. 원래 scope·generation·fence와 서버 영수증이 확인되지 않으면 새 입력을 만들거나 실행을 재시도하지 않는다.
 - 지연 ACK, 중단·도구 race, 저장 실패, stale generation, 같은 미시작 시도 복구 테스트로 결과를 확인한다.
 
-### [ ] Step 5: 채팅 데이터 처리와 화면 분리
+### [x] Step 5: 채팅 데이터 처리와 화면 분리
 
 - 데이터 처리 모듈이 폴링 timer·abort와 질문 mutation을 소유한다. 화면은 입력 초안·스크롤·컴포넌트 배치 책임을 갖는다.
 - 하나의 폴링 소유자와 같은 간격 정책을 유지한다. mutation 동안 폴링을 멈추고 완료 시 다시 시작한다. unmount와 접근 철회는 모든 요청을 중단하며 늦게 온 결과가 상태를 복구하지 못하게 한다.
@@ -128,3 +128,4 @@ risk-surface: public-api, permission, db-schema
 | 남은 단계 실행 승인 | INFO | APPROVED | 2026-10-09 사용자가 제품 개선을 끝까지 진행하고 직접 계획·실행하도록 목표를 재개했다. Step1·2·5·6을 이어가며 기존 구현·리뷰·병합은 재사용한다. |
 | 모델 표시·DB·설치기 구현 독립 검토 | INFO | PASS | quality032_metadata_review: 운영11개·테스트10개와 보충fixture/테스트4개 지문 일치. 의미 hash·이전 기록·JS/SQL·함수 속성·검토된 소스 갱신과 하향 교체 거절을 확인했고 C0/H0/M0/L0다. 실제PG20·설정HTTP39·설정browser8 통과를 별도 기록한다. |
 | 채팅 데이터 분리 독립 검토 | INFO | PASS | quality032_chat_review: 단일poll·직렬mutation·취소와 generation·사용자/방 intent 보존을 확인했다. 운영3개와 관련테스트3개 검토 C0/H0/M0/L0. 실제 React/browser 확인은 Step5의 종료 조건이다. 테스트의 국소 lint 보정은 모델 보충 리뷰가 확인했다. |
+| 실제 채팅·설정 화면 수용 | INFO | PASS | 합쳐진 최신 소스의 settings desktop/mobile8건·workflow desktop/mobile14건 모두 통과했고 parent fixture 정리 종료0이다. native 이름/실행값·상대 직접 질문·재전송·대상교체·초안·스크롤·접근철회 기대값을 유지했다. 실제 AI 입력0. |

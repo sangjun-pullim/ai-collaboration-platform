@@ -1,22 +1,8 @@
 "use client";
 
 import { useEffect, useLayoutEffect, useRef, useState, type FormEvent } from "react";
-import {
-  WorkflowError,
-  type HumanAction,
-  type Body,
-  type HistoryPage,
-  type PublicBinding,
-} from "./contracts";
-import { emptyHistory, mergeHistory } from "./history-state";
-import { pollingDelay } from "./polling-policy";
-import { callInvestigation as call } from "./investigation-client";
-import {
-  directIntentKey,
-  restoreDirectIntent,
-  mutationBody,
-  type DirectIntent,
-} from "./direct-intents";
+import { type PublicBinding } from "./contracts";
+import { useRoomChat } from "./use-room-chat";
 
 import { OwnInputControls } from "./own-input-controls";
 import { ChatTimeline } from "./chat-timeline";
@@ -42,7 +28,6 @@ const labels: Record<string, string> = {
   ACCEPTED: "현재 조사 채택",
   HISTORICAL: "과거 기록 · 미채택",
 };
-const denied = (code: string) => ["FORBIDDEN", "UNAUTHENTICATED", "NOT_FOUND"].includes(code);
 
 type Props = { userId: string; roomId: string; role: "owner" | "participant" | "observer" };
 
@@ -50,26 +35,23 @@ export function InvestigationView(props: Props) {
   return <RoomInvestigation key={`${props.userId}:${props.roomId}`} {...props} />;
 }
 function RoomInvestigation({ userId, roomId, role }: Props) {
-  const [history, setHistory] = useState(() => emptyHistory(roomId));
-  const historyRef = useRef(history);
-  const [pollError, setPollError] = useState<string | null>(null);
-  const [actionError, setActionError] = useState<string | null>(null);
-  const [permissionDenied, setPermissionDenied] = useState(false);
-  const [busy, setBusy] = useState(false);
+  const {
+    history,
+    pollError,
+    actionError,
+    permissionDenied,
+    busy,
+    pendingDirect,
+    observedAt,
+    mutate,
+    loseAccess,
+  } = useRoomChat({ userId, roomId, role });
   const [originId, setOriginId] = useState("");
   const [peerId, setPeerId] = useState("");
   const [targetPin, setTargetPin] = useState<{ agentId: string; epoch: number } | null | undefined>(
     undefined,
   );
-  const [pendingDirect, setPendingDirect] = useState<DirectIntent | null>(null);
-  const [tick, setTick] = useState(0);
-  const [observedAt, setObservedAt] = useState(0);
   const errorRef = useRef<HTMLParagraphElement>(null);
-  const pollAbort = useRef<AbortController | null>(null);
-  const mutationAbort = useRef<AbortController | null>(null);
-  const mutationPending = useRef(false);
-  const mounted = useRef(false);
-  const pendingKey = directIntentKey(userId, roomId);
   const error = actionError ?? pollError;
   const [draft, setDraft] = useState("");
   const [mode, setMode] = useState<"ask" | "speak">("ask");
@@ -77,7 +59,6 @@ function RoomInvestigation({ userId, roomId, role }: Props) {
   const scrollRef = useRef<HTMLDivElement>(null);
   const follow = useRef(true);
   const latestSequence = useRef(0);
-  const accessLost = useRef(false);
   useLayoutEffect(() => {
     const element = scrollRef.current;
     const sequence =
@@ -90,89 +71,8 @@ function RoomInvestigation({ userId, roomId, role }: Props) {
   }, [history.events]);
 
   useEffect(() => {
-    mounted.current = true;
-    // Restore only this authenticated actor's exact public intent.
-    try {
-      const intent = restoreDirectIntent(sessionStorage, userId, roomId);
-      if (intent)
-        queueMicrotask(() => {
-          if (mounted.current) setPendingDirect(intent);
-        });
-    } catch {
-      /* Access to sessionStorage itself may be unavailable; fail closed. */
-    }
-    return () => {
-      mounted.current = false;
-      mutationAbort.current?.abort();
-    };
-  }, [userId, roomId]);
-  useEffect(() => {
-    if (permissionDenied || mutationPending.current) return;
-    let stopped = false;
-    let timer: ReturnType<typeof setTimeout>;
-    let failures = 0;
-    let state = historyRef.current;
-    const controller = new AbortController();
-    pollAbort.current = controller;
-    async function poll() {
-      if (stopped || controller.signal.aborted) return;
-      let backfill = false;
-      try {
-        const page = (await call(
-          "read",
-          { protocol: 1, roomId, afterSequence: state.cursor },
-          controller.signal,
-        )) as HistoryPage;
-        if (stopped || controller.signal.aborted) return;
-        state = mergeHistory(state, page);
-        historyRef.current = state;
-        setHistory(state);
-        setObservedAt(Date.now());
-        failures = 0;
-        setPollError(null);
-        backfill = page.hasMore || state.gap;
-      } catch (failure) {
-        if (stopped || controller.signal.aborted) return;
-        const code = failure instanceof WorkflowError ? failure.code : "UNAVAILABLE";
-        setPollError(
-          denied(code)
-            ? "접근 권한을 확인해 주세요."
-            : "공동 기록을 불러올 수 없습니다. 다시 시도합니다.",
-        );
-        if (denied(code)) {
-          controller.abort();
-          historyRef.current = emptyHistory(roomId);
-          setHistory(historyRef.current);
-          setPermissionDenied(true);
-          return;
-        }
-        failures++;
-      }
-      const active =
-        backfill || state.runs.some((run) => ["QUEUED", "LEASED", "RUNNING"].includes(run.state));
-      timer = setTimeout(poll, pollingDelay(active, document.hidden, failures));
-    }
-    timer = setTimeout(poll, 0);
-    return () => {
-      stopped = true;
-      clearTimeout(timer);
-      controller.abort();
-    };
-  }, [roomId, tick, permissionDenied]);
-  useEffect(() => {
     if (error) errorRef.current?.focus();
   }, [error]);
-
-  // The user/room key remounts this callback; refs always hold the latest requests.
-  const [loseAccess] = useState(() => () => {
-    accessLost.current = true;
-    pollAbort.current?.abort();
-    mutationAbort.current?.abort();
-    historyRef.current = emptyHistory(roomId);
-    setHistory(historyRef.current);
-    setPermissionDenied(true);
-    setPollError("접근 권한을 확인해 주세요.");
-  });
 
   const snapshot = history.snapshot;
   const bindings = snapshot?.bindings ?? [];
@@ -209,71 +109,6 @@ function RoomInvestigation({ userId, roomId, role }: Props) {
     ? snapshot?.runs.find((run) => run.cycleId === directCycle.cycleId)
     : undefined;
 
-  async function mutate(action: HumanAction, fields: Body, retryBody?: Body) {
-    if (
-      !snapshot ||
-      !writable ||
-      accessLost.current ||
-      mutationPending.current ||
-      (pendingDirect && !retryBody)
-    )
-      return false;
-    mutationPending.current = true;
-    pollAbort.current?.abort();
-    const controller = new AbortController();
-    mutationAbort.current = controller;
-    setBusy(true);
-    setActionError(null);
-    let directIntent = false;
-    const clearIntent = () => {
-      try {
-        sessionStorage.removeItem(pendingKey);
-      } catch {
-        throw new WorkflowError("UNAVAILABLE");
-      }
-      setPendingDirect(null);
-    };
-    try {
-      const body = mutationBody(action, fields, userId, roomId, retryBody);
-      if (action === "ask" || action === "cancel") {
-        const intent = { action, body };
-        sessionStorage.setItem(pendingKey, JSON.stringify(intent));
-        setPendingDirect(intent);
-        directIntent = true;
-      }
-      await call(action, body, controller.signal);
-      if (!mounted.current || controller.signal.aborted) return false;
-      if (directIntent) clearIntent();
-      return true;
-    } catch (failure) {
-      if (!mounted.current || controller.signal.aborted) return false;
-      const code = failure instanceof WorkflowError ? failure.code : "UNAVAILABLE";
-      if (directIntent && code !== "UNAVAILABLE") {
-        try {
-          clearIntent();
-        } catch {
-          /* Retain the exact intent if storage removal fails. */
-        }
-      }
-      setActionError(
-        code === "CONFLICT"
-          ? "상태가 바뀌었습니다. 기록을 갱신한 뒤 다시 시도해 주세요."
-          : "요청을 완료할 수 없습니다. 접근 권한과 연결 보고를 확인해 주세요.",
-      );
-      if (denied(code)) {
-        historyRef.current = emptyHistory(roomId);
-        setHistory(historyRef.current);
-        setPermissionDenied(true);
-      }
-      return false;
-    } finally {
-      mutationPending.current = false;
-      if (mounted.current) {
-        setBusy(false);
-        setTick((value) => value + 1);
-      }
-    }
-  }
   async function speak(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
     const form = event.currentTarget;
