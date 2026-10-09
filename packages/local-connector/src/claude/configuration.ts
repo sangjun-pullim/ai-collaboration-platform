@@ -201,6 +201,19 @@ function nativeGlobalProjection(value: Record<string, unknown>, roots: readonly 
     "subscriptionNoticeCount",
     "promptQueueUseCount",
   ]);
+  const feedback = value.feedbackSurveyState;
+  // Only the reviewed native survey timestamp is bookkeeping; unexpected data stays pinned.
+  if (
+    feedback !== null &&
+    typeof feedback === "object" &&
+    !Array.isArray(feedback) &&
+    Object.keys(feedback).length === 1 &&
+    "lastShownTime" in feedback &&
+    typeof feedback.lastShownTime === "number" &&
+    Number.isSafeInteger(feedback.lastShownTime) &&
+    feedback.lastShownTime >= 0
+  )
+    bookkeeping.add("feedbackSurveyState");
   const projection = Object.fromEntries(
     Object.entries(executionProjection(value)).filter(([key]) => !bookkeeping.has(key)),
   );
