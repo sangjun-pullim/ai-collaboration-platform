@@ -210,3 +210,11 @@ Docker 접근이 거절되어도 웹 준비 명령은 `LOCAL_STACK_UNVERIFIED`�
 - 수정: [input-proof.ts](../packages/local-connector/src/claude/input-proof.ts)와 [adapter.ts](../packages/local-connector/src/claude/adapter.ts)는 취소할 요청 번호를 이미 확인한 입력·도구·내구 중단에 연결한다. 종결 수신 전의 소유 읽기만 취소하고 늦은 도구 응답은 보내지 않는다. [native-interruption-records.ts](../packages/local-connector/src/claude/native-interruption-records.ts)는 native 취소 설명을 입력·읽기·종결을 만들지 않는 보조 기록으로 분리한다. 원본 전체 이력 해시는 유지한다.
 - 리뷰 보정: 첫 독립 리뷰에서 종결 수신 뒤 취소가 내구 증거에 추가되는 경합을 확인했다. 진입과 ACK 저장 대기 뒤 모두 차단하고 실패 재현 회귀를 통과시켰다. 두 번째 독립 소스 리뷰에서 해소를 확인했다.
 - 검증: 신규 경계·adapter 재접속 회귀와 전체 연결기·타입·lint·format/check를 통과했다. 수치와 실제 중단의 남은 조건은 [개발·검증 상태](planning/delivery-and-validation.md#현재-진행-상태)에 유지한다. 이 소스 검증을 실제 INTERRUPTED 수용으로 표시하지 않는다.
+
+## 2026-10-09 — Mac 연결의 중복 실행과 AI 설정 갱신 누락
+
+- 현상: 웹의 연결 명령이 먼저 `INVALID_BODY`를 출력했다. 웹 승인 뒤 터미널 확인이 거절되면 `FORBIDDEN`으로 종료했고, 등록이 끝나도 웹의 모델·effort 설정 진입이 갱신되지 않았다. 만료된 미등록 프로필은 같은 코드로 계속 연결을 시도했다.
+- 원인: `node -e` 실행 인자가 CLI의 직접 실행 조건과 겹쳐 `main`이 두 번 실행됐다. 빈 확인 입력은 거절로 처리했고 웹 승인 뒤 갱신은 터미널 등록보다 먼저 끝났다. 기존 만료 프로필에는 명시적 재연결 경로가 없었다.
+- 수정: [bootstrap](../scripts/local-connection-bootstrap.sh)에 직접 실행 조건과 구분되는 인자를 넣었다. [터미널 연결](../packages/local-connector/src/cli/connect-command.ts)은 `yes`·`no`를 구분하고 빈 입력을 다시 안내한다. 미등록 만료 상태는 서버와 보존 기록을 확인한 뒤 사용자가 `restart`를 입력한 경우만 새 코드로 연결한다. [로컬 보관](../packages/local-connector/src/state-store.ts)은 원본 파일의 동일성과 내구 보관을 확인하며, 저장·중단·교체 실패 뒤 새 등록을 시작하지 않는다.
+- 화면: [기기 연결](../src/features/device-binding/connection-manager.tsx)은 웹 승인 뒤 실제 기기 등록을 제한된 시간 동안 확인한다. 등록 뒤 AI 프로그램 선택이 자동으로 표시되며, Mac 폴더 승인 뒤 실제 모델·effort를 조회한다. 숨겨진 탭에서는 갱신 요청을 보내지 않는다.
+- 검증: 실패를 재현한 뒤 단위·실제 DB/Auth 브라우저·Mac 터미널과 독립 리뷰2회를 통과했다. 첫 리뷰의 보관 실패 검사 지적을 보완했고 소스 동일성을 확인해 검토 결과를 재사용했다. 원래 실패 로그와 사용자의 프로필·임시 실행 파일·개인 설정은 보존한다. 상세 수치·실제 HTTP 배포 파일 확인·실제 AI 입력0·미확정 시간 제한 이력은 [검증 정본](planning/delivery-and-validation.md#기기-연결-실패와-ai-설정-표시-보정)을 따른다.
