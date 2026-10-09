@@ -218,3 +218,12 @@ Docker 접근이 거절되어도 웹 준비 명령은 `LOCAL_STACK_UNVERIFIED`�
 - 수정: [bootstrap](../scripts/local-connection-bootstrap.sh)에 직접 실행 조건과 구분되는 인자를 넣었다. [터미널 연결](../packages/local-connector/src/cli/connect-command.ts)은 `yes`·`no`를 구분하고 빈 입력을 다시 안내한다. 미등록 만료 상태는 서버와 보존 기록을 확인한 뒤 사용자가 `restart`를 입력한 경우만 새 코드로 연결한다. [로컬 보관](../packages/local-connector/src/state-store.ts)은 원본 파일의 동일성과 내구 보관을 확인하며, 저장·중단·교체 실패 뒤 새 등록을 시작하지 않는다.
 - 화면: [기기 연결](../src/features/device-binding/connection-manager.tsx)은 웹 승인 뒤 실제 기기 등록을 제한된 시간 동안 확인한다. 등록 뒤 AI 프로그램 선택이 자동으로 표시되며, Mac 폴더 승인 뒤 실제 모델·effort를 조회한다. 숨겨진 탭에서는 갱신 요청을 보내지 않는다.
 - 검증: 실패를 재현한 뒤 단위·실제 DB/Auth 브라우저·Mac 터미널과 독립 리뷰2회를 통과했다. 첫 리뷰의 보관 실패 검사 지적을 보완했고 소스 동일성을 확인해 검토 결과를 재사용했다. 원래 실패 로그와 사용자의 프로필·임시 실행 파일·개인 설정은 보존한다. 상세 수치·실제 HTTP 배포 파일 확인·실제 AI 입력0·미확정 시간 제한 이력은 [검증 정본](planning/delivery-and-validation.md#기기-연결-실패와-ai-설정-표시-보정)을 따른다.
+
+
+## 2026-10-09 모델 표시 이름 누락과 이름 변경의 설정 거절
+
+- 현상: Claude/Codex가 제공한 모델 표시 이름이 연결기에서 사라져 웹에 실행 값만 보였다. 표시 이름을 보존하더라도 폴더 선택과 적용 사이 이름이 바뀌면 전체 목록 비교가 같은 실행 설정을 거절했다.
+- 수정: [설정 계약](../src/features/runtime-settings/contracts.ts)은 선택적 `displayName`을 검증하고 의미 hash에서 이 필드만 제외한다. native adapter는 안전한 이름을 보존하고 [설정 관리자](../packages/local-connector/src/settings/manager.ts)는 별도로 검증한 두 카탈로그의 의미 hash를 비교한다. 모델·ID·effort·기본값은 유지한다.
+- 화면: [AI 설정](../src/features/runtime-settings/runtime-settings-form.tsx)은 확인한 목록의 이름과 실행 값을 함께 표시한다. 선택값은 원래 실행 값이며, 다른 runtime·snapshot의 이름을 요청·적용 정보에 붙이지 않는다. 없는 이름은 실행 값으로 표시한다. 최신 버전을 임의로 하드코딩하지 않는다.
+- DB·용량: 후속 SQL017은 기존 함수만 교체한다. 이름이 전체 응답 상한을 넘길 수 있으면 이름만 생략하며 모델 목록은 자르지 않는다. 기존 저장 JSON·권한·함수 속성과 원래 상한을 유지한다.
+- 검증: 누락·hash·화면·이름 변경의 실패를 먼저 재현하고 보정했다. 이전 기록의 읽기·쓰기, 의미 변경 거절, 실제 PostgreSQL의 문자·hash·반복 적용과 함수 속성, 실제 HTTP 응답의 상한을 확인했다. 실행 결과와 독립 리뷰 범위는 [개발·검증 상태](planning/delivery-and-validation.md#현재-진행-상태)에 유지한다.

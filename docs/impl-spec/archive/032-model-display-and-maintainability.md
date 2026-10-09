@@ -1,5 +1,5 @@
 ---
-status: active
+status: done
 date: 2026-10-09
 risk-surface: public-api, permission, db-schema
 ---
@@ -80,7 +80,7 @@ risk-surface: public-api, permission, db-schema
 - actor/room별 대기 중 질문을 HTTP보다 먼저 저장하고 확정된 결과에만 지운다. 같은 입력 재전송, responder epoch 고정, 답변 제공자 변경 시 초안 보존, source 상세 접근 철회 처리를 유지한다.
 - 테스트는 hook 인덱스 대신 새 데이터 모듈의 공개 동작과 렌더 결과를 검증한다. browser에서 실제 질문 제출·답변 표시·재전송·설정 표시를 확인한다.
 
-### [ ] Step 6: 검증·리뷰·문서·GitHub Flow 종료
+### [x] Step 6: 검증·리뷰·문서·GitHub Flow 종료
 
 - 필수 검사를 완료하고 독립 `reviewer`가 전체 변경·권한·DB·호환성·정리 시퀀스를 검토한다. 차단 지적을 보정하고 영향받은 검사를 다시 실행한다.
 - 표준 문서는 `docs/` 바로 아래에 유지한다. 새 실제 AI 호출 없이 확인한 사실과 실제 Claude 중단/두 Mac 검증 대기를 구분한다.
@@ -129,3 +129,6 @@ risk-surface: public-api, permission, db-schema
 | 모델 표시·DB·설치기 구현 독립 검토 | INFO | PASS | quality032_metadata_review: 운영11개·테스트10개와 보충fixture/테스트4개 지문 일치. 의미 hash·이전 기록·JS/SQL·함수 속성·검토된 소스 갱신과 하향 교체 거절을 확인했고 C0/H0/M0/L0다. 실제PG20·설정HTTP39·설정browser8 통과를 별도 기록한다. |
 | 채팅 데이터 분리 독립 검토 | INFO | PASS | quality032_chat_review: 단일poll·직렬mutation·취소와 generation·사용자/방 intent 보존을 확인했다. 운영3개와 관련테스트3개 검토 C0/H0/M0/L0. 실제 React/browser 확인은 Step5의 종료 조건이다. 테스트의 국소 lint 보정은 모델 보충 리뷰가 확인했다. |
 | 실제 채팅·설정 화면 수용 | INFO | PASS | 합쳐진 최신 소스의 settings desktop/mobile8건·workflow desktop/mobile14건 모두 통과했고 parent fixture 정리 종료0이다. native 이름/실행값·상대 직접 질문·재전송·대상교체·초안·스크롤·접근철회 기대값을 유지했다. 실제 AI 입력0. |
+| 전체 종료 검증 | INFO | PASS | 웹425/425·연결기897/897(파일순차)·설정HTTP39/39·실제PG20·설정browser8/8·workflowbrowser14/14, 타입·production/distribution 빌드·lint·format/check를 완료했다. 첫 용량 검사 실패와 임시경로 설정 거절은 원본 보존; 제품·assertion·시간 제한을 바꾸지 않았으며 원인을 고쳤다고 주장하지 않는다. |
+| 안내 문서 검증 기준 커밋 누락 | MEDIUM | ACCEPTED | 최종 문서 리뷰에서 발견한 onboarding-and-settings.md의 오래된 verified-against를 검증한 최신 소스 cecc55c로 갱신했다. 동작 변경은 없다. |
+| 완료 문서·검증 기록 독립 검토 | INFO | PASS | quality032_closure_review가 파일40개·로그15개의 지문과 검증 수치를 확인했다. 앞선 모델·채팅·기록·실행 리뷰를 재사용했고 차단 지적0건이다. 032 완료와 실제 Claude 중단·두 Mac·배포 대기를 구분했다. |

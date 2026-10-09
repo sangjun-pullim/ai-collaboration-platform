@@ -1,5 +1,5 @@
 ---
-verified-against: 3e84d8cd2f3754a33154083a23869ca0f5c8cfe8
+verified-against: cecc55c213c3d34b2c6480de55aa20ac10d9b0b9
 sources:
   - src/app/**
   - src/features/**
@@ -43,11 +43,13 @@ flowchart TD
 
 실제 방은 [InvestigationView](../src/features/investigation-coordinator/investigation-view.tsx)의 공개 이력을 함께 렌더링한다. [history-state](../src/features/investigation-coordinator/history-state.ts)는 eventId 중복 제거·sequence gap 복구와 typed 과거 run 재생을 담당한다. 방 전환·권한 거절 시 이력을 초기화하고 늦게 도착한 snapshot이 최신 상태를 되돌리지 않도록 처리한다. 이 상태는 prototype reducer와 분리한다.
 
-채팅 화면의 내부 책임은 다음 모듈로 나눈다. 공동 이력·직접 질문·대상 선택 상태는 InvestigationView가 소유하고, 본인 AI의 새 답변 상태와 제어 intent는 별도 OwnInputControls가 소유한다. 표시용 컴포넌트는 이 상태나 조회를 복제하지 않는다.
+채팅 화면의 내부 책임은 다음 모듈로 나눈다. 공동 이력·직접 질문 전송·미확정 저장은 RoomChatController가 소유한다. useRoomChat은 같은 controller를 React 구독과 start/stop에 연결하며, InvestigationView는 대상 선택·입력 초안·스크롤을 맡는다. 본인 AI의 새 답변 상태와 제어 intent는 별도 OwnInputControls가 소유한다. 표시용 컴포넌트는 이 상태나 조회를 복제하지 않는다.
 
 | 모듈 | 책임 |
 |---|---|
-| [investigation-view.tsx](../src/features/investigation-coordinator/investigation-view.tsx) | 화면 수명, 조회와 mutation 취소, 미확정 요청 저장/삭제, 이력과 대상 선택 |
+| [investigation-view.tsx](../src/features/investigation-coordinator/investigation-view.tsx) | 입력 초안·대상과 epoch 선택·스크롤·화면 배치 |
+| [room-chat-controller.ts](../src/features/investigation-coordinator/room-chat-controller.ts) | 공개 이력·단일 조회 timer·직렬 전송·요청 취소·사용자/방별 미확정 저장과 동일 요청 복구 |
+| [use-room-chat.ts](../src/features/investigation-coordinator/use-room-chat.ts) | 같은 controller의 구독·start/stop을 React 화면 수명에 연결 |
 | [investigation-client.ts](../src/features/investigation-coordinator/investigation-client.ts) | `callInvestigation` 함수 하나로 요청 검증·fetch·응답 읽기·오류 전달 |
 | [direct-intents.ts](../src/features/investigation-coordinator/direct-intents.ts) | 사용자·방 저장 키, 복원 검증, 새 요청과 동일 재시도 본문 생성 |
 | [chat-presentation.ts](../src/features/investigation-coordinator/chat-presentation.ts) | 연결 상태와 질문 대상 표시. 공동 AI 질문의 발신 요청을 수신 대상으로 해석하지 않는다 |
@@ -61,7 +63,7 @@ flowchart TD
 
 [ChatShell](../src/features/room-access/chat-shell.tsx)은 채팅방 탐색·모바일 Sheet·참가자 정보 배치만 맡는다. HTTP·저장·polling과 권한 상태를 복제하지 않는다. shadcn/ui의 기본 요소는 `src/components/ui/`에 둔다.
 
-브라우저 HTTP 모듈은 요청을 검증한 뒤 POST JSON을 전송한다. 호출자 중단과 10초 제한을 결합하고 응답의 실제 수신 바이트를 최대 262,144바이트로 제한한다. JSON content type, 엄격한 UTF-8과 기존 BOM 처리, 오류 우선순위 및 reader 정리를 유지한다. 서버의 16KiB 요청 읽기 모듈과 실행 환경·상한이 다르다. 직접 요청 정책은 저장값의 읽기·거절을 수행하며 저장·삭제와 재시도 시점은 화면이 결정한다.
+브라우저 HTTP 모듈은 요청을 검증한 뒤 POST JSON을 전송한다. 호출자 중단과 10초 제한을 결합하고 응답의 실제 수신 바이트를 최대 262,144바이트로 제한한다. JSON content type, 엄격한 UTF-8과 기존 BOM 처리, 오류 우선순위 및 reader 정리를 유지한다. 서버의 16KiB 요청 읽기 모듈과 실행 환경·상한이 다르다. 직접 요청 정책은 저장값의 읽기·거절을 수행한다. controller가 HTTP 전에 미확정 요청을 저장하고, 확정 결과에서만 삭제한다. 재전달은 화면의 명시적 동작으로 시작하며 새 질문을 자동 생성하지 않는다.
 
 공동 발언·명시적 origin/peer 조사 시작·자기 interrupt·방 pause·방/조사 재개를 제공한다. 준비와 실행은 기기 보고로 표시하며 provider 미검증·UNKNOWN·과거 미채택을 구분한다. observer는 읽기 화면을 사용한다. polling은 활동/추가 이력 조회 시 2초, idle 10초, 숨김 30초이며 실패 시 최대 30초 backoff를 적용한다. 동시 조회를 제한하고 화면 종료·mutation·권한 거절 때 진행 중 요청을 abort한다.
 

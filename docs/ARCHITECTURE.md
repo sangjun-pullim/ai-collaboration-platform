@@ -1,5 +1,5 @@
 ---
-verified-against: 498e5ea5bc6948681c2bca6f0063fb53d8d156fa
+verified-against: cecc55c213c3d34b2c6480de55aa20ac10d9b0b9
 sources:
   - src/**
   - packages/local-connector/src/**
@@ -19,7 +19,7 @@ sources:
 
 ## 웹 입장과 대화의 구현 경계
 
-실제 웹은 회사 코드·표시 이름 입장과 AI 채팅방 목록을 기본 진입으로 사용한다. shadcn/ui·Tailwind가 화면 구성과 접근 가능한 Dialog·Sheet를 제공한다. 모의 체험은 `/demo`에 둔다. `ChatShell`은 탐색·배치만 맡고 `InvestigationView`가 조회·요청·미확정 저장·대상 선택의 상태를 소유한다. 표시용 Timeline·Composer·고급 제어에 별도 HTTP·storage·polling을 만들지 않는다.
+실제 웹은 회사 코드·표시 이름 입장과 AI 채팅방 목록을 기본 진입으로 사용한다. shadcn/ui·Tailwind가 화면 구성과 접근 가능한 Dialog·Sheet를 제공한다. 모의 체험은 `/demo`에 둔다. `ChatShell`은 탐색·배치만 맡는다. `RoomChatController`가 공개 이력·조회·요청·미확정 저장과 취소를 소유하고, `useRoomChat`이 React의 구독과 화면 수명에 연결한다. `InvestigationView`는 입력 초안·대상과 epoch 선택·스크롤을 소유한다. 표시용 Timeline·Composer·고급 제어에 별도 HTTP·storage·polling을 만들지 않는다.
 
 웹은 현재 사용자 session과 publishable key로 DB를 호출한다. 입장 코드 verifier·admission·시도 제한은 private DB 모델이 소유하며 제품 웹에 admin key·DB 비밀번호를 주지 않는다. 웹의 `runtime-settings`는 자기 기기에 폴더 선택·공급자·모델·추론 강도(`effort`) 설정 요청을 저장한다. PC의 `SettingsManager`가 native 폴더 선택과 자동 코드 탐색 범위의 확인, 준비와 적용을 맡는다. 웹 요청 접수·서버 확정·PC 적용을 별도 상태로 표시하며, 이 소스 구현을 실제 Mac·DB·공급자 수용 완료로 해석하지 않는다. [프런트엔드](FRONTEND-ARCHITECTURE.md)·[입장 DB](DB-SCHEMA.md#회사-코드-입장)
 
