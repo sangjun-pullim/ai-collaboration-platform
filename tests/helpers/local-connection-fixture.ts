@@ -44,6 +44,7 @@ export async function connectionFixture(
     escape?: boolean;
     oversized?: boolean;
     badRuntime?: boolean;
+    directEntry?: boolean;
   } = {},
 ) {
   const root = await realpath(await mkdtemp(join(tmpdir(), "connection-bootstrap-")));
@@ -107,7 +108,12 @@ export async function connectionFixture(
               : "";
       await writeFile(
         join(out, "src", "cli.js"),
-        `import fs from "node:fs"; export async function main(args) { fs.writeFileSync(${JSON.stringify(runFile)}, JSON.stringify({args, path:process.env.PATH, preload:${JSON.stringify(preloadNames)}.filter(key => Object.hasOwn(process.env, key))})); ${behavior} }`,
+        `import fs from "node:fs"; import {resolve} from "node:path"; import {pathToFileURL} from "node:url";
+export async function main(args) {
+  if (args[0] !== "connect") throw Object.assign(new Error("unexpected CLI arguments"), {code:"INVALID_BODY"});
+  fs.writeFileSync(${JSON.stringify(runFile)}, JSON.stringify({args, path:process.env.PATH, preload:${JSON.stringify(preloadNames)}.filter(key => Object.hasOwn(process.env, key))})); ${behavior}
+}
+${options.directEntry ? `if (process.argv[1] && pathToFileURL(resolve(process.argv[1])).href === import.meta.url) main(process.argv.slice(2)).catch(error => { process.stderr.write(JSON.stringify({state:"disconnected",error:error.code})+"\\n"); process.exitCode=1; });` : ""}`,
       );
     },
   });

@@ -187,7 +187,8 @@ started=1
 "$node" --input-type=module -e '
 import {writeFile} from "node:fs/promises";
 import {pathToFileURL} from "node:url";
-const [entry, proof, ...args] = process.argv.slice(1);
+// Keep argv[1] separate from the imported CLI entry so its direct-run guard stays idle.
+const [, entry, proof, ...args] = process.argv.slice(1);
 try {
   const {main} = await import(pathToFileURL(entry).href);
   await main(args);
@@ -196,7 +197,7 @@ try {
   const code = typeof error?.code === "string" && /^[A-Z_]{1,40}$/.test(error.code) ? error.code : "UNAVAILABLE";
   process.stderr.write(JSON.stringify({state:"disconnected",error:code}) + "\n");
   process.exitCode = 1;
-}' "$work/code/src/cli.js" "$work/shutdown" connect --server "$origin" --profile "$profile" --device-alias "$device_alias" --organization-id "$organization" --room-id "$room" <&0 &
+}' ai-collab-bootstrap "$work/code/src/cli.js" "$work/shutdown" connect --server "$origin" --profile "$profile" --device-alias "$device_alias" --organization-id "$organization" --room-id "$room" <&0 &
 child=$!
 set +e
 while true; do

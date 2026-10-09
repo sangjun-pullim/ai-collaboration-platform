@@ -306,4 +306,79 @@ export class StateStore {
       if ((e as NodeJS.ErrnoException).code !== "ENOENT") throw e;
     }
   }
+  /** Preserve a never-registered pairing before an explicitly confirmed renewal. Caller holds the profile lock. */
+  async archiveExpiredPairing(snapshot: ConnectorState, check = () => {}) {
+    if (
+      snapshot.status !== "pairing" ||
+      snapshot.pending ||
+      snapshot.registration ||
+      snapshot.credential ||
+      snapshot.deviceId ||
+      snapshot.mappings.length
+    )
+      refused();
+    await this.ensureDir(check);
+    const before = await lstat(this.file);
+    check();
+    const source = await open(this.file, constants.O_RDONLY | constants.O_NOFOLLOW);
+    let bytes: Buffer;
+    try {
+      const info = await source.stat();
+      check();
+      if (
+        !info.isFile() ||
+        info.uid !== process.getuid?.() ||
+        (info.mode & 0o777) !== 0o600 ||
+        info.nlink !== 1 ||
+        info.size > 65536 ||
+        info.ino !== before.ino ||
+        info.dev !== before.dev
+      )
+        refused();
+      bytes = await source.readFile();
+      check();
+      if (JSON.stringify(JSON.parse(bytes.toString("utf8"))) !== JSON.stringify(snapshot))
+        refused();
+    } finally {
+      await source.close();
+    }
+    const archive = await open(
+      join(this.dir, `.expired-pairing-${randomUUID()}.json`),
+      constants.O_CREAT | constants.O_EXCL | constants.O_WRONLY | constants.O_NOFOLLOW,
+      0o600,
+    );
+    try {
+      check();
+      await archive.writeFile(bytes);
+      check();
+      await archive.sync();
+      check();
+    } finally {
+      await archive.close();
+    }
+    const directory = await open(this.dir, constants.O_RDONLY | constants.O_NOFOLLOW);
+    try {
+      await directory.sync();
+      check();
+      const unchanged = JSON.stringify(await this.read()) === JSON.stringify(snapshot);
+      check();
+      const current = await lstat(this.file);
+      check();
+      if (
+        current.ino !== before.ino ||
+        current.dev !== before.dev ||
+        current.size !== before.size ||
+        current.mtimeMs !== before.mtimeMs ||
+        current.ctimeMs !== before.ctimeMs ||
+        !unchanged
+      )
+        refused();
+      check();
+      await unlink(this.file);
+      await directory.sync();
+      check();
+    } finally {
+      await directory.close();
+    }
+  }
 }

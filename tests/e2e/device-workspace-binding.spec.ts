@@ -71,8 +71,10 @@ async function connect(page: Page, id: string, name: string, roomId: string) {
   await expect(page.getByRole("status", { name: "기기 연결 결과" })).toContainText("승인을 완료");
   await expect(page.getByLabel("기기 연결 코드", { exact: true })).toHaveValue("");
   await broker("register", { id, name });
-  await page.reload();
-  await expect(page.getByText("등록 · 실행 미검증", { exact: true })).toBeVisible();
+  await expect(page.getByText("등록 · 실행 미검증", { exact: true })).toBeVisible({
+    timeout: 15000,
+  });
+  await expect(page.getByRole("combobox", { name: "AI 프로그램", exact: true })).toBeVisible();
 }
 test("should approve an owned connection and display only public unverified bindings", async ({
   browser,
