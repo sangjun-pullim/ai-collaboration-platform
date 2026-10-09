@@ -1,5 +1,5 @@
 ---
-verified-against: cecc55c213c3d34b2c6480de55aa20ac10d9b0b9
+verified-against: 915cd7e053a31a3696d0f4d05f7b9d1bf4bc5cb6
 sources: src/features/**, packages/local-connector/src/**, scripts/**, supabase/migrations/**, tests/helpers/local-access-stack.ts, package.json
 ---
 
@@ -7,7 +7,7 @@ sources: src/features/**, packages/local-connector/src/**, scripts/**, supabase/
 
 웹 로그인은 사람을 식별하고, 로컬 저장소와 AI 연결은 별도로 등록한다. 사용자가 접속 전에 모든 설정값을 알아야 하는 흐름으로 만들지 않는다. 웹에서 준비 상태와 안내를 확인하고 필요한 로컬 등록을 진행할 수 있게 한다.
 
-질문만 하는 참가자는 웹 로그인과 방의 질문 권한으로 준비된 상대 AI에 질문한다. 자기 AI·로컬 경로·기기 등록은 선택 사항이다. 답변용 AI를 제공하거나 자기 AI로 공동 조사할 때만 아래 로컬 연결 절차를 진행한다. [직접 질문 구현](../impl-spec/archive/010-human-direct-questions.md)은 기존 두 AI의 조사 시작과 별도로 동작한다. 현재 검증과 남은 Claude 연동 범위는 [진행 상태](../planning/delivery-and-validation.md#현재-진행-상태)를 따른다.
+질문만 하는 참가자는 웹 로그인과 방의 질문 권한으로 준비된 상대 AI에 질문한다. 자기 AI·로컬 경로·기기 등록은 선택 사항이다. 답변용 AI를 제공하거나 자기 AI로 공동 조사할 때만 아래 로컬 연결 절차를 진행한다. [직접 질문 구현](../impl-spec/archive/010-human-direct-questions.md)은 기존 두 AI의 조사 시작과 별도로 동작한다. 현재 검증과 두 Mac의 현장 수용 범위는 [진행 상태](../planning/delivery-and-validation.md#현재-진행-상태)를 따른다.
 
 브라우저의 폴더 접근 handle과 로컬 CLI 실행은 다르다. 실제 경로는 connector의 로컬 선택 화면/CLI에서 등록하고 웹에서는 등록된 binding을 선택한다. 설치·접속 방식과 공급자별 연결 가능 범위는 [로컬 AI 연결 조사](../research/local-ai-connection-research.md)를 따른다.
 

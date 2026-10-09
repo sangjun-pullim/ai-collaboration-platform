@@ -1,5 +1,5 @@
 ---
-status: active
+status: done
 date: 2026-10-05
 risk-surface: auth, permission, db-schema, public-api
 ---
@@ -9,7 +9,7 @@ risk-surface: auth, permission, db-schema, public-api
 
 ## Context
 
-[PRD](../PRD.md)의 기본 흐름은 자기 AI가 없는 사람이 동료의 연결된 AI에 질문하는 것이다. 020/021은 채팅 화면과 입장을 보정하며 실제 폴더·Claude·모델·effort의 적용을 대신하지 않는다. 이 명세는 한 답변 제공자의 설정부터 실제 DIRECT 실행까지 연결한다. 두 AI activation과 workflow v2를 선행 조건으로 추가하지 않는다.
+[PRD](../../PRD.md)의 기본 흐름은 자기 AI가 없는 사람이 동료의 연결된 AI에 질문하는 것이다. 020/021은 채팅 화면과 입장을 보정하며 실제 폴더·Claude·모델·effort의 적용을 대신하지 않는다. 이 명세는 한 답변 제공자의 설정부터 실제 DIRECT 실행까지 연결한다. 두 AI activation과 workflow v2를 선행 조건으로 추가하지 않는다.
 
 범위 조사는 기존 `chat_first_local_setup_scope` planner 보고서를 재사용한다. 현재 connector RuntimeAdapter/Store/Runner/CLI와 device 및 workflow 계약은 Codex로 고정되어 있다. Claude 실험의 NativeRuntime/TaskPolicy는 합성 실행만 허용하며 3회 실험 budget을 제품에 복사할 수 없다. 단순 wrapper나 provider 문자열 추가를 실제 Claude 지원으로 처리하지 않는다.
 
@@ -46,8 +46,8 @@ risk-surface: auth, permission, db-schema, public-api
 
 ## Implementation Steps
 
-### [ ] Step 1: 공급자 공통 계약과 실제 Claude adapter
-> 실제 수용 미완료: 도구 없는 중단 복구 HIGH는023의 합성 검사와 독립 리뷰로 해소했다. 제품 CLI의 Claude 생성3곳은024의 공통 정책·정확한 소유 이력 공급에 연결했다. 기본 factory의 공식 설치·설정 검증과 같은 대화 후속 질문은 [030 보정](030-native-claude-chat-and-follow-up.md)에서 진행한다. 추가 사용자 결정을 기본 채팅의 선행 조건으로 요구하지 않는다. 실제 Claude·DB·두 Mac의 실행 조건과 검증 결과는 [진행 정본](../planning/delivery-and-validation.md#현재-진행-상태)을 따른다.
+### [x] Step 1: 공급자 공통 계약과 실제 Claude adapter
+> 완료: 도구 없는 중단 복구 HIGH는023의 합성 검사와 독립 리뷰로 해소했다. 제품 CLI의 Claude 생성3곳은024의 공통 정책·정확한 소유 이력 공급에 연결했다. [030 보정](030-native-claude-chat-and-follow-up.md)의 공식 설치·설정 검증·정상 답변·같은 대화 후속 질문·실제 중단과 로컬 종료 리뷰까지 통과했다. 두 Mac은 별도 현장 수용이며 [진행 정본](../../planning/delivery-and-validation.md#현재-진행-상태)을 따른다.
 
 **File**: runtime 계약/검증/runner, claude 내부 모듈, contract mirror, migration runtime 부분
 
@@ -60,7 +60,7 @@ risk-surface: auth, permission, db-schema, public-api
 - 030의 검증된 실제 설치·버전·native policy와 설정 우선순위 근거가 있어야 공식 Claude 실행을 열 수 있다. 일반 개인 설정 파일을 변경하거나 credentials를 복사하지 않는다. 시작 inventory·실행 중 설정 drift·읽기 전용 allowlist·소유 child 정리 실패를 기존 미확인 계약에 연결한다.
 
 ### [x] Step 2: 소유자 전용 설정 명령과 영수증
-> 2026-10-08 실제 설정 DB·HTTP·소유자 권한과 SQL011 warm upgrade를 검증했다. 기존 데이터·receipt·동일 본문 재전송과 설정 계약을 보존했고, 적용 영수증의 SQL016 보정은 별도 실제 회귀와 독립 리뷰를 통과했다. 검사 수치와 근거는 [진행 정본](../planning/delivery-and-validation.md#현재-진행-상태)에 유지한다. 이 단계의 DB·API 완료가 실제 Mac 폴더 창·공식 AI 답변·두 Mac 수용의 완료를 뜻하지 않는다.
+> 2026-10-08 실제 설정 DB·HTTP·소유자 권한과 SQL011 warm upgrade를 검증했다. 기존 데이터·receipt·동일 본문 재전송과 설정 계약을 보존했고, 적용 영수증의 SQL016 보정은 별도 실제 회귀와 독립 리뷰를 통과했다. 검사 수치와 근거는 [진행 정본](../../planning/delivery-and-validation.md#현재-진행-상태)에 유지한다. 이 단계의 DB·API 완료가 실제 Mac 폴더 창·공식 AI 답변·두 Mac 수용의 완료를 뜻하지 않는다.
 
 **File**: 새 migration, runtime-settings web/connector contracts/client/service/store
 
@@ -74,7 +74,7 @@ risk-surface: auth, permission, db-schema, public-api
 - catalog는 실제 adapter initialize에서 받은 모델/effort만 사용한다. 버전/hash/selection을 같이 검증하고 전체 응답 16KiB·모델 256개·effort 12개 한도를 지킨다. 한도를 넘으면 전체 catalog unsupported를 명시하고 조용히 일부를 자르지 않는다. 초기 단계에서 512KiB pagination과 양쪽 AI activation은 추가하지 않는다.
 
 ### [x] Step 3: Mac 폴더 선택과 로컬 설정 관리 루프
-> 2026-10-08 실제 Mac의 지정 폴더 선택·취소와 공식 Claude 기본 factory의 설정 COMMITTED→로컬 APPLIED→서버 응답 준비를 확인했다. AI 입력0·소유 child 정리와 검증 데이터 제거도 통과했다. 설정 수용은 완료했으며 실제 답변·후속 답변·중단은 Step5와030에서 별도로 확인한다. 상세 근거는 [진행 정본](../planning/delivery-and-validation.md#현재-진행-상태)을 따른다.
+> 2026-10-08 실제 Mac의 지정 폴더 선택·취소와 공식 Claude 기본 factory의 설정 COMMITTED→로컬 APPLIED→서버 응답 준비를 확인했다. AI 입력0·소유 child 정리와 검증 데이터 제거도 통과했다. 설정 수용은 완료했으며 실제 답변·후속 답변·중단은 Step5와030에서 별도로 확인한다. 상세 근거는 [진행 정본](../../planning/delivery-and-validation.md#현재-진행-상태)을 따른다.
 
 **File**: settings manager/folder-picker/store, CLI 및 runner idle 접점
 
@@ -97,8 +97,8 @@ risk-surface: auth, permission, db-schema, public-api
 - 요청한 값과 적용된 값, 기다림·Mac에서 선택/확인·취소·미확정·준비 완료를 구분한다. 웹의 저장 성공으로 응답 준비를 표시하지 않는다. 다른 사람의 설정에는 편집 UI를 제공하지 않는다.
 - 동일 agent/epoch의 현재 공개 별칭과 실제 provider만 대상 카드에 표시한다. 과거 질문의 당시 저장소/모델 snapshot이 없는 v1 기록은 현재 값으로 채우지 않는다. model/effort의 상세 역사 snapshot은 후속 계약이며 초기 DIRECT 기본 질문의 전제조건이 아니다.
 
-### [ ] Step 5: 권한·장애·실제 연결 검증과 종료
-> 실제 수용 미완료: DB·HTTP·설정 화면·Mac 폴더 선택/취소·공식 Claude 설정 적용·정상/후속 답변은 검증했다. 실제 중단은 UNKNOWN이며030의 입력 상한·실행 리뷰 경계에서 보정한다. 로컬 실제 중단과 종료 검토까지 마친 뒤 이 계획을 종료할 수 있다. 동료가 나중에 참여하는 두 Mac 검사는 별도 현장 수용으로 유지한다. 원래 구현 리뷰3과 실패 증거는 보존한다.
+### [x] Step 5: 권한·장애·실제 연결 검증과 종료
+> 완료: DB·HTTP·설정 화면·Mac 폴더 선택/취소·공식 Claude 설정 적용·정상/후속 답변・실제 중단을 검증했다. 2026-10-09의 새 독립 종료 리뷰는 로컬 단계와 필수 검증을 확인해 PASS다. 동료가 나중에 참여하는 두 Mac 검사는 별도 현장 수용으로 유지한다. 원래 구현 리뷰3과 실패·UNKNOWN·입력 예산은 보존한다.
 
 **File**: test와 관련 정본 문서
 
@@ -177,9 +177,9 @@ Round 1: C0/H4/M2/L0/INFO1. All six corrections ACCEPTED; native-input authoriza
 
 ### 구현 리뷰 3과 후속 보정
 
-2026-10-06 구현 리뷰 3은 REVISE, C0/H1/M0/L0/INFO2다. 위 Round 3 PASS는 구현 전 계획 리뷰 결과이며 이 구현 리뷰 결과와 구분한다. [impl-execute](/Users/pullim/.codex/agent-skills/impl-execute/SKILL.md)의 리뷰 3회 상한에 따라 당시 소스를 동결하고 HIGH를 미해결로 남겼다. `status: active`와 Step 미완료 표시는 유지한다.
+2026-10-06 구현 리뷰 3은 REVISE, C0/H1/M0/L0/INFO2다. 위 Round 3 PASS는 구현 전 계획 리뷰 결과이며 이 구현 리뷰 결과와 구분한다. [impl-execute](/Users/pullim/.codex/agent-skills/impl-execute/SKILL.md)의 리뷰 3회 상한에 따라 당시 소스를 동결하고 HIGH를 미해결로 남겼다. 당시에는 `status: active`와 Step 미완료 표시를 유지했다. 후속 보정과 실제 수용을 마친 종료 판정은 아래 Completion State에 기록한다.
 
-계속 진행하는 전체 목표의 기존 위임으로 [중단 복구 국소 보정 계획](archive/023-claude-interrupt-recovery.md)을 작성한다. 후속 계획은 이 명세를 대체하지 않는다. 원래 리뷰3의 REVISE 기록은 보존한다. 후속023의 구현·필수 검사·새 독립 리뷰2 PASS가 완료되어 아래 HIGH를 해소 처리했다. 계획 검토만으로 해소 처리한 결과가 아니다.
+계속 진행하는 전체 목표의 기존 위임으로 [중단 복구 국소 보정 계획](023-claude-interrupt-recovery.md)을 작성한다. 후속 계획은 이 명세를 대체하지 않는다. 원래 리뷰3의 REVISE 기록은 보존한다. 후속023의 구현·필수 검사·새 독립 리뷰2 PASS가 완료되어 아래 HIGH를 해소 처리했다. 계획 검토만으로 해소 처리한 결과가 아니다.
 
 | Finding | Severity | Disposition | Rationale |
 |---------|----------|-------------|-----------|
@@ -188,7 +188,7 @@ Round 1: C0/H4/M2/L0/INFO1. All six corrections ACCEPTED; native-input authoriza
 
 ## Implementation Review
 
-2026-10-06 소스 구현과 합성 검증을 진행했다. 실제 수용을 포함한 Step 완료 표시는 유지한다. 검사 수치와 환경별 미완료 범위는 [진행 정본](../planning/delivery-and-validation.md#현재-진행-상태)에 둔다.
+아래는 2026-10-06 소스 구현과 합성 검증 당시의 리뷰 기록이다. 당시 실제 수용은 미완료였다. 현재 검사 수치와 현장 수용 범위는 [진행 정본](../../planning/delivery-and-validation.md#현재-진행-상태)에 둔다.
 
 - 구현 리뷰 1: backend C0/H3/M1/L0/INFO1. 설정 receipt 이전의 currentBinding, Codex effort 검증, 취소 후 PC 정리 예약, receipt state 타입을 소스·회귀 검사로 보정했다.
 - 구현 리뷰 2: 전체 운영 소스 C0/H4/M1/L0/INFO2. 완료 operation 정확 조회, 같은 pointer의 동기화 재확인, 중단한 읽기 도구의 내구 취소 증거와 전체 이력 검증, 제거한 profile의 재연결 정책, 확정 거절 요청의 화면 예약 해제를 보정했다. 관련 실패를 먼저 재현했으며 전체 합성 검사를 다시 통과했다.
@@ -197,4 +197,10 @@ Round 1: C0/H4/M2/L0/INFO1. All six corrections ACCEPTED; native-input authoriza
 023 후속 보정: 원래 구현 리뷰3의 중단 복구 HIGH와 보정 중 드러난 종료 대기 회귀를 별도 국소 구현·검사·독립 리뷰로 해소했다. 원래022 전체 구현 리뷰3의 REVISE는 역사적 결과로 유지하며022의 실제 수용과 native 운영 공급 미완료는 계속 이 명세의 범위다.
 
 
-024 후속 연결 기록: [Claude 정책·이력 연결 기록](archive/024-claude-native-policy-and-history.md)의 공통 생성 함수와 exact owned history 공급, 설정/환경 변경·effort 고정·profile catalog 실행 차단을 소스에 연결했다. 당시 합성 전체443/443과 독립 구현 리뷰1 PASS C0/H0/M0/L0/INFO0을 확인했으며 공식 설치 admission은 없었다. 2026-10-07의 native 기본 정책·후속 질문 보정은030에서 진행한다. 009의 추가 최대3회·합계 최대6회 사용자 승인은 재사용하며 현재 실행 조건은009와 검증 정본을 따른다.
+024 후속 연결 기록: [Claude 정책·이력 연결 기록](024-claude-native-policy-and-history.md)의 공통 생성 함수와 exact owned history 공급, 설정/환경 변경·effort 고정·profile catalog 실행 차단을 소스에 연결했다. 당시 합성 전체443/443과 독립 구현 리뷰1 PASS C0/H0/M0/L0/INFO0을 확인했으며 공식 설치 admission은 없었다. 2026-10-07의 native 기본 정책·후속 질문 보정은030에서 진행한다. 009의 추가 최대3회·합계 최대6회 사용자 승인은 재사용하며 현재 실행 조건은009와 검증 정본을 따른다.
+
+## Completion State
+
+2026-10-09에 로컬 Step1–5와 필수 Tests·검사를 완료했다. 공식 Claude의 정상 답변과 같은 UUID 후속 답변은 원래 typed 완료·도구·소유 이력의 독립 재대조 결과를 재사용했다. 기존 UNKNOWN·승인·예산은 덮어쓰지 않았다. 사용자가 별도로 승인한 추가 중단 최대1회에서 같은 입력의 typed `aborted_tools`·내구 중단·도구 CLOSED·native 이력 VERIFIED·소유 프로세스 REAPED를 확인했다. 이 묶음은1/1이고 과거8회를 포함한 누적 입력은9회다. 실제 effort는 UNVERIFIED로 유지한다.
+
+설문 시각 갱신의 사전 점검 차단을 국소 보정하고 소스·정확한 실행 준비의 독립 리뷰를 통과했다. 새 종료 reviewer `claude030_actual_and_local_closure_review`는 원시 증거와 재사용 검사·리뷰 입력을 대조해 실제 중단 수용·022 로컬 종료·030 로컬 종료 모두 PASS, C0/H0/M0/L0/INFO0으로 판정했다. 이 결과로 완료 표시하고 보관한다. 두 Mac 현장 수용과 운영 배포는 별도 미완료 범위다. 원본 실패·리뷰 기록과 완료되지 않은009 구계획은 보존한다.

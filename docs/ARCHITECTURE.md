@@ -1,5 +1,5 @@
 ---
-verified-against: cecc55c213c3d34b2c6480de55aa20ac10d9b0b9
+verified-against: 915cd7e053a31a3696d0f4d05f7b9d1bf4bc5cb6
 sources:
   - src/**
   - packages/local-connector/src/**
@@ -150,7 +150,7 @@ Vercel은 화면과 짧은 제어 API를 제공하고 AI 실행·지속 연결�
 
 공통 `provider-adapter.ts`가 설정 관리·현재 설정 실행·단독 모델 목록 조회·기존 Codex 실행의 공급자 생성을 담당한다. Claude의 `configuration.ts`는 적용 설정의 안전한 읽기와 변경 확인을 담당한다. 기본 `native-policy.ts`는 `native-installation.ts`의 공식 설치·게시자·로그인 검증과 `native-sources.ts`의 설정·지침 발견을 조합해 실행 인자·환경·정확한 소유 이력 경로를 제공한다. 기존 `launch-policy.ts`는 Node 합성 fixture 전용으로 유지하며 그 근거로 공식 Claude 실행 파일을 허용하지 않는다. 개인 설정 파일은 수정하지 않고 작업별로 읽기 전용 도구·훅·플러그인 제한을 적용한다. 초기 지원 범위와 입력 없는 점검 절차는 [Claude 연결 확인](guides/onboarding-and-settings.md#claude-연결-확인)을 따른다.
 
-공식 실행 파일의 hash는 고정 크기 descriptor 읽기로 계산하고 identity가 같으면 재사용한다. 지침의 import 목록도 변경 없는 source에서 재사용하되 파일 identity·새 source·실행 권한 변화는 계속 검사한다. native global 설정은 계정·조직과 실행 권한을 고정하고 Claude가 갱신하는 시작 횟수·캐시는 권한 변화와 구분한다.
+공식 실행 파일의 hash는 고정 크기 descriptor 읽기로 계산하고 identity가 같으면 재사용한다. 지침의 import 목록도 변경 없는 source에서 재사용하되 파일 identity·새 source·실행 권한 변화는 계속 검사한다. native global 설정은 계정·조직과 실행 권한을 고정하고 Claude가 갱신하는 시작 횟수·캐시는 권한 변화와 구분한다. `feedbackSurveyState`는 음수가 아닌 안전한 정수 `lastShownTime` 하나만 가진 경우에 한해 설문 표시 시각으로 구분한다. 알 수 없는 필드·잘못된 형식·계정·조직·권한 변경은 계속 실행을 차단하며 개인 파일은 수정하지 않는다.
 
 단독 모델 목록 조회의 `catalog-store.ts`는 기기 프로필에 소유 세션 예약을 먼저 내구 저장한다. 같은 프로필의 새 준비·목록 조회·실행과 Codex 전환은 미확인 정리가 남으면 차단한다. catalog 디렉터리 밖의 고정 identity 파일로 이력 파일이나 디렉터리의 이동·교체도 확인한다. 실제 소유 실행 프로세스의 종료 확인만 예약을 닫으며, 파일만 읽는 Claude의 소유 이력 관찰은 계속 허용한다. 설정 관리자의 기존 generation 예약 저널과 023 중단 증거 계약은 유지한다. 실제 검증 범위는 [진행 정본](planning/delivery-and-validation.md#현재-진행-상태)을 따른다.
 

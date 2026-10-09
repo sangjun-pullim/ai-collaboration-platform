@@ -193,6 +193,52 @@ test("should preserve personal settings while applying only task read-only overr
   assert.deepEqual(await readFile(f.settingsPath), before);
 });
 
+test("should retain the live fingerprint when native feedback survey timestamps appear and refresh", async (t) => {
+  const f = await admittedFixture(t);
+  const fingerprint = f.policy.fingerprint;
+  const probes = f.probes.length;
+  const settings = await readFile(f.settingsPath);
+  const global = { ...f.global, feedbackSurveyState: { lastShownTime: 1 } };
+  await f.json(f.globalPath, global);
+  f.policy.assertLive(f.root, () => {});
+  global.feedbackSurveyState.lastShownTime = 2;
+  await f.json(f.globalPath, global);
+  const written = await readFile(f.globalPath);
+  f.policy.assertLive(f.root, () => {});
+  assert.equal(f.policy.fingerprint, fingerprint);
+  assert.equal(f.probes.length, probes);
+  assert.deepEqual(await readFile(f.globalPath), written);
+  assert.deepEqual(await readFile(f.settingsPath), settings);
+});
+
+test("should keep unexpected native feedback survey data pinned", async (t) => {
+  const cases = [
+    {
+      name: "extra authority field",
+      value: { lastShownTime: 2, permissions: { allow: ["Write"] } },
+    },
+    { name: "string timestamp", value: { lastShownTime: "2" } },
+    { name: "negative timestamp", value: { lastShownTime: -1 } },
+    { name: "fractional timestamp", value: { lastShownTime: 1.5 } },
+    { name: "unsafe timestamp", value: { lastShownTime: Number.MAX_SAFE_INTEGER + 1 } },
+    { name: "empty object", value: {} },
+    { name: "array", value: [] },
+    { name: "null", value: null },
+  ];
+  for (const entry of cases) {
+    await t.test(`should reject ${entry.name} drift`, async (t) => {
+      const f = await nativeFixture(t);
+      const global = { ...f.global, feedbackSurveyState: { lastShownTime: 1 } as unknown };
+      await f.json(f.globalPath, global);
+      const policy = new NativeClaudePolicy({});
+      await policy.admit(f.root, () => {});
+      global.feedbackSurveyState = entry.value;
+      await f.json(f.globalPath, global);
+      assert.throws(() => policy.assertLive(f.root, () => {}), { code: "SNAPSHOT_CHANGED" });
+    });
+  }
+});
+
 test("should ignore native bookkeeping refresh and retain account and execution drift detection", async (t) => {
   const f = await admittedFixture(t);
   const fingerprint = f.policy.fingerprint;
@@ -243,7 +289,7 @@ test("should retain the live fingerprint when the additional model cache and tim
   assert.equal(policy.fingerprint, fingerprint);
 });
 
-test("should keep authority and unknown native settings pinned across model cache timestamp refresh", async (t) => {
+test("should keep authority and unknown native settings pinned across native bookkeeping refresh", async (t) => {
   for (const change of [
     "MCP authorization token",
     "account",
@@ -258,6 +304,7 @@ test("should keep authority and unknown native settings pinned across model cach
       const global = {
         ...f.global,
         additionalModelOptionsAnsweredAt: 1,
+        feedbackSurveyState: { lastShownTime: 1 },
         additionalModelOptionsAnsweredAtUnknown: 1,
         unknownSetting: { enabled: true },
         permissions: { allow: ["Read"] },
@@ -275,6 +322,7 @@ test("should keep authority and unknown native settings pinned across model cach
       const fingerprint = policy.fingerprint;
       const probes = f.probes.length;
       global.additionalModelOptionsAnsweredAt = 2;
+      global.feedbackSurveyState.lastShownTime = 2;
       await f.json(f.globalPath, global);
       policy.assertLive(f.root, () => {});
       assert.equal(policy.fingerprint, fingerprint);
