@@ -227,3 +227,10 @@ Docker 접근이 거절되어도 웹 준비 명령은 `LOCAL_STACK_UNVERIFIED`�
 - 화면: [AI 설정](../src/features/runtime-settings/runtime-settings-form.tsx)은 확인한 목록의 이름과 실행 값을 함께 표시한다. 선택값은 원래 실행 값이며, 다른 runtime·snapshot의 이름을 요청·적용 정보에 붙이지 않는다. 없는 이름은 실행 값으로 표시한다. 최신 버전을 임의로 하드코딩하지 않는다.
 - DB·용량: 후속 SQL017은 기존 함수만 교체한다. 이름이 전체 응답 상한을 넘길 수 있으면 이름만 생략하며 모델 목록은 자르지 않는다. 기존 저장 JSON·권한·함수 속성과 원래 상한을 유지한다.
 - 검증: 누락·hash·화면·이름 변경의 실패를 먼저 재현하고 보정했다. 이전 기록의 읽기·쓰기, 의미 변경 거절, 실제 PostgreSQL의 문자·hash·반복 적용과 함수 속성, 실제 HTTP 응답의 상한을 확인했다. 실행 결과와 독립 리뷰 범위는 [개발·검증 상태](planning/delivery-and-validation.md#현재-진행-상태)에 유지한다.
+
+## 2026-10-09 — Claude 설문 시각 갱신으로 인한 실행 차단
+
+- 현상: 실제 중단 검증의 입력 없는 사전 점검이 `SNAPSHOT_CHANGED`로 차단됐다. AI 입력·예약 소비·DB 변경은 없었다.
+- 원인: 공식 Claude 2.1.293은 설문을 표시할 때 전역 `.claude.json`의 `feedbackSurveyState.lastShownTime`을 갱신한다. 이 시각을 실행 권한 변경으로 판단해 준비와 실행 사이의 정상 갱신도 거절했다. 정확한 이전 백업과 설치된 공식 실행 파일의 읽기 전용 대조로 확인했다.
+- 수정: [configuration.ts](../packages/local-connector/src/claude/configuration.ts)는 `lastShownTime` 하나만 있는 객체의 음수가 아닌 안전한 정수 시각만 실행 권한 비교에서 제외한다. 필드 추가·잘못된 형식·계정·조직·권한·MCP 설정 변경은 계속 거절한다. 개인 설정과 로그인은 수정하지 않는다.
+- 검증: 실패를 먼저 재현한 뒤 형식·권한 변경 회귀와 전체 연결기 검사를 통과했다. 소스·정확한 실행 준비의 독립 리뷰를 마친 같은 검증 후보에서 실제 입력1회로 중단 종결·이력 대조·도구 종료·프로세스 종료를 확인했다. 최초 사전 점검 실패와 이전 미확인 입력은 보존하며 현재 수치·종료 리뷰는 [검증 정본](planning/delivery-and-validation.md#공식-claude의-정상후속-답변과-중단-검증)을 따른다.

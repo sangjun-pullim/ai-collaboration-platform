@@ -23,13 +23,13 @@
 
 ## 현재 진행 상태
 
-2026-10-09 모델 표시 보정과 채팅·실행·저장 책임 분리를 완료한 상태다. 2026-10-08 실행 환경 전환 뒤 Docker·localhost·Git·GitHub 접근이 가능해졌으며 아래 실제 검사를 진행했다. 가짜 AI 공급자를 사용하는 DB·HTTP 검사와 공식 Claude의 실제 입력을 구분한다. 아래의 이전 실행 기록에서 나온 접근 차단은 당시 환경의 결과다.
+2026-10-09 모델 표시 보정·채팅/실행/저장 책임 분리와 공식 Claude의 로컬 정상·후속 답변·중단 검증을 완료했다. 새 독립 종료 리뷰를 통과해022·030까지 완료 보관했다. 두 Mac 현장 수용과 운영 배포는 별도 미완료 범위다. 2026-10-08 실행 환경 전환 뒤 Docker·localhost·Git·GitHub 접근이 가능해졌으며 아래 실제 검사를 진행했다. 가짜 AI 공급자를 사용하는 DB·HTTP 검사와 공식 Claude의 실제 입력을 구분한다. 아래의 이전 실행 기록에서 나온 접근 차단은 당시 환경의 결과다.
 
 ### 이번 실행에서 확인한 것
 
 | 검사·작업 | 확인한 결과 | 남은 조건 |
 |---|---|---|
-| 웹·연결기 단위 검사 | 전체 웹425/425·연결기897/897, 타입·production/distribution 빌드·lint·format/check 통과. 모델·채팅의 독립 소스 리뷰2 PASS | 연결기 전체는 파일별 순차 실행. 처음 실패는 아래에 보존하고 기대값·시간 제한은 유지. 변경 없는 실행/저장 리뷰와 Claude 중단 소스·회귀22/22·독립 리뷰를 재사용 |
+| 웹·연결기 단위 검사 | 전체 웹425/425·최신 연결기907/907, 타입·production/distribution 빌드·lint·format/check 통과. 모델·채팅·Claude 설정 비교 보정과 로컬 종료의 독립 리뷰 PASS | 연결기 전체는 파일별 순차 실행. 이전 실패는 아래에 보존하고 기대값·시간 제한은 유지. 변경 없는 웹·DB·화면·실행/저장과 Claude 중단 소스·회귀22/22·독립 리뷰를 재사용 |
 | 설정·일시정지·자료 이력의 실제 DB·HTTP | 모델 표시 보정 후39/39 통과: Claude 연결4, 일시정지7, AI 설정19, 자료 이력9. 새 SQL017의 함수 속성·표시 이름/의미 hash·실제 응답 크기 검사를 포함 | 실제 AI 응답은 가짜 공급자를 사용한 이 결과와 별개 |
 | 실제 설정 화면 | 최신 모델 표시 소스의 desktop/mobile8/8 통과. Claude/Codex option의 표시 이름·실행값, Claude 선택HTTP 모델/effort와 요청 요약 확인. 부모fixture 정리 종료0 | 공식 AI 실행은 별도 수용 |
 | Mac의 실제 폴더 선택 창 | 지정한 검증용 폴더 선택·취소 모두 PASS. 취소 오류 분류의 단위21건·독립 리뷰 PASS | AI 입력0. 아래 실제 공급자 설정 검증은 이 폴더 선택 결과를 재사용 |
@@ -40,7 +40,7 @@
 | DB 함수 보정 | 신규 SQL017의 별도 실제 PostgreSQL20개 사례·함수 속성·반복 적용·rollback과 독립 소스 리뷰 PASS. 검토된 로컬 DB에017만 적용하고 재실행 ALREADY_PRESENT 확인 | 현재 함수 원문을 확인한 상태만 적용하고 알 수 없는 변경은 거절. 이전SQL·데이터·권한은 유지 |
 | 공식 Claude 입력 없는 조회 | 서명된 native 2.1.293의 설치·로그인·모델 목록12개와 소유 프로세스 종료 확인 | 개인 CLI가 자동 업데이트돼도 설치된 검증 버전을 사용할 수 있음. 미지원 버전을 실행한 결과는 아님 |
 | 공식 Claude의 실제 설정 적용 | 실제 웹 COMMITTED 응답·로컬 APPLIED·서버 응답 준비를 기본 factory/설정 관리/실행기로 확인. AI 입력·예산·owned turn 각각0, 소유 child2개 REAPED와 fixture 정리 PASS | 합성 폴더 선택 callback과 실제 Mac 선택·취소 증거를 함께 사용. 정상 답변·후속 답변·중단과 구분 |
-| 공식 Claude 실제 입력 | 정상 답변과 같은 UUID의 후속 답변은 typed COMPLETED·이력 대조·REAPED·독립 리뷰 PASS. 중단은 취소 알림 뒤 typed result가 없어 UNKNOWN이며 원본 보존 | 승인 묶음3/3·누적상한8 소비. 중단 보정 소스는 통과했으며 실제 중단1회는 새 명시적 입력 승인·실행 리뷰가 필요 |
+| 공식 Claude 실제 입력 | 정상 답변·같은 UUID 후속 답변의 typed COMPLETED와 새 중단 입력의 typed INTERRUPTED·이력 대조·도구 CLOSED·REAPED·독립 종료 리뷰 PASS | 기존 묶음3/3·원본 UNKNOWN과 누적8회 보존. 사용자가 추가 승인한 중단 묶음1/1·누적9회 소비. 실제 effort는 UNVERIFIED. 두 Mac 수용과 구분 |
 | GitHub Flow | 누적 구현의 PR 병합·main 포함 확인 뒤 완료 브랜치 정리와 로컬 main 동기화 확인 | 별도 worktree의 사용자 작업 유지. 기기 연결 보정도 최신 main의 작업 브랜치·독립 검증·PR 병합 순서를 적용 |
 | 임시 실행 자원 | 업그레이드 검증용 두 stack의 컨테이너 12개·소유 네트워크·4518 웹 정리 완료 | 기존 개발 stack·사용자 4318 웹·개인 설정은 유지 |
 
@@ -68,7 +68,7 @@
 
 로컬017 적용의 첫 시도는 검증 launcher가 바꾼 TMPDIR 때문에 UNVERIFIED_WORKDIR로 거절됐고 DB 변경0이었다. launcher의 적용 모드만 실제 스택의 기존 macOS 임시 위치로 맞춘 뒤 검토된017 한 파일 적용과 ALREADY_PRESENT를 확인했다. 제품 설치기의 소유 위치 검사는 유지했다. 새 명령 배포 파일을 실제 HTTP로 내려받아 압축 파일·bootstrap hash와 컴파일된 운영 모듈6개의 일치를 확인했다.
 
-이 작업의 실제 AI 입력은0이며 아래 공식 Claude 중단·두 Mac 수용과 구분한다. 원본 실패·통과 로그, 기준 코드 비교와 리뷰 입력은 `/private/tmp/ai-collab-quality-20261009-jHXrgz/`와 `/private/tmp/ai-collab-quality-resume-20261009-jlx1n_xe/`에 비공개로 보관한다.
+032 모델·채팅 정리 자체의 실제 AI 입력은0이며 아래 공식 Claude 중단1회·두 Mac 수용과 구분한다. 원본 실패·통과 로그, 기준 코드 비교와 리뷰 입력은 `/private/tmp/ai-collab-quality-20261009-jHXrgz/`와 `/private/tmp/ai-collab-quality-resume-20261009-jlx1n_xe/`에 비공개로 보관한다.
 
 
 ### 기기 연결 실패와 AI 설정 표시 보정
@@ -83,28 +83,36 @@
 
 원본 실패·통과 로그·Mac 터미널 검증·독립 리뷰·배포 파일 검증은 `/private/tmp/ai-collab-connection-fix-20261009-79ibB19N/`에 비공개로 보관한다. 소유4418 검증 서버와 합성 데이터를 정리했고 사용자 연결 프로필·보존한 임시 실행 파일·`next-env.d.ts`·기존 Docker 스택은 유지했다. 이 보정의 실제 AI 입력은0이며 아래 Claude 중단과 두 Mac 수용은 완료로 바꾸지 않는다.
 
-### 공식 Claude의 정상·후속 답변과 남은 중단 검증
+### 공식 Claude의 정상·후속 답변과 중단 검증
 
 사용자는 과거 UNKNOWN5회를 보존하고 새 합성 저장소에서 최대3회·누적상한8회를 승인했다. 첫 입력의 자동 목록·검색·읽기2회와 정상 답변, 두 번째 입력의 같은 대화 UUID·후속 읽기·답변을 확인했다. 두 입력 모두 정확한 입력 ACK와 typed COMPLETED, 소유 프로세스 REAPED, native 이력의 읽기 전용 대조와 독립 리뷰를 통과했다. driver가 보조 기록을 거절해 남겼던 원래 UNKNOWN 보고·예산·대화 기록은 수정하지 않았으며 검증된 상태만 별도 기록에 연결했다. 재대조의 AI 입력은0이다.
 
 마지막 세 번째 입력은 읽기 요청을 보류한 상태에서 중단했다. 같은 도구의 공식 MCP `notifications/cancelled`는 관찰했지만 처리기가 알림을 거절해 typed result를 확보하지 못했다. 원본 UNKNOWN·입력 intent·취소 알림·예산3/3·native 이력과 REAPED를 보존한다. 취소 설명이나 프로세스 종료만으로 INTERRUPTED를 확정하지 않는다.
 
-취소 알림의 소유 도구 연결, 종결 뒤 늦은 취소 거절, native 취소 설명의 보조 기록 검증을 보정했다. 관련 회귀와 전체 검사 및 새 독립 소스 리뷰2가 통과했다. 실제 중단 재검증은 새 합성 폴더·새 대화에서 최대1회만 준비하며, 추가 사용자 승인과 정확한 실행 준비 리뷰가 끝나기 전에는 호출하지 않는다. 정상·후속 답변을 반복하지 않고 원래 실패 묶음의 남은 슬롯도 재사용하지 않는다.
+취소 알림의 소유 도구 연결, 종결 뒤 늦은 취소 거절, native 취소 설명의 보조 기록 검증을 보정했다. 관련 회귀와 전체 검사 및 새 독립 소스 리뷰2가 통과했다. 사용자는 새 합성 폴더·새 대화의 중단 검증 최대1회와 누적 상한9회를 추가 승인했다. 정상·후속 답변을 반복하지 않고 원래 실패 묶음의 남은 슬롯도 재사용하지 않았다.
+
+처음 입력 없는 사전 점검은 `SNAPSHOT_CHANGED`로 차단됐으며 AI 입력·예산 소비는0이었다. 정확한 이전 전역 설정 백업과 서명된 공식 실행 파일을 대조해 `feedbackSurveyState.lastShownTime`의 설문 표시 시각 갱신이 원인임을 확인했다. 소스 커밋 `915cd7e`는 이 객체가 음수가 아닌 안전한 정수 시각 필드 하나만 가진 경우에만 실행 권한 비교에서 제외한다. 알 수 없는 형식·추가 필드·계정·조직·권한 변경 거절은 유지했다. 실패 재현 뒤 native 정책52/52와 최신 전체 연결기907/907, build·lint·format/check 및 소스·정확한 실행 준비의 새 독립 리뷰를 통과했다. 같은 검증 후보에서 준비 입력0회·실제 입력1회만 실행했다.
+
+실제 중단 입력은 intent의 내구 저장·예산 소비 뒤 stdin으로1회 전송했다. 동일 session/input의 ACK·MCP 요청 ID와 취소 ID·typed `aborted_tools` result·내구 중단 증거가 일치해 INTERRUPTED로 확인했다. 도구1개 CLOSED·취소1개·native 이력20행 VERIFIED·실행 및 목록 조회의 소유 프로세스 REAPED를 확인했다. 새 묶음1/1과 누적9회를 소비했고 재시도하지 않았다. 개인 설정 전후 projection과 원래 증거134개·소스141개의 지문은 같다.
+
+새 독립 종료 reviewer `claude030_actual_and_local_closure_review`는 실제 원시 메시지·입력 지문·취소·typed 종결·native 체크포인트를 별도로 대조했다. 정상·후속 답변 원본과 같은 UUID 재개도 재확인했으며 기존 UNKNOWN·예산을 보존했다. 실제 중단 수용·022 로컬 종료·030 로컬 종료 모두 PASS, C0/H0/M0/L0/INFO0이다. 변경 없는 기존 구현·웹425·HTTP39·PostgreSQL20·설정 화면8·채팅 화면14·upgrade·폴더 선택·공식 설정 적용의 검증과 독립 리뷰는 재사용했다.
+
+보정 후 명령 배포 파일의 실제 HTTP 응답·압축 파일/bootstrap hash와 컴파일된 운영 모듈7개 일치를 확인했다. 소유4418 부모 서버는 의도한 SIGTERM 종료143이며 포트가 비었음을 확인했다. 원래 사용자4318 웹과 개인 프로필·설정·Docker stack은 유지했다. 실제 검증과 종료 리뷰 원문은 `/private/tmp/ai-collab-quality-resume-20261009-jlx1n_xe/native-interruption-check/`에 비공개로 보관한다.
 
 요청 모델은 sonnet·effort는 low다. 실제 모델 식별자는 관찰했지만 CLI가 effort를 보고하지 않아 실제 effort는 UNVERIFIED로 유지한다. 개인 설정·로그인·CLI 링크는 바꾸지 않았고 설치된 검증 버전2.1.293을 사용했다. 합성 상대 callback과 한 Mac의 수용은 물리적 두 Mac의 통과 근거가 아니다.
 
 ### 남아 있는 계획서를 읽는 기준
 
-`impl-spec/`에는 실제 중단·종료 검토가 남은 계획2개가 있다. `archive/`에는 완료 계획28개와 대체된 구계획2개가 있다. 소스 미구현과 실제 수용 미완료를 구분한다. `[x]`는 해당 단계 전체의 완료이며 실제 수용을 포함한 단계는 코드가 있어도 완료 검증 전에는 `[ ]`로 남는다.
+`impl-spec/`의 활성 계획은0개다. `archive/`에는 완료 계획30개와 대체된 구계획2개가 있다. 로컬 구현·검증·종료 리뷰를 마친 계획만 보관했으며 두 Mac 현장 수용과 운영 배포를 완료했다는 뜻은 아니다. `[x]`는 해당 단계 전체의 완료이며 코드만 있는 단계는 완료로 표시하지 않는다.
 
 | 계획 | 완료한 범위 | 아직 남은 것 |
 |---|---|---|
 | [009 Claude 호환성 실험](../impl-spec/archive/009-claude-code-runtime-compatibility.md) | 030으로 대체 보관. 원래 미완료 표시·UNKNOWN·승인·예산 동결 | 별도 재실행하지 않으며 공식 수용은030에서 계속 |
-| [022 내 Mac의 AI 설정](../impl-spec/022-owner-local-ai-setup.md) | 설정 계약·관리 루프·UI·adapter, 실제 DB·HTTP·설정 화면·Mac 폴더 선택·취소·공식 Claude 설정 적용 수용 | 공식 Claude 실제 중단·로컬 종료 검토. 두 Mac은 별도 현장 수용 |
+| [022 내 Mac의 AI 설정](../impl-spec/archive/022-owner-local-ai-setup.md) | Step1–5·설정 계약/관리/UI/adapter·실제 DB/HTTP/화면/Mac 폴더/공식 Claude·독립 종료 리뷰 완료, archive 보관 | 이 로컬 계획의 남은 작업 없음. 두 Mac은 별도 현장 수용 |
 | [025 내 AI의 새 답변 일시정지](../impl-spec/archive/025-own-ai-input-pause.md) | Step1–4·필수 회귀·실제 수용·종료 리뷰 완료, archive 보관 | 이 계획의 남은 작업 없음 |
 | [027 답변 당시 대상·코드 이력](../impl-spec/archive/027-shared-input-source-history.md) | Step1–5·필수 회귀·실제 수용·종료 리뷰 완료, archive 보관 | 이 계획의 남은 작업 없음 |
 | [029 승인 폴더의 자동 코드 탐색 연결](../impl-spec/archive/029-owner-approved-repository-tools.md) | Step1–6·실제 설정/화면/Mac 선택·별도 공식 자동 탐색·종료 리뷰 완료, archive 보관 | 이 계획의 남은 작업 없음. 두 Mac은 별도 현장 수용 |
-| [030 공식 Claude 연결·후속 질문](../impl-spec/030-native-claude-chat-and-follow-up.md) | Step1–3·5, 서명된 2.1.288/2.1.293 지원 보정과 독립 리뷰 | Step4의 실제 중단과 종료 검토. 두 Mac은 별도 현장 수용 |
+| [030 공식 Claude 연결·후속 질문](../impl-spec/archive/030-native-claude-chat-and-follow-up.md) | Step1–5·서명된 지원 설치/설정·정상/후속 답변/중단과 독립 종료 리뷰 완료, archive 보관 | 이 로컬 계획의 남은 작업 없음. 두 Mac은 별도 현장 수용 |
 | [032 모델 표시와 코드 정리](../impl-spec/archive/032-model-display-and-maintainability.md) | Step1–6·관련 검증·독립 리뷰 완료, archive 보관 | 이 계획의 남은 작업 없음. 실제 Claude 중단·두 Mac은 별도 범위 |
 
 [031 명령 한 번 연결](../impl-spec/archive/031-one-command-local-connection.md)은 소스·격리 검사·독립 재검토를 마쳐 보관했다. 실제 공급자·두 Mac 수용은 별도 단계다. [008 구계획](../impl-spec/archive/008-owner-runtime-settings-and-targets.md)은 완료가 아닌 `superseded-by: 022`로 보관했으며 생략된 공동 조사 요구는 [후속 작업](#기본-채팅-이후의-후속-작업)에 남긴다.
@@ -115,7 +123,7 @@
 
 ### 현재 브랜치 운영 점검
 
-누적 구현·최종 보정은 [PR4](https://github.com/sangjun-pullim/ai-collaboration-platform/pull/4), 병합·정리 기록은 [PR5](https://github.com/sangjun-pullim/ai-collaboration-platform/pull/5)로 main에 병합했다. 검토한 tip의 포함 관계와 로컬 main 동기화를 확인한 뒤 작업 브랜치·이전 채팅 브랜치를 로컬과 원격에서 정리했다. 기기 연결 보정도 [PR6](https://github.com/sangjun-pullim/ai-collaboration-platform/pull/6)로 main에 병합하고 완료 브랜치를 정리했다. 실행·저장 책임 분리는 최신 `origin/main`의 작업 브랜치에서 독립 검토했으며 코드·문서의 커밋과 병합 상태는 [PR7](https://github.com/sangjun-pullim/ai-collaboration-platform/pull/7)에서 확인한다. 별도 worktree의 사용자 변경과 `next-env.d.ts`는 보존한다. 정확한 브랜치 운영 기준은 [GitHub Flow 운영](github-flow.md)을 따른다.
+누적 구현·최종 보정은 [PR4](https://github.com/sangjun-pullim/ai-collaboration-platform/pull/4), 병합·정리 기록은 [PR5](https://github.com/sangjun-pullim/ai-collaboration-platform/pull/5)로 main에 병합했다. 검토한 tip의 포함 관계와 로컬 main 동기화를 확인한 뒤 작업 브랜치·이전 채팅 브랜치를 로컬과 원격에서 정리했다. 기기 연결 보정도 [PR6](https://github.com/sangjun-pullim/ai-collaboration-platform/pull/6)로 main에 병합하고 완료 브랜치를 정리했다. 실행·저장 책임 분리의 [PR7](https://github.com/sangjun-pullim/ai-collaboration-platform/pull/7)과 모델 표시·채팅 분리의 [PR8](https://github.com/sangjun-pullim/ai-collaboration-platform/pull/8)도 main에 병합하고 해당 완료 브랜치를 정리했다. 설문 시각 보정은 최신 `origin/main`에서 시작한 별도 작업 브랜치에서 소스·실행 준비·실제 수용의 독립 검토를 완료했으며 같은 PR·검토한 head 병합·완료 브랜치 정리 순서를 적용한다. 별도 worktree의 사용자 변경과 `next-env.d.ts`는 보존한다. 정확한 브랜치 운영 기준은 [GitHub Flow 운영](github-flow.md)을 따른다.
 
 ### 이전 실행 기록
 
@@ -123,16 +131,16 @@
 
 ## 다음 작업 순서
 
-우선 완료할 사용 흐름은 **웹에 접속한 사람이 상대 AI에 질문 → 상대 Mac이 답변 → 같은 대화에서 후속 질문**이다. 질문자에게 AI·기기·경로를 요구하지 않는다. 계획을 더 쪼개는 대신 아래 검증 묶음으로 기존 계획을 닫는다. 같은 소스와 입력의 통과 검사·독립 리뷰는 재사용한다.
+기본 사용 흐름은 **웹에 접속한 사람이 상대 AI에 질문 → 상대 Mac이 답변 → 같은 대화에서 후속 질문**이다. 질문자에게 AI·기기·경로를 요구하지 않는다. 로컬 계획은 아래 검증 묶음으로 종료했고 남은 현장 검증을 구분한다. 같은 소스와 입력의 통과 검사·독립 리뷰는 재사용한다.
 
 | 순서 | 해야 할 일 | 연결된 계획 | 종료·보관 조건 |
 |---|---|---|---|
 | 1 | 검토된 누적 구현·문서·채팅 UI·회사 코드 입장을 main에 병합 | 이미 보관한001–007·010–021 | 완료: PR1–3 병합과 원래 tip 포함 확인. 후속 설정·연결·문서 보정도 PR4로 병합 완료 |
-| 2 | SQL010–017의 권한·업그레이드·실제 HTTP·설정과 자료 화면을 검증하고 종료 리뷰 | 022·완료025·027·029·032 | DB·HTTP·실제 화면·warm upgrade 통과는 위 표를 따른다. 025·027·029·032 보관 완료; 022는 실제 중단 뒤 종료 검토 |
-| 3 | 공식 Claude 정상 코드 답변 → 같은 대화 재개 → 중단 | 022·030 | 정상·같은 UUID 후속 답변 검증 완료. 중단 원본UNKNOWN과 입력3/3을 보존. 보정 뒤 추가 중단1회는 별도 승인·실행 리뷰 뒤 진행 |
+| 2 | SQL010–017의 권한·업그레이드·실제 HTTP·설정과 자료 화면을 검증하고 종료 리뷰 | 완료022·025·027·029·032 | 완료: DB·HTTP·실제 화면·warm upgrade·종료 리뷰를 통과해 모두 보관 |
+| 3 | 공식 Claude 정상 코드 답변 → 같은 대화 재개 → 중단 | 완료022·030 | 완료: 정상·같은 UUID 후속 답변·추가 승인1회의 실제 중단과 원시 증거 독립 리뷰 PASS. 원래 UNKNOWN·입력3/3과 새 입력1/1·누적9회 보존 |
 | 4 | 두 Mac에서 웹 질문자 → 상대 Claude 자동 답변 → 후속 질문 | 022·030 현장 수용 | 동료는 나중에 참여 가능. 서로 다른 회원·기기, 접속 가능한 주소·사전 입력 상한·공유 자료로 실제 확인 |
 
-실행 환경 접근 차단은 해소됐다. 현재 남은 것은 공식 Claude의 실제 중단 재검증과 로컬 종료 검토, 나중에 참여 가능한 동료와의 두 Mac 검증이다. Mac 폴더 선택·취소와 공식 Claude 설정 적용은 확인했다. 전체 제품 완료와 소스 병합을 구분하고 새 입력 없이 처리 가능한 작업은 계속한다.
+실행 환경 접근 차단은 해소됐고 로컬 구현·필수 검사·실제 Claude 수용·종료 리뷰는 완료했다. 다음 현장 검증은 동료가 참여할 때 두 Mac·다른 회원으로 직접 질문과 후속 답변을 확인하는 것이다. 접속 가능한 테스트 주소와 실제 계정·공유 범위·입력 상한은 그 실행 전에 확정한다. 운영 배포와 후속 기능은 이 로컬 완료의 범위가 아니다.
 
 ### 기본 채팅 이후의 후속 작업
 
