@@ -48,7 +48,7 @@
     "dev": "next dev",
     "build": "next build --webpack",
     "start": "next start",
-    "lint": "eslint src tests scripts/access-web-server.mjs next.config.ts playwright.config.ts playwright.auth.config.ts playwright.device.config.ts playwright.workflow.config.ts playwright.settings.config.ts packages/local-connector/src packages/local-connector/tests eslint.config.mjs scripts/build-local-connection.mjs",
+    "lint": "eslint src tests scripts/access-web-server.mjs next.config.ts playwright.config.ts playwright.auth.config.ts playwright.device.config.ts playwright.workflow.config.ts playwright.settings.config.ts packages/local-connector/src packages/local-connector/tests eslint.config.mjs scripts/build-local-connection.mjs scripts/prepare-supabase-cloud.mjs",
     "typecheck": "next typegen && tsc --noEmit -p tsconfig.json && tsc --noEmit -p tsconfig.test.json && tsc --noEmit -p tsconfig.e2e.json && tsc --noEmit -p tsconfig.integration.json",
     "test": "tsc -p tsconfig.test.json && node --test .test-build/tests/unit/*.test.js",
     "test:e2e": "playwright test",

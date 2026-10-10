@@ -28,6 +28,7 @@
 ## 접속과 화면 사용
 
 - [첫 사용 설정](guides/onboarding-and-settings.md): 로그인, 기기·저장소·AI 연결과 준비 상태.
+- [Vercel·Supabase 배포](guides/cloud-deployment.md): 무료 프로젝트 준비, DB 적용, 웹 환경 변수와 동료 접속 검증.
 - [화면과 상호작용](guides/interaction-design.md): 공동 대화, 개인 입력과 방향 수정의 사용 흐름.
 
 ## AI 연결 조사
