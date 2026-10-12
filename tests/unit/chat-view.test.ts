@@ -9,7 +9,7 @@ import {
   emptyHistory,
   mergeHistory,
 } from "../../src/features/investigation-coordinator/history-state.ts";
-import { nearTimelineBottom } from "../../src/features/investigation-coordinator/chat-presentation.ts";
+import * as presentation from "../../src/features/investigation-coordinator/chat-presentation.ts";
 import type { RoomChatController } from "../../src/features/investigation-coordinator/room-chat-controller.ts";
 const fixture = JSON.parse(readFileSync("tests/fixtures/human-direct-contracts.json", "utf8"));
 const source = ts.transpileModule(
@@ -34,6 +34,7 @@ function find(node: unknown, type: string): Node | undefined {
   }
   const el = node as Node;
   if (el.type === type) return el;
+  if (typeof el.type === "function") return find(el.type(el.props), type);
   return find(el.props?.children, type);
 }
 async function harness(t: TestContext, role: "owner" | "participant" | "observer" = "participant") {
@@ -44,6 +45,7 @@ async function harness(t: TestContext, role: "owner" | "participant" | "observer
   const refs: { current: unknown }[] = [];
   const memos: unknown[] = [];
   let effects: (() => (() => void) | void)[] = [];
+  let projectionCalls = 0;
   const calls: { action: contracts.HumanAction; body: contracts.Body }[] = [];
   let responseFailure = false;
   const storage = new Map<string, string>();
@@ -94,7 +96,11 @@ async function harness(t: TestContext, role: "owner" | "participant" | "observer
     const exports: Record<string, unknown> = {};
     modules.set(name, exports);
     const code = ts.transpileModule(readFileSync(path, "utf8"), {
-      compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2022 },
+      compilerOptions: {
+        module: ts.ModuleKind.CommonJS,
+        target: ts.ScriptTarget.ES2022,
+        jsx: ts.JsxEmit.ReactJSX,
+      },
     }).outputText;
     runInNewContext(code, { ...context, exports }, { timeout: 1000 });
     return exports;
@@ -107,7 +113,14 @@ async function harness(t: TestContext, role: "owner" | "participant" | "observer
       if (["./direct-intents", "./direct-intents.ts"].includes(name)) return intents;
       if (["./history-state", "./history-state.ts"].includes(name))
         return { emptyHistory, mergeHistory };
-      if (name === "./chat-presentation") return { nearTimelineBottom };
+      if (name === "./chat-presentation")
+        return {
+          ...presentation,
+          answerStatuses: (context: presentation.AnswerStatusContext) => {
+            projectionCalls++;
+            return presentation.answerStatuses(context);
+          },
+        };
       if (["./polling-policy", "./polling-policy.ts"].includes(name))
         return { pollingDelay: () => 10_000 };
       if (name === "./investigation-client")
@@ -134,7 +147,14 @@ async function harness(t: TestContext, role: "owner" | "participant" | "observer
       if (name === "./use-room-chat")
         return load(name, "src/features/investigation-coordinator/use-room-chat.ts");
       if (name === "./chat-composer") return { ChatComposer: "composer" };
-      if (name === "./chat-timeline") return { ChatTimeline: "timeline" };
+      if (name === "./chat-timeline")
+        return {
+          ...load(name, "src/features/investigation-coordinator/chat-timeline.tsx"),
+          ChatTimeline: "timeline",
+        };
+      if (name === "./run-source-view") return { RunSourceView: "source-view" };
+      if (name === "../../components/ui/avatar") return { Avatar: "div", AvatarFallback: "span" };
+      if (name === "../../components/ui/badge") return { Badge: "span" };
       if (name === "./own-input-controls") return { OwnInputControls: "own-input-controls" };
       if (name === "./advanced-controls") return { AdvancedControls: "advanced" };
       if (name === "../../components/ui/button") return { Button: "button" };
@@ -181,6 +201,7 @@ async function harness(t: TestContext, role: "owner" | "participant" | "observer
     render,
     history,
     calls,
+    projectionCalls: () => projectionCalls,
     storage,
     snapshot: async (next: contracts.HistoryPage) => {
       currentPage = next;
@@ -309,4 +330,100 @@ test("should propagate source access loss to abort room work clear history and b
   assert.equal((find(tree, "timeline")!.props.events as unknown[]).length, 0);
   assert.equal(find(tree, "composer"), undefined);
   assert.equal(h.calls.length, 0);
+});
+
+function visibleText(node: unknown): string {
+  if (Array.isArray(node)) return node.map(visibleText).join(" ");
+  if (typeof node === "string" || typeof node === "number") return String(node);
+  if (!node || typeof node !== "object") return "";
+  const element = node as Node;
+  if (typeof element.type === "function") return visibleText(element.type(element.props));
+  return visibleText(element.props?.children);
+}
+function labeled(node: unknown, label: string): Node | undefined {
+  if (Array.isArray(node)) return node.map((child) => labeled(child, label)).find(Boolean);
+  if (!node || typeof node !== "object") return;
+  const element = node as Node;
+  if (element.props?.["aria-label"] === label) return element;
+  if (typeof element.type === "function") return labeled(element.type(element.props), label);
+  return labeled(element.props?.children, label);
+}
+for (const role of ["owner", "participant", "observer"] as const) {
+  test(`should show target progress and confirmed terminal guidance to ${role}`, async (t) => {
+    const h = await harness(t, role);
+    const page = fixture.history as contracts.HistoryPage;
+    await h.snapshot({
+      ...page,
+      runs: [{ ...page.runs[0], state: "RUNNING" }],
+      bindings: [{ ...page.bindings[0], owned: role === "owner" }],
+    });
+    const status = labeled(h.render(), "AI 답변 상태");
+    assert.ok(status);
+    assert.match(visibleText(status), /소유자 · 공개 세션/);
+    assert.match(visibleText(status), /질문 #\s*1.*한글 직접 질문/);
+    assert.match(visibleText(status), /답변 생성 중/);
+    await h.snapshot({
+      ...page,
+      runs: [{ ...page.runs[0], state: "INTERRUPTED" }],
+      bindings: [{ ...page.bindings[0], owned: role === "owner" }],
+      cycle: { ...page.cycle!, canInterrupt: false } as contracts.DirectCycleSummary,
+    });
+    const terminal = labeled(h.render(), "AI 답변 상태")!;
+    assert.match(visibleText(terminal), /중단 확인/);
+    assert.match(visibleText(terminal), /터미널/);
+    assert.match(visibleText(terminal), /새 질문/);
+    assert.equal(
+      find(terminal, "a")?.props.href,
+      role === "owner" ? "/app/connections" : undefined,
+    );
+    if (role === "observer") assert.equal(find(h.render(), "button"), undefined);
+    assert.equal(h.calls.length, 0);
+  });
+}
+test("should keep the current answer visible despite an older terminal cycle and preserve cancel identity", async (t) => {
+  const h = await harness(t);
+  const page = fixture.history as contracts.HistoryPage;
+  await h.snapshot({
+    ...page,
+    runs: [
+      { ...page.runs[0], requestId: "older-request", cycleId: "older-cycle", state: "COMPLETED" },
+      { ...page.runs[0], state: "RUNNING" },
+    ],
+  });
+  const region = labeled(h.render(), "AI 답변 상태")!;
+  assert.match(visibleText(region), /답변 생성 중/);
+  assert.doesNotMatch(visibleText(region), /답변 완료/);
+  function cancel(node: unknown): Node | undefined {
+    if (Array.isArray(node)) return node.map(cancel).find(Boolean);
+    if (!node || typeof node !== "object") return;
+    const el = node as Node;
+    if (el.type === "button" && el.props.children === "이 직접 질문 중단 요청") return el;
+    return cancel(el.props?.children);
+  }
+  const button = cancel(region)!;
+  assert.ok(button);
+  await (button.props.onClick as () => Promise<boolean>)();
+  assert.equal(h.calls[0].action, "cancel");
+  assert.equal(h.calls[0].body.requestId, page.runs[0].requestId);
+});
+test("should show an empty current answer region for observers without inventing execution", async (t) => {
+  const h = await harness(t, "observer");
+  assert.match(visibleText(labeled(h.render(), "AI 답변 상태")), /현재 요청된 AI 답변이 없습니다/);
+  assert.equal(find(h.render(), "composer"), undefined);
+});
+
+test("should calculate status once per room render and pass the same result to the timeline", async (t) => {
+  const h = await harness(t);
+  const page = fixture.history as contracts.HistoryPage;
+  await h.snapshot({ ...page, runs: [{ ...page.runs[0], state: "RUNNING" }] });
+  const before = h.projectionCalls();
+  const tree = h.render();
+  assert.equal(h.projectionCalls(), before + 1);
+  const shared = find(tree, "timeline")!.props.presentation as ReturnType<
+    typeof presentation.answerStatuses
+  >;
+  assert.equal(shared.statuses[0].label, "답변 생성 중");
+  assert.equal(shared.byQuestion.get(page.events[0].eventId)?.[0], shared.statuses[0]);
+  assert.match(visibleText(labeled(tree, "AI 답변 상태")), /답변 생성 중/);
+  assert.equal(h.projectionCalls(), before + 1);
 });

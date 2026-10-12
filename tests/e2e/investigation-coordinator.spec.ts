@@ -132,9 +132,16 @@ test("should distinguish reported execution unknown and confirmed pause in the b
     const region = page.getByRole("region", { name: "실제 공동 조사" });
     await expect(region.getByLabel("보낼 곳")).toHaveValue("ask");
     await broker("drive", { scene, step: "start" });
-    await expect(region.getByLabel("공개 실행 보고")).toContainText("실행 보고 · provider 미검증", {
-      timeout: 45000,
-    });
+    await expect(region.getByRole("region", { name: "AI 답변 상태", exact: true })).toContainText(
+      "답변 생성 중",
+      {
+        timeout: 45000,
+      },
+    );
+    const answerStatus = region.getByRole("region", { name: "AI 답변 상태", exact: true });
+    await expect(answerStatus).toBeVisible();
+    await expect(answerStatus).toContainText("공개 세션");
+    await expect(answerStatus).toContainText("로컬 실행 시작");
     await region.getByRole("button", { name: "공동 조사", exact: true }).click();
     const advanced = page.getByRole("dialog", { name: "공동 조사", exact: true });
     const pause = advanced.getByRole("button", { name: "방 일시정지 요청", exact: true });
@@ -148,11 +155,20 @@ test("should distinguish reported execution unknown and confirmed pause in the b
     await expect(region.getByRole("status", { name: "방 상태", exact: true })).toContainText(
       "중단 확인 대기",
     );
+    await expect(answerStatus).toContainText("중단 요청 중 · 종료 확인 대기", { timeout: 45000 });
+    await expect(answerStatus.getByText("중단 확인", { exact: true })).toHaveCount(0);
     await broker("drive", { scene, step: "unknown" });
-    await expect(region.getByLabel("공개 실행 보고")).toContainText(
-      "종결 미확인 · 사람 확인 필요",
+    await expect(region.getByRole("region", { name: "AI 답변 상태", exact: true })).toContainText(
+      "실행 결과 확인 필요",
       { timeout: 45000 },
     );
+    await expect(answerStatus).toContainText("성공이나 중단이 확인되지");
+    await expect(answerStatus).toContainText("내 Mac의 기존 AI 연결 터미널");
+    await expect(answerStatus.getByRole("link", { name: "내 AI 연결 관리" })).toHaveAttribute(
+      "href",
+      "/app/connections",
+    );
+    await expect(answerStatus.locator(".animate-spin")).toHaveCount(0);
     await region.getByRole("button", { name: "공동 조사", exact: true }).click();
     const resume = advanced.getByRole("button", { name: "방 발언·조사 접수 재개", exact: true });
     await expect(resume).toBeDisabled();
@@ -162,6 +178,9 @@ test("should distinguish reported execution unknown and confirmed pause in the b
       "일시정지 확인",
       { timeout: 45000 },
     );
+    await expect(answerStatus).toContainText("중단 확인", { timeout: 45000 });
+    await expect(answerStatus).toContainText("새 질문");
+    await expect(answerStatus.locator(".animate-spin")).toHaveCount(0);
     await region.getByRole("button", { name: "공동 조사", exact: true }).click();
     await expect(resume).toBeEnabled();
     await resume.focus();
@@ -414,7 +433,9 @@ test("should show a direct question form without an own AI connection", async ({
         );
         await page.reload();
         process.stdout.write("010_DIRECT_STAGE ANSWER_RELOAD_BEFORE\n");
-        await expect(region.getByLabel("직접 질문 상태")).toContainText("완료 보고", pollingWait);
+        await expect(
+          region.getByRole("region", { name: "AI 답변 상태", exact: true }),
+        ).toContainText("답변 완료", pollingWait);
         await expect(
           region.getByRole("button", { name: "이 직접 질문 중단 요청", exact: true }),
         ).toHaveCount(0);
@@ -422,9 +443,19 @@ test("should show a direct question form without an own AI connection", async ({
       } else {
         process.stdout.write("010_DIRECT_STAGE ACTIVE_START_BEFORE\n");
         await broker("direct-drive", { scene, step: "start" });
-        await expect(region.getByLabel("직접 질문 상태")).toContainText("실행 보고", {
+        await expect(
+          region.getByRole("region", { name: "AI 답변 상태", exact: true }),
+        ).toContainText("답변 생성 중", {
           timeout: 45000,
         });
+        const visibleStatus = region.getByRole("region", { name: "AI 답변 상태", exact: true });
+        const observedStatus = observer.getByRole("region", { name: "AI 답변 상태", exact: true });
+        for (const status of [visibleStatus, observedStatus]) {
+          await expect(status).toBeVisible();
+          await expect(status).toContainText("답변 생성 중", pollingWait);
+          await expect(status).toContainText("공개 세션");
+          await expect(status).toContainText("한국어 키보드 직접 질문 😀");
+        }
         process.stdout.write("010_DIRECT_STAGE CANCEL_BEFORE\n");
         const stop = region.getByRole("button", { name: "이 직접 질문 중단 요청", exact: true });
         await stop.focus();
@@ -434,16 +465,34 @@ test("should show a direct question form without an own AI connection", async ({
             .getByRole("status", { name: "방 상태", exact: true })
             .filter({ hasText: "조사: 사람 확인 필요" }),
         ).toBeVisible(pollingWait);
+        const requiredRecord = region
+          .getByLabel("확정 공동 이력")
+          .getByRole("listitem")
+          .filter({ hasText: "정확한 사유는 기록되지 않았습니다." })
+          .last();
+        await expect(requiredRecord).toContainText("시스템");
+        await expect(requiredRecord).toContainText("같은 질문의 현재 답변 상태");
+        await expect(requiredRecord).toContainText("대상 AI 소유자에게 Mac의 기존 AI 연결 터미널");
         process.stdout.write("010_DIRECT_STAGE CANCEL_ACK_BEFORE\n");
         await broker("direct-drive", { scene, step: "ack" });
-        await expect(region.getByLabel("직접 질문 상태")).toContainText("실행 보고", pollingWait);
+        await expect(
+          region.getByRole("region", { name: "AI 답변 상태", exact: true }),
+        ).toContainText("중단 요청 중 · 종료 확인 대기", pollingWait);
         await expect(send).toBeDisabled(pollingWait);
         process.stdout.write("010_DIRECT_STAGE CANCEL_TERMINAL_BEFORE\n");
         await broker("direct-drive", { scene, step: "terminal" });
-        await expect(region.getByLabel("직접 질문 상태")).toContainText(
-          "중단 확인 보고",
-          pollingWait,
-        );
+        await expect(
+          region.getByRole("region", { name: "AI 답변 상태", exact: true }),
+        ).toContainText("중단 확인", pollingWait);
+        for (const status of [visibleStatus, observedStatus]) {
+          await expect(status).toContainText("중단 확인", pollingWait);
+          await expect(status).toContainText("대상 AI 소유자에게 Mac의 기존 AI 연결 터미널");
+          await expect(status).toContainText("새 질문");
+          await expect(status.locator(".animate-spin")).toHaveCount(0);
+        }
+        await expect(
+          observer.getByRole("button", { name: "이 직접 질문 중단 요청", exact: true }),
+        ).toHaveCount(0);
         process.stdout.write("010_DIRECT_STAGE CANCEL_AFTER\n");
       }
       process.stdout.write("010_DIRECT_STAGE PRIVACY_LAYOUT_BEFORE\n");
@@ -500,9 +549,12 @@ test("should isolate unresolved direct intents across authenticated users", asyn
         region.getByRole("button", { name: "같은 요청 확인", exact: true }),
       ).toBeVisible();
       await broker("direct-drive", { scene, step: "answer" });
-      await expect(region.getByLabel("직접 질문 상태")).toContainText("완료 보고", {
-        timeout: 45_000,
-      });
+      await expect(region.getByRole("region", { name: "AI 답변 상태", exact: true })).toContainText(
+        "답변 완료",
+        {
+          timeout: 45_000,
+        },
+      );
       if (mode === "actor") {
         await page.getByRole("button", { name: "로그아웃", exact: true }).click();
         await expect(
@@ -511,7 +563,9 @@ test("should isolate unresolved direct intents across authenticated users", asyn
         await login(page, data.actorB);
         await page.goto(`/app/rooms/${data.roomId}`);
         await expect(region.getByRole("form", { name: "상대 AI에 직접 질문" })).toBeVisible();
-        await expect(region.getByLabel("직접 질문 상태")).toContainText("완료 보고", {
+        await expect(
+          region.getByRole("region", { name: "AI 답변 상태", exact: true }),
+        ).toContainText("답변 완료", {
           timeout: 45_000,
         });
         await expect(
