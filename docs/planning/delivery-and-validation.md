@@ -23,7 +23,7 @@
 
 ## 현재 진행 상태
 
-2026-10-12 [내 AI 연결 표시 계획](../impl-spec/033-own-ai-connection-indicator.md)의 운영 코드와 관련 검증을 완료했다. 입장 후 세 화면의 초록·빨간 표시, 기기별 상세, 마지막 조회 시각과 수동 재확인을 추가했다. 실제 PC 통신과 AI 답변 준비를 구분하며 웹의 새 주기 조회는 없다. main 병합·자동 배포·계획 보관은 최종 리뷰 후 이어서 확인한다.
+2026-10-12 [내 AI 연결 표시 계획](../impl-spec/archive/033-own-ai-connection-indicator.md)의 운영 코드와 관련 검증을 완료했다. 입장 후 세 화면의 초록·빨간 표시, 기기별 상세, 마지막 조회 시각과 수동 재확인을 추가했다. 실제 PC 통신과 AI 답변 준비를 구분하며 웹의 새 주기 조회는 없다. [PR11](https://github.com/sangjun-pullim/ai-collaboration-platform/pull/11)의 검토 head를 정상 main 병합하고 자동 Production 배포·공개 접속을 확인했다. 완료 계획은 archive에 보관했다.
 
 2026-10-10 개인·비상업용 Vercel Hobby + Supabase Free 배포와 실제 HTTPS 접속 검사14개·독립 운영 리뷰를 완료했다. 배포 설정과 정본 갱신은 [PR10](https://github.com/sangjun-pullim/ai-collaboration-platform/pull/10)에서 검토하며 정확한 병합 상태는 해당 PR을 따른다. 2026-10-09 모델 표시 보정·채팅/실행/저장 책임 분리와 공식 Claude의 로컬 정상·후속 답변·중단 검증을 완료하고022·030까지 보관했다. 서로 다른 두 Mac의 실제 질문·후속 답변은 동료가 참여할 때 확인하는 미완료 범위다. 공개 웹 접속 검사, 가짜 AI 공급자를 사용하는 DB·HTTP 검사, 공식 Claude의 실제 입력을 구분한다. 아래 이전 기록의 접근 차단은 당시 실행 환경의 결과다.
 
@@ -36,6 +36,8 @@
 최초 전체 연결기 실행은 작업자916/918·총괄917/918로 실패했다. 기존 시간 초과와 maximum-continuation의 `UNKNOWN`을 보존하고 원인 해결로 기록하지 않는다. 기대값·제품 코드·시간 제한을 바꾸지 않은 최신 전체 순차 실행은919/919로 통과했다. 최초 기기 browser4/8 이후, 일반 사용자 이동에서 조회 시각이 반드시 같아야 한다는 잘못된 기대를 본인 상태·유효 시각 검증으로 보정했다. 검증 서버를 빌드 중 시작한 실행도 별도 보존하고 빌드 완료 후 시작 순서로 바로잡았다. 최종8/8에서는 원래 artifact 정제 정책과 실제 fixture 정리를 유지했다.
 
 새 독립 구현 리뷰는2회다. 첫 검토의 제목 부재 지적은 실제 `h2`가 있어 근거와 함께 기각했고, 페이지 도착 선택자는 명확한 `h1`로 좁혔다. 상단 링크로 긴 화면 끝을 검증한 지적은 수용해 마지막 설정 링크와 실제 스크롤 끝을 검사했다. 후속 검토는 변경 없는 운영7개·관련 단위 검사·구조/사용 정본의 앞선 검토를 재사용하고 새 browser 보정을 확인해 C0/H0/M0/L0/INFO0으로 통과했다. 본 작업의 구현·리뷰용 Orca pane은 보고와 session 증거를 보존한 뒤 닫았다. 증거와 실패 원본은 `/private/tmp/ai-collab-connection-indicator-20261012-b0zwwuuh/`에 비공개로 보관한다.
+
+기능 main `5e241bf`의 자동 Production 배포는 READY이며 공식 Vercel CLI로 대상 deployment·공개 alias·함수 지역sin1을 확인했다. 배포 목록 API는403으로 거절돼 반복 호출하거나 권한을 바꾸지 않고, GitHub에 보고된 해당 main의 Production 성공과 공식 CLI의 개별 deployment 조회를 대조했다. 공개 `/`·`/app`·`/app/connections`의307, `/login`의200, manifest와 연결 코드·bootstrap의 bytes/SHA256 등7건을 통과했다. 로컬/macOS와 배포/Linux의 gzip OS 바이트만19/3으로 달라 압축 파일 hash는 다르지만 압축 해제한 tar 전체·각 파일 내용은 동일하다. 웹에 제공한 manifest의 실제 hash 검증은 그대로 유지했다. 기능 작업 브랜치는 main 포함을 확인한 뒤 원격·로컬에서 삭제했다. 문서 종료 변경은 실행 코드·DB·계약에 영향이 없으므로 위 검사와 리뷰를 재사용한다.
 
 ### 이번 실행에서 확인한 것
 
@@ -60,7 +62,7 @@
 
 ### 개인·비상업용 클라우드 배포
 
-운영 주소는 [AI 채팅방](https://ai-collaboration-platform.vercel.app)이다. Supabase 프로젝트 `tcljbegdguixopfcaycs`와 Vercel 개인 Hobby 프로젝트에 배포했다. 배포 소스는 검토한 커밋 `8d6e32f`의 깨끗한 Git 사본이다. Node.js24·Next.js 빌드와 실제 배포의 `sin1` 지역·READY를 확인했다. 사용자 로컬 웹·Docker·AI 프로필과 `next-env.d.ts`는 변경하지 않았다. 설정·재배포 절차는 [클라우드 배포 안내](../guides/cloud-deployment.md)를 따른다.
+운영 주소는 [AI 채팅방](https://ai-collaboration-platform.vercel.app)이다. Supabase 프로젝트 `tcljbegdguixopfcaycs`와 Vercel 개인 Hobby 프로젝트에 배포했다. 최초 배포 소스는 검토한 커밋 `8d6e32f`의 깨끗한 Git 사본이다. 최신 기능 배포와 검증은 위 본인 PC 연결 표시 기록을 따른다. Node.js24·Next.js 빌드와 실제 배포의 `sin1` 지역·READY를 확인했다. 사용자 로컬 웹·Docker·AI 프로필과 `next-env.d.ts`는 변경하지 않았다. 설정·재배포 절차는 [클라우드 배포 안내](../guides/cloud-deployment.md)를 따른다.
 
 공유 DB에 기존 앱 테이블·migration 이력·Auth 사용자가 없음을 확인하고 원본 SQL17개와 같은 version·바이트·SHA256의 CLI 호환 사본을 적용했다. anonymous sign-in과 Site URL만 변경했으며 나머지 Auth 설정의 해시는 유지됐다. 회사 코드 원문은 비공개 운영 파일에 보관하고 DB에는 verifier만 저장했다. 웹에는 Production 전용 `SUPABASE_URL`, public/anon `SUPABASE_PUBLISHABLE_KEY`, `APP_ORIGIN`만 등록했다. Preview·웹에 관리자 토큰·DB 비밀번호·AI 로그인 정보를 전달하지 않았다.
 
