@@ -5,10 +5,10 @@ import { type PublicBinding } from "./contracts";
 import { useRoomChat } from "./use-room-chat";
 
 import { OwnInputControls } from "./own-input-controls";
-import { ChatTimeline } from "./chat-timeline";
+import { ChatTimeline, ChatAnswerStatus } from "./chat-timeline";
 import { ChatComposer } from "./chat-composer";
 import { AdvancedControls } from "./advanced-controls";
-import { nearTimelineBottom } from "./chat-presentation";
+import { answerStatuses, nearTimelineBottom } from "./chat-presentation";
 import { Button } from "../../components/ui/button";
 
 const labels: Record<string, string> = {
@@ -108,6 +108,25 @@ function RoomInvestigation({ userId, roomId, role }: Props) {
   const directRun = directCycle
     ? snapshot?.runs.find((run) => run.cycleId === directCycle.cycleId)
     : undefined;
+
+  const presentation = answerStatuses({
+    events: history.events,
+    runs: snapshot?.runs ?? [],
+    historicalRuns: history.runs,
+    bindings,
+    cycle: cycle ?? null,
+    observedAt,
+    pollError,
+    gap: history.gap,
+    role,
+  });
+  const cycleStatuses = cycle
+    ? presentation.statuses.filter((status) => status.cycleId === cycle.cycleId)
+    : [];
+  const pendingStatuses = cycleStatuses.filter((status) =>
+    ["QUEUED", "LEASED", "RUNNING", "UNKNOWN"].includes(status.state),
+  );
+  const currentStatuses = pendingStatuses.length ? pendingStatuses : cycleStatuses;
 
   async function speak(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
@@ -329,6 +348,12 @@ function RoomInvestigation({ userId, roomId, role }: Props) {
         historicalRuns={history.runs}
         bindings={bindings}
         labels={labels}
+        presentation={presentation}
+        cycle={cycle ?? null}
+        observedAt={observedAt}
+        pollError={pollError}
+        gap={history.gap}
+        role={role}
         onAccessLost={loseAccess}
         scrollRef={scrollRef}
         unread={unread}
@@ -345,14 +370,19 @@ function RoomInvestigation({ userId, roomId, role }: Props) {
           }
         }}
       />
-      <div className="max-h-28 shrink-0 overflow-y-auto px-5 text-xs text-neutral-500">
-        <ul aria-label="공개 실행 보고">
-          {history.runs.map((run) => (
-            <li key={run.requestId}>
-              {run.requestKind} · {labels[run.state]}
-            </li>
-          ))}
-        </ul>
+      <section
+        aria-label="AI 답변 상태"
+        className="max-h-52 shrink-0 space-y-3 overflow-y-auto border-t bg-neutral-50 px-5 py-3"
+        aria-live="polite"
+      >
+        <h2 className="text-sm font-semibold">AI 답변 상태</h2>
+        {currentStatuses.length ? (
+          currentStatuses.map((status) => (
+            <ChatAnswerStatus key={status.requestId} status={status} />
+          ))
+        ) : (
+          <p className="text-xs text-neutral-500">현재 요청된 AI 답변이 없습니다.</p>
+        )}
         {writable && (
           <>
             {" "}
@@ -370,18 +400,19 @@ function RoomInvestigation({ userId, roomId, role }: Props) {
               </p>
             )}
             {directCycle && (
-              <div aria-label="직접 질문 상태">
-                <p>대상 답변: {labels[directRun?.state ?? directCycle.state]}</p>
+              <div>
                 {Date.parse(directCycle.deadline) <= observedAt && (
                   <p>직접 질문 기한이 지났습니다. 늦은 답변은 현재 결과로 채택하지 않습니다.</p>
                 )}
-                {!ready(
-                  bindings.find(
-                    (binding) =>
-                      binding.agentId === directCycle.targetAgentId &&
-                      binding.bindingEpoch === directCycle.targetEpoch,
-                  ),
-                ) && <p>대상 준비 보고 만료 또는 연결 변경 · 실제 종결을 기다립니다.</p>}
+                {directRun &&
+                  ["QUEUED", "LEASED", "RUNNING", "UNKNOWN"].includes(directRun.state) &&
+                  !ready(
+                    bindings.find(
+                      (binding) =>
+                        binding.agentId === directCycle.targetAgentId &&
+                        binding.bindingEpoch === directCycle.targetEpoch,
+                    ),
+                  ) && <p>대상 준비 보고 만료 또는 연결 변경 · 실제 종결을 기다립니다.</p>}
                 {directCycle.canInterrupt && directRun && (
                   <Button
                     variant="outline"
@@ -401,7 +432,7 @@ function RoomInvestigation({ userId, roomId, role }: Props) {
             )}
           </>
         )}
-      </div>
+      </section>
       {writable ? (
         <ChatComposer
           mode={mode}
