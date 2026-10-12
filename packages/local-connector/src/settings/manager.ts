@@ -15,6 +15,7 @@ import {
   type RuntimeSettings,
 } from "../runtime-contracts.ts";
 import { SettingsClient } from "./client.ts";
+import { reportConnectionHeartbeat } from "./connection-heartbeat.ts";
 import {
   SettingsError,
   capabilityHash,
@@ -55,6 +56,7 @@ export type SettingsManagerOptions = {
     signal: AbortSignal,
   ) => Promise<LocalScopeChoice>;
   runner?: (pointer: GenerationPointer, store: RuntimeStore) => Runner;
+  heartbeat?: (credential: string, signal: AbortSignal) => Promise<unknown>;
   pollIntervalMs?: number;
 };
 export type SettingsManagerStatus = {
@@ -1049,6 +1051,19 @@ export class SettingsManager {
         journal: null,
       };
       await this.connected();
+      const heartbeatAbort = new AbortController();
+      const heartbeatSignal = AbortSignal.any([this.signal, heartbeatAbort.signal]);
+      const heartbeat = this.options.heartbeat;
+      const heartbeatJob =
+        heartbeat && !options.once
+          ? reportConnectionHeartbeat(async (signal) => {
+              if (signal.aborted) return;
+              // Snapshot validation and network I/O must stay outside profile transactions.
+              const current = await this.connected();
+              if (signal.aborted) return;
+              await heartbeat(current.credential!, signal);
+            }, heartbeatSignal)
+          : undefined;
       let ranRunner = false;
       try {
         do {
@@ -1083,6 +1098,7 @@ export class SettingsManager {
           await this.pause();
         } while (!this.signal.aborted);
       } finally {
+        heartbeatAbort.abort();
         try {
           await this.cleanupAdapter();
           await this.stopRunner(true);
@@ -1093,6 +1109,8 @@ export class SettingsManager {
               j.reason = "CLEANUP_INCOMPLETE";
             });
           throw new RuntimeError("CLEANUP_INCOMPLETE");
+        } finally {
+          await heartbeatJob;
         }
       }
       return this.status();

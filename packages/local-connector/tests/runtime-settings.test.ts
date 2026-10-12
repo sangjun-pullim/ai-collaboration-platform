@@ -26,6 +26,8 @@ import {
 } from "../src/settings/contracts.ts";
 import { runtimeFixture, uuid, observation } from "./runtime-fixture.ts";
 import { claudeRecord } from "./provider-runtime-fixture.ts";
+import { runnerFixture, deferred } from "./runner-fixture.ts";
+import { ConnectionError } from "../src/contracts.ts";
 
 /** This HTTP fixture exercises the real client's projection, not an actual DB transaction. */
 async function fixture(provider: "codex" | "claude" = "codex") {
@@ -1528,3 +1530,455 @@ for (const budget of [13000, 15100]) {
     }
   });
 }
+
+test("should preserve once mode and skip background reports without a callback", async () => {
+  const f = await fixture();
+  let reports = 0;
+  try {
+    await f
+      .manager({
+        heartbeat: async () => {
+          reports++;
+        },
+      })
+      .run({ once: true });
+    assert.equal(reports, 0);
+    await f
+      .manager({
+        heartbeat: async () => {
+          reports++;
+        },
+      })
+      .run({ signal: AbortSignal.abort() });
+    assert.equal(reports, 0);
+    const abort = new AbortController();
+    f.pollHook = () => abort.abort();
+    await f.manager().run({ signal: abort.signal });
+    assert.equal(f.prepares, 0);
+  } finally {
+    await f.close();
+  }
+});
+
+test(
+  "should keep reporting while settings confirmation is pending without preparing AI",
+  { timeout: 5000 },
+  async (t) => {
+    const f = await fixture();
+    const abort = new AbortController(),
+      reported = deferred(),
+      confirming = deferred();
+    let reports = 0,
+      pendingConfirmation = false;
+    const timeout = globalThis.setTimeout;
+    t.mock.method(globalThis, "setTimeout", (callback: () => void, ms?: number) =>
+      timeout(callback, ms === 30_000 ? 5 : ms),
+    );
+    let job: Promise<unknown> | undefined;
+    try {
+      job = f
+        .manager({
+          heartbeat: async (credential, signal) => {
+            assert.equal(credential, "a".repeat(64));
+            assert.equal(signal.aborted, false);
+            reports++;
+            if (pendingConfirmation) reported.resolve();
+          },
+          confirm: async (_root, signal) => {
+            pendingConfirmation = true;
+            confirming.resolve();
+            await new Promise<void>((resolve) => {
+              signal.addEventListener("abort", () => resolve(), { once: true });
+              if (signal.aborted) resolve();
+            });
+            return { confirmed: false, repositoryAlias: "Repository", files: [], handoff: "" };
+          },
+        })
+        .run({ signal: abort.signal });
+      await Promise.all([reported.promise, confirming.promise]);
+      assert.ok(reports >= 2);
+      assert.equal(f.prepares, 0);
+      assert.equal(f.catalogs, 0);
+    } finally {
+      abort.abort();
+      await job;
+      await f.close();
+    }
+  },
+);
+
+test(
+  "should serialize reports and stop before releasing the device lock",
+  { timeout: 5000 },
+  async () => {
+    const f = await fixture();
+    f.response = { ...f.response, operation: null };
+    const abort = new AbortController(),
+      entered = deferred(),
+      release = deferred();
+    let settled = false,
+      reports = 0;
+    let job: Promise<unknown> | undefined;
+    try {
+      job = f
+        .manager({
+          heartbeat: async (_credential, signal) => {
+            reports++;
+            entered.resolve();
+            await release.promise;
+            assert.equal(signal.aborted, true);
+          },
+        })
+        .run({ signal: abort.signal })
+        .then(() => {
+          settled = true;
+        });
+      await entered.promise;
+      abort.abort();
+      await new Promise((resolve) => setTimeout(resolve, 20));
+      assert.equal(settled, false);
+      await assert.rejects(
+        new SettingsStore(f.profile).locked(async () => {}),
+        { code: "RUNTIME_BUSY" },
+      );
+      release.resolve();
+      await job;
+      assert.equal(reports, 1);
+      await new SettingsStore(f.profile).locked(async () => {});
+    } finally {
+      abort.abort();
+      release.resolve();
+      await job;
+      await f.close();
+    }
+  },
+);
+
+test(
+  "should ignore a late heartbeat authentication failure after credential replacement",
+  { timeout: 5000 },
+  async () => {
+    const f = await fixture();
+    f.response = { ...f.response, operation: null };
+    const abort = new AbortController(),
+      entered = deferred(),
+      release = deferred(),
+      failed = deferred();
+    let job: Promise<unknown> | undefined;
+    try {
+      job = f
+        .manager({
+          heartbeat: async (credential) => {
+            assert.equal(credential, "a".repeat(64));
+            entered.resolve();
+            await release.promise;
+            failed.resolve();
+            throw new ConnectionError("UNAUTHENTICATED");
+          },
+        })
+        .run({ signal: abort.signal });
+      await entered.promise;
+      await f.profile.transaction(async () => {
+        const current = (await f.profile.read())!;
+        current.credential = "b".repeat(64);
+        await f.profile.write(current);
+      });
+      const replacement = await readFile(f.profile.file);
+      release.resolve();
+      await failed.promise;
+      abort.abort();
+      await job;
+      assert.deepEqual(await readFile(f.profile.file), replacement);
+      assert.equal((await f.profile.read())!.status, "connected");
+    } finally {
+      abort.abort();
+      release.resolve();
+      await job;
+      await f.close();
+    }
+  },
+);
+
+test(
+  "should keep runner profile transactions available during a slow heartbeat",
+  { timeout: 10000 },
+  async () => {
+    const f = await runnerFixture({ pollIntervalMs: 25 });
+    const settings = new SettingsStore(f.profile);
+    const abort = new AbortController(),
+      entered = deferred(),
+      release = deferred();
+    const mapping = (await f.profile.read())!.mappings[0];
+    const response: SettingsResponse = {
+      protocol: 1,
+      deviceId: f.scope.deviceId,
+      configRevision: 0,
+      catalog: null,
+      operation: null,
+      applied: null,
+      current: true,
+      currentBinding: {
+        agentId: f.scope.agentId,
+        workspaceId: mapping.workspaceId!,
+        bindingEpoch: 1,
+        runtime: "codex",
+      },
+    };
+    const pointer = {
+      generation: f.context.generation,
+      agentId: f.scope.agentId,
+      workspaceId: mapping.workspaceId!,
+      bindingEpoch: 1,
+      configRevision: 0,
+      provider: "codex" as const,
+      localRootReference: uuid(),
+      legacy: true,
+    };
+    const operationId = uuid();
+    const initial: Parameters<SettingsStore["write"]>[0] = {
+      version: 1,
+      server: f.scope.server,
+      deviceId: f.scope.deviceId,
+      organizationId: f.scope.organizationId,
+      roomId: f.scope.roomId,
+      current: pointer,
+      retained: [],
+      journal: {
+        operation: {
+          operationId,
+          deviceId: f.scope.deviceId,
+          expectedConfigRevision: 0,
+          state: "REQUESTED",
+          requested: {
+            operationId,
+            deviceId: f.scope.deviceId,
+            expectedConfigRevision: 0,
+            runtime: "codex",
+          },
+          receipt: null,
+        },
+        phase: "CHOOSING",
+        generation: uuid(),
+        localRootReference: uuid(),
+        previous: pointer,
+        root: null,
+        settings: null,
+        context: null,
+        receipt: null,
+        reason: null,
+      },
+    };
+    await settings.write(initial);
+    initial.journal!.phase = "CANCELLED";
+    initial.journal!.receipt = {
+      operationId,
+      state: "CANCELLED",
+      configRevision: 0,
+      runtime: "codex",
+      model: null,
+      effort: null,
+      snapshotHash: null,
+      localRootReference: null,
+      repositoryAlias: null,
+      sessionAlias: null,
+      catalog: null,
+      bindingEpoch: null,
+      agentId: null,
+      workspaceId: null,
+    };
+    await settings.write(initial);
+    let reports = 0;
+    const manager = new SettingsManager(
+      f.profile,
+      settings,
+      new SettingsClient(f.scope.server, async () => Response.json({ ok: true, data: response })),
+      {
+        pollIntervalMs: 25,
+        heartbeat: async () => {
+          reports++;
+          entered.resolve();
+          await release.promise;
+        },
+        runner: () => f.runner(),
+      },
+    );
+    const job = manager.run({ signal: abort.signal });
+    try {
+      await entered.promise;
+      const before = performance.now();
+      await f.rotate();
+      assert.ok(performance.now() - before < 2000);
+      await new Promise((resolve) => setTimeout(resolve, 2200));
+      const admissions = f.requests.filter((request) => request.action === "admission").length;
+      const polls = f.requests.filter((request) => request.action === "poll").length;
+      assert.ok(admissions >= 2);
+      assert.ok(polls >= 2);
+      f.pauseInput(true);
+      await new Promise((resolve) => setTimeout(resolve, 150));
+      assert.equal(f.inputState().appliedRevision, f.inputState().revision);
+      assert.ok(f.requests.filter((request) => request.action === "poll").length > polls);
+      assert.equal(f.adapter.starts, 0);
+      assert.equal(f.adapter.prepares, 0);
+      assert.equal(reports, 1);
+      abort.abort();
+      release.resolve();
+      const status = await job;
+      assert.equal(status.reason, null);
+      assert.equal(f.adapter.closed, true);
+    } finally {
+      abort.abort();
+      release.resolve();
+      await job;
+      await f.close();
+    }
+  },
+);
+
+test(
+  "should recheck abort after the credential snapshot before starting a report",
+  { timeout: 5000 },
+  async (t) => {
+    const f = await fixture();
+    f.response = { ...f.response, operation: null };
+    const abort = new AbortController(),
+      reading = deferred(),
+      release = deferred();
+    let reports = 0,
+      reads = 0;
+    const read = f.profile.read.bind(f.profile);
+    t.mock.method(f.profile, "read", async () => {
+      const state = await read();
+      if (++reads === 3) {
+        reading.resolve();
+        await release.promise;
+      }
+      return state;
+    });
+    const job = f
+      .manager({
+        heartbeat: async () => {
+          reports++;
+        },
+      })
+      .run({ signal: abort.signal });
+    try {
+      await reading.promise;
+      abort.abort();
+      release.resolve();
+      await job;
+      assert.equal(reports, 0);
+    } finally {
+      abort.abort();
+      release.resolve();
+      await job;
+      await f.close();
+    }
+  },
+);
+
+test(
+  "should preserve runner cleanup failure while waiting for background heartbeat cleanup",
+  { timeout: 5000 },
+  async () => {
+    const f = await fixture();
+    const abort = new AbortController(),
+      entered = deferred(),
+      release = deferred(),
+      runnerClosed = deferred();
+    let job: Promise<unknown> | undefined;
+    try {
+      await local(f);
+      await f.manager().run({ once: true });
+      job = f
+        .manager({
+          heartbeat: async () => {
+            entered.resolve();
+            await release.promise;
+            throw new ConnectionError("UNAVAILABLE");
+          },
+          runner: () => ({
+            run: async ({ signal }) => {
+              await new Promise<void>((resolve) => {
+                signal.addEventListener("abort", () => resolve(), { once: true });
+                if (signal.aborted) resolve();
+              });
+              runnerClosed.resolve();
+              throw new RuntimeError("CLEANUP_INCOMPLETE");
+            },
+          }),
+        })
+        .run({ signal: abort.signal });
+      const rejected = assert.rejects(job, { code: "CLEANUP_INCOMPLETE" });
+      await entered.promise;
+      // Wait until the runner is owned before stopping the manager.
+      while (!f.requests.some((request) => request.action === "poll" && !request.body.operationId))
+        await new Promise((resolve) => setTimeout(resolve, 2));
+      await new Promise((resolve) => setTimeout(resolve, 20));
+      abort.abort();
+      await runnerClosed.promise;
+      assert.ok(await lstat(f.store.lockPath));
+      release.resolve();
+      await rejected;
+      await assert.rejects(
+        new SettingsStore(f.profile).locked(async () => {}),
+        { code: "RUNTIME_BUSY" },
+      );
+    } finally {
+      abort.abort();
+      release.resolve();
+      await job?.catch(() => {});
+      await f.close();
+    }
+  },
+);
+
+test(
+  "should keep reporting while one answer is pending without starting another runner",
+  { timeout: 5000 },
+  async (t) => {
+    const f = await fixture();
+    const abort = new AbortController(),
+      reported = deferred(),
+      started = deferred();
+    let job: Promise<unknown> | undefined;
+    let runnerCalls = 0,
+      reports = 0;
+    try {
+      await local(f);
+      await f.manager().run({ once: true });
+      const prepares = f.prepares,
+        catalogs = f.catalogs;
+      const timeout = globalThis.setTimeout;
+      t.mock.method(globalThis, "setTimeout", (callback: () => void, ms?: number) =>
+        timeout(callback, ms === 30_000 ? 5 : ms),
+      );
+      job = f
+        .manager({
+          heartbeat: async () => {
+            reports++;
+            if (runnerCalls && reports >= 2) reported.resolve();
+          },
+          runner: () => ({
+            run: async ({ signal }) => {
+              runnerCalls++;
+              started.resolve();
+              return new Promise<{ ready: boolean }>((resolve) => {
+                signal.addEventListener("abort", () => resolve({ ready: false }), { once: true });
+                if (signal.aborted) resolve({ ready: false });
+              });
+            },
+          }),
+        })
+        .run({ signal: abort.signal });
+      await Promise.all([reported.promise, started.promise]);
+      assert.ok(reports >= 2);
+      assert.equal(runnerCalls, 1);
+      assert.equal(f.prepares, prepares);
+      assert.equal(f.catalogs, catalogs);
+    } finally {
+      abort.abort();
+      await job;
+      await f.close();
+    }
+  },
+);

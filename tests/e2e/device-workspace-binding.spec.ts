@@ -71,7 +71,10 @@ async function connect(page: Page, id: string, name: string, roomId: string) {
   await expect(page.getByRole("status", { name: "기기 연결 결과" })).toContainText("승인을 완료");
   await expect(page.getByLabel("기기 연결 코드", { exact: true })).toHaveValue("");
   await broker("register", { id, name });
-  await expect(page.getByText("등록 · 실행 미검증", { exact: true })).toBeVisible({
+  const device = page
+    .locator("main li")
+    .filter({ has: page.getByText(`기기 ${name}`, { exact: true }) });
+  await expect(device.getByText("등록 · 실행 미검증", { exact: true })).toBeVisible({
     timeout: 15000,
   });
   await expect(page.getByRole("combobox", { name: "AI 프로그램", exact: true })).toBeVisible();
@@ -283,5 +286,190 @@ test("should expose a valid room command and require explicit approval after a p
     await connect(page, owner.id, `manual-${info.project.name}`, scope.roomId);
   } finally {
     await a.close();
+  }
+});
+
+test("should preserve the owned status snapshot and chat draft across explicit refresh on every app screen", async ({
+  browser,
+}, info) => {
+  const a = await context(browser, info),
+    b = await context(browser, info);
+  try {
+    const ap = await a.newPage(),
+      bp = await b.newPage();
+    const owner = await login(ap, "통신 소유자"),
+      member = await login(bp, "통신 참여자");
+    const scope = await createRoom(ap);
+    await join(ap, bp, "participant");
+    const suffix = info.project.name.includes("mobile") ? "mobile" : "desktop";
+    const first = `presence-work-${suffix}`,
+      second = `presence-home-${suffix}`,
+      other = `presence-other-${suffix}`;
+    await connect(ap, owner.id, first, scope.roomId);
+    await connect(ap, owner.id, second, scope.roomId);
+    await connect(bp, member.id, other, scope.roomId);
+    const bar = ap.getByRole("region", { name: "내 AI 연결 상태", exact: true });
+    const checkedTime = bar.locator("time").first();
+    const isoTimestamp = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z$/;
+    const expectOwnedStatus = async () => {
+      await expect(bar).toBeVisible();
+      await expect(bar.getByRole("status")).toContainText("최근 통신 확인 2/2대");
+      await expect(bar.getByRole("status").locator('span[aria-hidden="true"]')).toHaveClass(
+        /\bbg-green-600\b/,
+      );
+      await expect(checkedTime).toHaveAttribute("datetime", isoTimestamp);
+      check(Number.isFinite(Date.parse((await checkedTime.getAttribute("datetime"))!)));
+      await expect(checkedTime).toContainText("한국 시간");
+      await bar.getByText("기기별 연결 상세", { exact: true }).click();
+      for (const name of [first, second]) {
+        const device = bar.getByRole("listitem").filter({ hasText: `기기 ${name}` });
+        await expect(device).toContainText("기기 검사방");
+        await expect(device).toContainText("연결 통신 확인 · 최근 통신 확인");
+        await expect(device.locator('span[aria-hidden="true"]')).toHaveClass(/\bbg-green-600\b/);
+      }
+      await expect(bar).not.toContainText(`기기 ${other}`);
+      await expect(bar).toContainText("현재 AI 답변을 보장하지 않습니다");
+      await bar.getByText("기기별 연결 상세", { exact: true }).click();
+    };
+    await expect(checkedTime).toHaveAttribute("datetime", isoTimestamp);
+    const beforeFirstRefresh = await checkedTime.getAttribute("datetime");
+    check(beforeFirstRefresh);
+    await bar.getByRole("button", { name: "다시 확인", exact: true }).click();
+    await expect(bar.getByRole("button", { name: "다시 확인", exact: true })).toBeEnabled();
+    await expect(checkedTime).not.toHaveAttribute("datetime", beforeFirstRefresh);
+    await expectOwnedStatus();
+    // Navigation may receive a newer server snapshot; validate its meaning and ownership.
+    await ap.getByRole("link", { name: "내 AI 채팅방", exact: true }).click();
+    await expect(ap.getByRole("heading", { name: "내 AI 채팅방", exact: true })).toBeVisible();
+    await expectOwnedStatus();
+    const roomLink = ap
+      .getByRole("navigation", { name: "AI 채팅방 목록" })
+      .getByRole("link", { name: "기기 검사방", exact: true });
+    if (!(await roomLink.isVisible()))
+      await ap.getByRole("button", { name: "채팅방 목록 열기", exact: true }).click();
+    await ap
+      .getByRole("navigation", { name: "AI 채팅방 목록" })
+      .getByRole("link", { name: "기기 검사방", exact: true })
+      .last()
+      .click();
+    await expect(ap.getByRole("heading", { name: "기기 검사방", exact: true })).toBeVisible();
+    await expectOwnedStatus();
+    // Finish an explicit refresh on the final chat screen before observing passive time.
+    const beforeChatRefresh = await checkedTime.getAttribute("datetime");
+    check(beforeChatRefresh);
+    await bar.getByRole("button", { name: "다시 확인", exact: true }).click();
+    await expect(bar.getByRole("button", { name: "다시 확인", exact: true })).toBeEnabled();
+    await expect(checkedTime).not.toHaveAttribute("datetime", beforeChatRefresh);
+    await expectOwnedStatus();
+    const lastChecked = await checkedTime.getAttribute("datetime");
+    check(lastChecked);
+    await ap.getByRole("combobox", { name: "보낼 곳", exact: true }).selectOption("speak");
+    const draft = ap.locator("#chat-message");
+    await draft.fill("전송하지 않는 보존 검사 초안");
+    const send = ap.getByRole("button", { name: "공동 발언 저장", exact: true });
+    for (const target of [draft, send]) {
+      const box = await target.boundingBox();
+      const viewport = ap.viewportSize();
+      check(box && viewport && box.y >= 0 && box.y + box.height <= viewport.height + 1);
+    }
+    check(await ap.locator("body").evaluate((element) => element.scrollWidth <= innerWidth + 1));
+    await ap.clock.install();
+    await ap.clock.fastForward(120_000);
+    await expect(checkedTime).toHaveAttribute("datetime", lastChecked);
+    await expectOwnedStatus();
+    await expect(draft).toHaveValue("전송하지 않는 보존 검사 초안");
+    check(
+      (await broker<{ status: number }>("heartbeat", { id: owner.id, name: first })).status === 200,
+    );
+    await bar.getByRole("button", { name: "다시 확인", exact: true }).click();
+    await expect(bar.getByRole("button", { name: "다시 확인", exact: true })).toBeEnabled();
+    await expect(checkedTime).not.toHaveAttribute("datetime", lastChecked);
+    await expectOwnedStatus();
+    await expect(draft).toHaveValue("전송하지 않는 보존 검사 초안");
+    // Inject only the neutral status projection into the real refresh response.
+    // Server lookup failures are covered separately by the owned snapshot unit test.
+    await ap.route(
+      `**/app/rooms/${scope.roomId}?*`,
+      async (route) => {
+        const response = await route.fetch();
+        const original = await response.text();
+        const neutral = JSON.stringify({
+          state: "unavailable",
+          checkedAt: new Date().toISOString(),
+          activeCount: 0,
+          connectedCount: 0,
+          devices: [],
+        });
+        const body = original.replace(
+          /\{"state":"(?:connected|unconfirmed)","checkedAt":"[^"]*","activeCount":\d+,"connectedCount":\d+,"devices":\[[^\n]*?\]\}/g,
+          neutral,
+        );
+        check(body !== original);
+        await route.fulfill({ response, body });
+      },
+      { times: 1 },
+    );
+    await bar.getByRole("button", { name: "다시 확인", exact: true }).click();
+    await expect(bar.getByRole("status")).toContainText("확인 불가");
+    await expect(draft).toHaveValue("전송하지 않는 보존 검사 초안");
+    await bar.getByRole("button", { name: "다시 확인", exact: true }).click();
+    await expect(bar.getByRole("status")).toContainText("최근 통신 확인 2/2대");
+    await expect(draft).toHaveValue("전송하지 않는 보존 검사 초안");
+    await bar.getByText("기기별 연결 상세", { exact: true }).click();
+    await bar.getByRole("link", { name: "연결 관리", exact: true }).click();
+    await expect(
+      ap.getByRole("heading", { name: "내 AI 연결", level: 1, exact: true }),
+    ).toBeVisible();
+    await expect(bar).toBeVisible();
+    const settingsEnd = ap
+      .getByRole("region", { name: "본인 기기 AI 설정", exact: true })
+      .getByRole("link", { name: "이 AI 채팅방에서 질문만 하기", exact: true });
+    await settingsEnd.scrollIntoViewIfNeeded();
+    await expect(settingsEnd).toBeVisible();
+    await expect(settingsEnd).toBeInViewport({ ratio: 1 });
+    check(await ap.locator("body").evaluate((element) => element.scrollWidth <= innerWidth + 1));
+    const body = ap.locator("main").locator("..");
+    await expect
+      .poll(() =>
+        body.evaluate((element) => ({
+          overflowY: getComputedStyle(element).overflowY,
+          hasOverflow: element.scrollHeight > element.clientHeight,
+          scrolled: element.scrollTop > 0,
+          atEnd: Math.abs(element.scrollHeight - element.clientHeight - element.scrollTop) <= 1,
+        })),
+      )
+      .toEqual({ overflowY: "auto", hasOverflow: true, scrolled: true, atEnd: true });
+    const ownSnapshot = await bar.textContent();
+    check(ownSnapshot && !ownSnapshot.includes(`기기 ${other}`));
+    const memberBar = bp.getByRole("region", { name: "내 AI 연결 상태", exact: true });
+    await memberBar.getByRole("button", { name: "다시 확인", exact: true }).click();
+    await memberBar.getByText("기기별 연결 상세", { exact: true }).click();
+    await expect(memberBar).toContainText(`기기 ${other}`);
+    await expect(memberBar).not.toContainText(`기기 ${first}`);
+    await ap.getByRole("link", { name: "내 AI 채팅방", exact: true }).click();
+    await ap.getByRole("button", { name: "로그아웃", exact: true }).click();
+    await expect(ap).toHaveURL(/\/login$/);
+    await expect(bar).toHaveCount(0);
+    await login(ap, "새 통신 소유자");
+    await expect(bar.getByRole("status")).toContainText("연결 확인 안 됨");
+    await expect(bar.getByRole("status").locator('span[aria-hidden="true"]')).toHaveClass(
+      /\bbg-red-600\b/,
+    );
+    await expect(checkedTime).toHaveAttribute("datetime", isoTimestamp);
+    await bar.getByText("기기별 연결 상세", { exact: true }).click();
+    await expect(bar).toContainText("활성 등록 기기가 없습니다");
+    await expect(bar).not.toContainText(`기기 ${first}`);
+    await expect(bar).not.toContainText(`기기 ${second}`);
+    await ap.goBack();
+    await expect(ap).toHaveURL(/\/app(?:\/|$)/);
+    await expect(bar.getByRole("status")).toContainText("연결 확인 안 됨");
+    await expect(bar.getByRole("status").locator('span[aria-hidden="true"]')).toHaveClass(
+      /\bbg-red-600\b/,
+    );
+    await expect(checkedTime).toHaveAttribute("datetime", isoTimestamp);
+    await expect(ap.locator("body")).not.toContainText(`기기 ${first}`);
+    await expect(ap.locator("body")).not.toContainText(`기기 ${second}`);
+  } finally {
+    await Promise.all([a.close(), b.close()]);
   }
 });

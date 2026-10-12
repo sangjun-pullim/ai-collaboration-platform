@@ -433,6 +433,10 @@ export async function main(args: string[]) {
     );
   const manage = (signal: AbortSignal) =>
     new SettingsManager(store, new SettingsStore(store), new SettingsClient(client.origin), {
+      heartbeat: (credential, signal) => {
+        if (signal.aborted) return Promise.resolve();
+        return client.call("heartbeat", {}, credential);
+      },
       runner: (pointer, runtime) =>
         configuredRunner(store, client.origin, runnerOptions, pointer, runtime),
     }).run({ once: options.once === "yes", signal });

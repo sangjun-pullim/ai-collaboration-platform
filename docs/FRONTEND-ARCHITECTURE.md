@@ -1,5 +1,5 @@
 ---
-verified-against: cecc55c213c3d34b2c6480de55aa20ac10d9b0b9
+verified-against: feec883ec0d3914ce14a87ae41893f968011733b
 sources:
   - src/app/**
   - src/features/**
@@ -22,6 +22,16 @@ sources:
 채팅의 원본 이벤트는 append-only 이력에 보존한다. 같은 방·request·question·agent·bindingEpoch의 ANSWER 상태 변경은 `chat-presentation.timelineEvents`에서 가장 큰 sequence를 선택해 한 답변으로 표시한다. 서로 다른 실행과 식별 정보가 부족한 이벤트는 합치지 않는다. 이 표시는 서버 이력·요청·실행 횟수를 바꾸지 않는다.
 
 `/app/connections`의 [ConnectionManager](../src/features/device-binding/connection-manager.tsx)는 자기 참가 방 선택·연결 코드 승인·기기 취소/제거와 최근 수신·만료를 표시한다. 방의 [RoomBindings](../src/features/device-binding/room-bindings.tsx)는 공개 저장소/session 별칭·Git metadata·runtime·epoch·미검증 상태만 보여 주며 observer도 읽을 수 있다. 기기 credential·proof·절대 경로·native locator는 props/HTML/RSC에 포함하지 않는다. heartbeat와 등록을 AI 실행 가능으로 표시하지 않는다.
+
+### 본인 PC의 연결 표시
+
+[입장 후 공통 layout](../src/app/app/layout.tsx)이 `/app`·채팅방·내 AI 연결 화면의 상단에 같은 표시를 둔다. [서버 조회](../src/features/device-binding/owned-connection-status.tsx)는 현재 세션과 기존 owner-only 기기 목록을 사용하며 다른 사람의 연결·모델 설정·workflow를 조회하지 않는다. [연결 판정](../src/features/device-binding/connection-presence.ts)은 유효한 인증·활성 기기·90초 미만 통신을 요구하고 5초를 넘는 미래 시각을 거절한다. 취소·제거 기기는 활성 집계에서 제외한다.
+
+[표시 컴포넌트](../src/features/device-binding/connection-status-bar.tsx)는 색과 텍스트, 전체 활성/최근 통신 기기 수, 최대 5대의 기기·방 상세와 마지막 조회 시각을 보여 준다. 클라이언트에는 별칭·표시 상태·시각만 전달하고 기기 ID·인증 정보·실제 경로·설정 원문·오류 원문은 전달하지 않는다. 초록은 PC와의 최근 통신이며 현재 AI 답변 준비의 증거가 아니다. 빨강은 연결 확인 안 됨, 회색은 조회 실패로 구분한다.
+
+표시 자체에는 polling·Realtime·마운트/경로 변경 effect가 없다. **다시 확인** 클릭에서만 `router.refresh()`를 호출한다. 공통 layout이 재사용되는 일반 이동에서는 이전 snapshot과 마지막 조회 시각을 유지할 수 있다. 기기 승인 대기와 변경 뒤의 기존 화면 refresh는 그대로 동작한다. 시간은 한국 시간대를 명시하고 마지막 조회와 마지막 PC 통신을 구분한다.
+
+공통 layout은 화면 전체 높이를 상단과 남은 본문으로 나눈다. 상단은 줄어들지 않고 본문은 남은 높이와 문서 스크롤을 소유한다. 직접 자식 `main`의 높이를 본문에 맞춰 채팅의 기존 `h-dvh`를 제한한다. 채팅은 내부 대화 스크롤과 입력을 유지하며 긴 연결 화면은 본문을 끝까지 스크롤한다. 조회 영역은 Suspense로 분리해 상태 조회를 기다리는 동안에도 본문을 렌더링한다.
 
 ```mermaid
 flowchart TD

@@ -12,6 +12,10 @@ import { policyFixture } from "./claude-policy-fixture.ts";
 import { FakeTransport } from "./claude-runtime-fixture.ts";
 import { ClaudeCatalogStore } from "../src/claude/catalog-store.ts";
 import { NativeClaudePolicy } from "../src/claude/native-policy.ts";
+import { Connector, main } from "../src/cli.ts";
+import { CentralClient } from "../src/central-client.ts";
+import { ConnectionError } from "../src/contracts.ts";
+import { SettingsManager, type SettingsManagerOptions } from "../src/settings/manager.ts";
 
 test("should keep standalone Claude default admission closed under the device settings lock", async (t) => {
   const f = await runtimeFixture(),
@@ -333,6 +337,68 @@ test("should require a fresh profile before pairing over retained revoked histor
       await withSettingsDeviceLock(fresh, "pair", async () => "new profile"),
       "new profile",
     );
+  } finally {
+    await f.close();
+  }
+});
+
+test("should wire only the validated heartbeat callback and preserve manual authentication handling", async (t) => {
+  const f = await runtimeFixture(),
+    profile = new StateStore(f.stateDir, "one");
+  try {
+    await profile.write({
+      version: 1,
+      server: f.scope.server,
+      status: "connected",
+      credential: "b".repeat(64),
+      credentialExpiresAt: new Date(Date.now() + 600000).toISOString(),
+      mappings: [],
+    });
+    const before = await readFile(profile.file);
+    const call = t.mock.method(
+      CentralClient.prototype,
+      "call",
+      async (...[action, body, credential]: Parameters<CentralClient["call"]>) => {
+        assert.equal(action, "heartbeat");
+        assert.deepEqual(body, {});
+        assert.equal(credential, "a".repeat(64));
+        throw new ConnectionError("UNAUTHENTICATED");
+      },
+    );
+    const run = t.mock.method(
+      SettingsManager.prototype,
+      "run",
+      async function (this: SettingsManager) {
+        const callback = (this as unknown as { options: SettingsManagerOptions }).options
+          .heartbeat!;
+        await callback("a".repeat(64), AbortSignal.abort());
+        assert.equal(call.mock.callCount(), 0);
+        await assert.rejects(callback("a".repeat(64), new AbortController().signal), {
+          code: "UNAUTHENTICATED",
+        });
+        assert.deepEqual(await readFile(profile.file), before);
+        return {
+          state: "UNCONFIGURED",
+          ready: false,
+          operationId: null,
+          configRevision: 0,
+          reason: null,
+        };
+      },
+    );
+    // The manager is fully stubbed: no connection command, AI process or network is started.
+    await main(["manage", "--state-dir", f.stateDir, "--profile", "one"]);
+    assert.equal(run.mock.callCount(), 1);
+    assert.equal(call.mock.callCount(), 1);
+    call.mock.restore();
+    const connector = new Connector(
+      profile,
+      new CentralClient(f.scope.server, async () =>
+        Response.json({ ok: false, error: { code: "UNAUTHENTICATED" } }, { status: 401 }),
+      ),
+    );
+    await assert.rejects(connector.heartbeat(), { code: "UNAUTHENTICATED" });
+    assert.equal((await profile.read())!.status, "disconnected");
   } finally {
     await f.close();
   }
