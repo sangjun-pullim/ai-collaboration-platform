@@ -10,12 +10,14 @@ import { Connector } from "../src/cli.ts";
 import { CentralClient } from "../src/central-client.ts";
 import { WorkflowClient } from "../src/workflow-client.ts";
 import { WorkflowRunner } from "../src/workflow-runner.ts";
-import { prepareConnection } from "../src/cli/connect-command.ts";
+import { prepareConnection, type ConnectInteraction } from "../src/cli/connect-command.ts";
 import { SyntheticAdapter } from "./runner-fixture.ts";
 import { runtimeFixture, uuid, appendFixtureCompletion } from "./runtime-fixture.ts";
 import { capabilityHash } from "../src/settings/contracts.ts";
 import { revokeConfiguredProfile } from "../src/cli/remove-local-profile.ts";
 import { withSettingsDeviceLock } from "../src/cli/settings-lock.ts";
+import { claudeRecord } from "./provider-runtime-fixture.ts";
+import { digest, stableJson } from "../src/runtime-contracts.ts";
 
 async function fixture() {
   const f = await runtimeFixture();
@@ -90,7 +92,7 @@ async function fixture() {
       });
     }),
   );
-  const interaction = {
+  const interaction: ConnectInteraction = {
     interactive: true,
     signal: new AbortController().signal,
     write: (s: string) => {
@@ -352,6 +354,283 @@ async function configured(f: Awaited<ReturnType<typeof fixture>>) {
   await f.previous.write(owner);
   return { settings, current, record };
 }
+
+async function configuredClaude(f: Awaited<ReturnType<typeof fixture>>, materialized = true) {
+  const c = await configured(f);
+  const record = claudeRecord(c.record);
+  record.context!.materialization = {
+    ...record.context!.materialization!,
+    state: materialized ? "MATERIALIZED" : "RESERVED",
+    initHash: materialized ? digest("synthetic-initialization") : null,
+  };
+  // Establish a Claude fixture directly rather than changing an existing Codex generation.
+  await writeFile(c.current.file, JSON.stringify(record), { mode: 0o600 });
+  const state = (await c.settings.read())!;
+  state.current!.provider = "claude";
+  const pointer = state.current!,
+    operationId = uuid();
+  const receipt = {
+    operationId,
+    state: "APPLIED" as const,
+    configRevision: pointer.configRevision,
+    runtime: "claude" as const,
+    ...record.settings!.requested,
+    snapshotHash: record.settings!.capabilities.snapshotHash,
+    localRootReference: pointer.localRootReference,
+    repositoryAlias: "Repository",
+    sessionAlias: "Session",
+    catalog: null,
+    bindingEpoch: pointer.bindingEpoch,
+    agentId: pointer.agentId,
+    workspaceId: pointer.workspaceId,
+  };
+  state.journal = {
+    operation: {
+      operationId,
+      deviceId: state.deviceId,
+      expectedConfigRevision: 0,
+      state: "REQUESTED",
+      requested: {
+        operationId,
+        deviceId: state.deviceId,
+        expectedConfigRevision: 0,
+        runtime: "claude",
+      },
+      receipt: null,
+    },
+    phase: "APPLIED",
+    generation: pointer.generation,
+    localRootReference: pointer.localRootReference,
+    root: record.context!.root,
+    settings: record.settings!,
+    context: structuredClone(record.context!),
+    receipt,
+    reason: null,
+    catalogContext: {
+      ...structuredClone(record.context!),
+      threadId: uuid(),
+      ownedTurns: [],
+      materialization: { ...record.context!.materialization!, state: "RESERVED", initHash: null },
+    },
+  };
+  await writeFile(c.settings.file, JSON.stringify(state), { mode: 0o600 });
+  assert.ok(await c.settings.read());
+  const owner = (await f.previous.read())!;
+  owner.mappings[0].runtime = "claude";
+  owner.mappings[0].materialization = materialized ? "MATERIALIZED" : "RESERVED";
+  await f.previous.write(owner);
+  return { ...c, record, state };
+}
+
+test("should recover a materialized Claude session whose closed catalog reservation has a different thread", async () => {
+  const f = await fixture();
+  try {
+    const c = await configuredClaude(f);
+    assert.notEqual(c.state.journal!.catalogContext!.threadId, c.record.context!.threadId);
+    const files = [f.previous.file, c.settings.file, c.current.file];
+    const before = await Promise.all(files.map((file) => readFile(file)));
+    await f.run();
+    assert.deepEqual(await Promise.all(files.map((file) => readFile(file))), before);
+    assert.deepEqual(f.calls, ["begin", "pairing-status", "exchange"]);
+    assert.equal(f.adapter.starts, 0);
+  } finally {
+    await f.close();
+  }
+});
+
+test("should recover a valid Claude reservation that expired before its first question", async () => {
+  const f = await fixture();
+  try {
+    const c = await configuredClaude(f, false);
+    const files = [f.previous.file, c.settings.file, c.current.file];
+    const before = await Promise.all(files.map((file) => readFile(file)));
+    await f.run();
+    assert.deepEqual(await Promise.all(files.map((file) => readFile(file))), before);
+    assert.deepEqual(f.calls, ["begin", "pairing-status", "exchange"]);
+    assert.equal(f.adapter.starts, 0);
+  } finally {
+    await f.close();
+  }
+});
+
+for (const fault of ["policy", "version", "epoch", "materialized"] as const)
+  test(`should refuse an inconsistent Claude catalog ${fault} before fresh approval`, async () => {
+    const f = await fixture();
+    try {
+      const c = await configuredClaude(f),
+        catalog = c.state.journal!.catalogContext!;
+      if (fault === "policy") catalog.materialization!.policyFingerprint = digest("other-policy");
+      if (fault === "version") catalog.materialization!.version = "2.1.286";
+      if (fault === "epoch") catalog.epoch++;
+      if (fault === "materialized")
+        catalog.materialization = {
+          ...catalog.materialization!,
+          state: "MATERIALIZED",
+          initHash: digest("other-init"),
+        };
+      await writeFile(c.settings.file, JSON.stringify(c.state), { mode: 0o600 });
+      await assert.rejects(f.run(), { code: "CONTEXT_UNCONFIRMED" });
+      assert.equal(f.calls.length, 0);
+      assert.equal(await f.next.read(), undefined);
+    } finally {
+      await f.close();
+    }
+  });
+
+async function unresolvedClaude(f: Awaited<ReturnType<typeof fixture>>) {
+  const c = await configuredClaude(f),
+    attempt = appendFixtureCompletion(c.record, 0);
+  attempt.state = "UNKNOWN";
+  attempt.reason = "RUNTIME_CAPACITY";
+  attempt.terminal = null;
+  attempt.receipt = null;
+  attempt.nativeIntent = {
+    provider: "claude",
+    sessionId: c.record.context!.threadId,
+    inputId: attempt.native!.turnId,
+    promptHash: digest("synthetic-question"),
+    generation: attempt.generation,
+    scope: attempt.scope,
+    attemptId: attempt.snapshot!.attemptId,
+    fence: attempt.snapshot!.fence,
+    policyFingerprint: c.record.context!.materialization!.policyFingerprint,
+  };
+  attempt.toolCalls.push({
+    callId: uuid(),
+    payloadHash: digest("pending-tool"),
+    operationId: null,
+    result: null,
+  });
+  c.record.context!.ownedTurns = [];
+  c.record.context!.level = "L1";
+  c.record.operations = c.record.operations.filter((operation) => operation.action !== "complete");
+  await writeFile(c.current.file, JSON.stringify(c.record), { mode: 0o600 });
+  assert.equal((await c.current.read())!.attempts[0].state, "UNKNOWN");
+  return c;
+}
+
+test("should preserve an unknown Claude answer and pending tool bytes after explicit fresh-conversation approval", async () => {
+  const f = await fixture();
+  try {
+    const c = await unresolvedClaude(f);
+    const files = [f.previous.file, c.settings.file, c.current.file],
+      before = await Promise.all(files.map((file) => readFile(file)));
+    let confirmations = 0;
+    f.interaction.confirmUnresolved = async (count) => {
+      assert.equal(count, 1);
+      assert.equal(f.calls.length, 0);
+      confirmations++;
+      return true;
+    };
+    await f.run();
+    assert.equal(confirmations, 1);
+    assert.deepEqual(await Promise.all(files.map((file) => readFile(file))), before);
+    assert.equal((await c.current.read())!.attempts[0].state, "UNKNOWN");
+    assert.equal(await new SettingsStore(f.next).read(), undefined);
+    assert.deepEqual((await f.next.read())!.mappings, []);
+    assert.equal(f.adapter.starts, 0);
+    assert.ok(f.notices.join("").includes("결과 확인 불가"));
+    await assert.rejects(
+      withSettingsDeviceLock(f.previous, "revoke-local", (settings) =>
+        revokeConfiguredProfile(f.previous, settings),
+      ),
+      { code: "RUNTIME_BUSY" },
+    );
+    f.calls.length = 0;
+    await f.run();
+    assert.equal(confirmations, 2);
+    assert.equal(f.calls.includes("begin"), false);
+    assert.deepEqual(await Promise.all(files.map((file) => readFile(file))), before);
+  } finally {
+    await f.close();
+  }
+});
+
+for (const fault of [
+  "declined",
+  "missing-consent",
+  "running",
+  "pending-operation",
+  "terminal",
+  "native-lock",
+] as const)
+  test(`should reject unresolved recovery with ${fault} before fresh pairing`, async () => {
+    const f = await fixture();
+    try {
+      const c = await unresolvedClaude(f);
+      f.interaction.confirmUnresolved = async () => fault !== "declined";
+      if (fault === "missing-consent") delete f.interaction.confirmUnresolved;
+      if (fault === "running") {
+        const attempt = c.record.attempts[0],
+          operationId = uuid();
+        attempt.state = "RUNNING";
+        attempt.reason = null;
+        const body = {
+          protocol: 1,
+          agentId: c.record.scope.agentId,
+          bindingEpoch: c.record.scope.bindingEpoch,
+          operationId,
+          requestId: attempt.requestId,
+          attemptId: attempt.snapshot!.attemptId,
+          fence: attempt.snapshot!.fence,
+        };
+        c.record.operations.push({
+          operationId,
+          action: "start-intent",
+          body,
+          payloadHash: digest(stableJson({ action: "start-intent", body })),
+          state: "CONFIRMED",
+          result: structuredClone(attempt.snapshot),
+        });
+      }
+      if (fault === "pending-operation") {
+        const attempt = c.record.attempts[0],
+          operationId = uuid();
+        const body = {
+          protocol: 1,
+          agentId: c.record.scope.agentId,
+          bindingEpoch: c.record.scope.bindingEpoch,
+          operationId,
+          requestId: attempt.requestId,
+          attemptId: attempt.snapshot!.attemptId,
+          fence: attempt.snapshot!.fence,
+        };
+        c.record.operations.push({
+          operationId,
+          action: "lease",
+          body,
+          payloadHash: digest(stableJson({ action: "lease", body })),
+          state: "PENDING",
+          result: null,
+        });
+      }
+      if (fault === "terminal") {
+        const completed = appendFixtureCompletion(c.record, 0);
+        c.record.attempts[0].terminal = completed.terminal;
+        c.record.attempts[0].terminal!.turnId = c.record.attempts[0].native!.turnId;
+        c.record.attempts.pop();
+        c.record.context!.ownedTurns = [];
+        c.record.context!.level = "L1";
+        c.record.operations = c.record.operations.filter(
+          (operation) => operation.body.requestId === c.record.attempts[0].requestId,
+        );
+      }
+      await writeFile(c.current.file, JSON.stringify(c.record), { mode: 0o600 });
+      assert.ok(await c.current.read());
+      const bytes = await readFile(c.current.file);
+      const check = async () => {
+        await assert.rejects(f.run());
+        assert.equal(f.calls.length, 0);
+        assert.equal(await f.next.read(), undefined);
+        assert.deepEqual(await readFile(c.current.file), bytes);
+        assert.equal(f.adapter.starts, 0);
+      };
+      if (fault === "native-lock") await c.current.sessionLocked(c.record.context!.threadId, check);
+      else await check();
+    } finally {
+      await f.close();
+    }
+  });
 
 test("should protect current and retained legacy generations without copying settings into the new profile", async () => {
   const f = await fixture();

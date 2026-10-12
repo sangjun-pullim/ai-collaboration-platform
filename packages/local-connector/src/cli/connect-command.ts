@@ -24,6 +24,7 @@ export type ConnectInteraction = {
   confirm: (scope: Scope, signal: AbortSignal) => Promise<boolean>;
   confirmRestart?: (signal: AbortSignal) => Promise<boolean>;
   confirmPreviousRevoked?: (signal: AbortSignal) => Promise<boolean>;
+  confirmUnresolved?: (count: number, signal: AbortSignal) => Promise<boolean>;
   open: (url: string) => Promise<void>;
   pause?: (signal: AbortSignal) => Promise<void>;
   now?: () => number;
@@ -206,6 +207,23 @@ export function terminalInteraction(signal: AbortSignal): ConnectInteraction {
     write: (message) => process.stdout.write(message),
     open: async (url) => {
       await promisify(execFile)("/usr/bin/open", [url], { timeout: 5000 });
+    },
+    confirmUnresolved: async (count, stop) => {
+      const input = createInterface({ input: process.stdin, output: process.stdout });
+      const closed = new AbortController();
+      input.once("close", () => closed.abort());
+      try {
+        return (
+          (
+            await input.question(
+              `이전 답변 ${count}건을 보존하고 새 대화로 연결하려면 new를 입력하세요: `,
+              { signal: AbortSignal.any([stop, closed.signal]) },
+            )
+          ).trim() === "new"
+        );
+      } finally {
+        input.close();
+      }
     },
     confirmPreviousRevoked: async (stop) => {
       const input = createInterface({ input: process.stdin, output: process.stdout });

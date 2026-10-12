@@ -2,7 +2,7 @@ import { constants } from "node:fs";
 import { lstat, open, unlink, readdir } from "node:fs/promises";
 import { join } from "node:path";
 import { RuntimeStore, unresolvedRuntime } from "../runtime-store.ts";
-import { RuntimeError, stableJson } from "../runtime-contracts.ts";
+import { RuntimeError, stableJson, type RuntimeRecord } from "../runtime-contracts.ts";
 import type { StateStore } from "../state-store.ts";
 import type { WorkflowRunner } from "../workflow-runner.ts";
 import { SettingsStore, type GenerationPointer, type SettingsState } from "../settings/store.ts";
@@ -103,13 +103,14 @@ export function revokeLocalProfile(store: StateStore, runner: (agentId: string) 
   return withLocalProfileProtection(store, runner, (_snapshot, remove) => remove());
 }
 
-/** Revoke the credential only after proving every retained generation is idle and owned.
+/** Protect every retained generation and expose only owned recovery counts.
  * The caller holds the settings device lock. Histories and settings remain on disk.
  */
 export async function withConfiguredProfileProtection<T>(
   profile: StateStore,
   settings: SettingsStore,
-  mutation: (owner: ConnectorState) => Promise<T>,
+  mutation: (owner: ConnectorState, metadata: { unresolvedCount: number }) => Promise<T>,
+  mode: "idle" | "expired-fresh-approval" = "idle",
 ) {
   await settings.assertIdle();
   const snapshot = await settings.read();
@@ -117,6 +118,16 @@ export async function withConfiguredProfileProtection<T>(
   if (!snapshot || !owner || settings.profile !== profile || !sameOwner(snapshot, owner))
     throw new RuntimeError("AUTHORITY_LOST");
   if (owner.pending || owner.registration) throw new RuntimeError("RUNTIME_BUSY");
+  if (mode === "expired-fresh-approval") {
+    const expiry = Date.parse(owner.credentialExpiresAt ?? "");
+    if (
+      !owner.credential ||
+      !["connected", "disconnected"].includes(owner.status) ||
+      !Number.isFinite(expiry) ||
+      expiry > Date.now()
+    )
+      throw new RuntimeError("RUNTIME_BUSY");
+  }
   const pointers = [...snapshot.retained, ...(snapshot.current ? [snapshot.current] : [])].sort(
     (a, b) => a.generation.localeCompare(b.generation),
   );
@@ -126,6 +137,7 @@ export async function withConfiguredProfileProtection<T>(
   if (legacyAgents.some((agentId) => !pointers.some((p) => p.legacy && p.agentId === agentId)))
     throw new RuntimeError("RUNTIME_BUSY");
   const validations: (() => Promise<void>)[] = [];
+  let unresolvedCount = 0;
   const guard = async (index: number): Promise<T> => {
     if (index === pointers.length)
       return profile.transaction(async () => {
@@ -140,7 +152,7 @@ export async function withConfiguredProfileProtection<T>(
           throw new RuntimeError("AUTHORITY_LOST");
         if (stableJson(await generationInventory(settings, pointers)) !== stableJson(generations))
           throw new RuntimeError("AUTHORITY_LOST");
-        return mutation(owner);
+        return mutation(owner, { unresolvedCount });
       });
     const pointer = pointers[index];
     const runtime = pointer.legacy
@@ -156,23 +168,43 @@ export async function withConfiguredProfileProtection<T>(
         (mapping && !matchesMapping(mapping, pointer, record))
       )
         throw new RuntimeError("CONTEXT_UNCONFIRMED");
-      if (unresolvedRuntime(record)) throw new RuntimeError("RUNTIME_BUSY");
+      const recordMode = pointer.legacy ? "idle" : mode;
+      const count = protectedUnresolvedCount(record, recordMode);
       return runtime.sessionLocked(record.context!.threadId, async () => {
         const validate = async () => {
           const current = await runtime.read();
           if (stableJson(current) !== stableJson(record)) throw new RuntimeError("AUTHORITY_LOST");
-          if (current && unresolvedRuntime(current)) throw new RuntimeError("RUNTIME_BUSY");
+          if (current) protectedUnresolvedCount(current, recordMode);
         };
         validations.push(validate);
+        unresolvedCount += count;
         try {
           return await guard(index + 1);
         } finally {
+          unresolvedCount -= count;
           validations.pop();
         }
       });
     });
   };
   return guard(0);
+}
+
+function protectedUnresolvedCount(record: RuntimeRecord, mode: "idle" | "expired-fresh-approval") {
+  if (!unresolvedRuntime(record)) return 0;
+  if (
+    mode !== "expired-fresh-approval" ||
+    record.preparation ||
+    record.operations.some((operation) => !["CONFIRMED", "CLOSED"].includes(operation.state)) ||
+    record.attempts.some(
+      (attempt) =>
+        !["UPLOADED", "NOT_STARTED"].includes(attempt.state) &&
+        !(attempt.state === "UNKNOWN" && attempt.terminal === null && attempt.receipt === null),
+    )
+  )
+    throw new RuntimeError("RUNTIME_BUSY");
+  // UNKNOWN tools and native inputs stay untouched; no result or completion is inferred.
+  return record.attempts.filter((attempt) => attempt.state === "UNKNOWN").length;
 }
 
 export function revokeConfiguredProfile(profile: StateStore, settings: SettingsStore) {

@@ -4,10 +4,11 @@ import { join, dirname } from "node:path";
 import { createHash } from "node:crypto";
 import type { Connector } from "../cli.ts";
 import { ConnectionError, isId, isHash } from "../contracts.ts";
-import { RuntimeError, stableJson } from "../runtime-contracts.ts";
+import { RuntimeError, stableJson, type OwnedContext } from "../runtime-contracts.ts";
 import { RuntimeStore } from "../runtime-store.ts";
+import { ClaudeCatalogStore } from "../claude/catalog-store.ts";
 import { StateStore, type ConnectorState } from "../state-store.ts";
-import { SettingsStore } from "../settings/store.ts";
+import { SettingsStore, type SettingsState } from "../settings/store.ts";
 import type { WorkflowRunner } from "../workflow-runner.ts";
 import {
   withConfiguredProfileProtection,
@@ -64,6 +65,84 @@ async function legacyEvidence(profile: StateStore, owner: ConnectorState) {
   } catch (error) {
     if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
   }
+}
+
+async function configuredSetupEvidence(
+  profile: StateStore,
+  settings: SettingsStore,
+  configured: SettingsState,
+) {
+  const journal = configured.journal;
+  if (!journal) return;
+  if (!journal.context) {
+    if (journal.catalogContext) throw new RuntimeError("CONTEXT_UNCONFIRMED");
+    return;
+  }
+  const context = journal.context;
+  const pointer = [
+    ...configured.retained,
+    ...(configured.current ? [configured.current] : []),
+  ].find((candidate) => candidate.generation === context.generation);
+  if (!pointer) throw new RuntimeError("CONTEXT_UNCONFIRMED");
+  const runtime = pointer.legacy
+    ? new RuntimeStore(profile.dir, profile.profile, pointer.agentId)
+    : settings.generationStore(pointer.agentId, pointer.generation);
+  const record = await runtime.read();
+  const actual = record?.context;
+  if (
+    !actual ||
+    context.threadId !== actual.threadId ||
+    context.generation !== actual.generation ||
+    context.ownership !== actual.ownership ||
+    context.epoch !== actual.epoch ||
+    context.provider !== actual.provider ||
+    stableJson(context.root) !== stableJson(actual.root) ||
+    stableJson(journal.settings) !== stableJson(record.settings) ||
+    !matchesMaterialization(context, actual)
+  )
+    throw new RuntimeError("CONTEXT_UNCONFIRMED");
+  const catalog = journal.catalogContext;
+  if (pointer.provider !== "claude") {
+    if (catalog) throw new RuntimeError("CONTEXT_UNCONFIRMED");
+    return;
+  }
+  // SettingsStore validates the APPLIED receipt. choose() closes the catalog adapter
+  // before LOCAL_CONFIRMATION; the catalog reservation is never the runtime session.
+  if (
+    journal.phase !== "APPLIED" ||
+    journal.receipt?.state !== "APPLIED" ||
+    !catalog ||
+    catalog.generation !== journal.generation ||
+    catalog.generation !== actual.generation ||
+    catalog.ownership !== actual.ownership ||
+    catalog.provider !== "claude" ||
+    actual.provider !== "claude" ||
+    stableJson(catalog.root) !== stableJson(journal.root) ||
+    stableJson(catalog.root) !== stableJson(actual.root) ||
+    catalog.epoch !== context.epoch ||
+    catalog.level !== "L1" ||
+    catalog.ownedTurns.length !== 0 ||
+    catalog.threadId === actual.threadId ||
+    catalog.materialization?.state !== "RESERVED" ||
+    catalog.materialization.initHash !== null ||
+    !actual.materialization ||
+    catalog.materialization.version !== actual.materialization.version ||
+    catalog.materialization.policyFingerprint !== actual.materialization.policyFingerprint
+  )
+    throw new RuntimeError("CONTEXT_UNCONFIRMED");
+}
+
+function matchesMaterialization(saved: OwnedContext, actual: OwnedContext) {
+  const before = saved.materialization,
+    current = actual.materialization;
+  if (!before || !current) return before === current;
+  return (
+    before.version === current.version &&
+    before.policyFingerprint === current.policyFingerprint &&
+    (before.state === "RESERVED"
+      ? before.initHash === null
+      : current.state === "MATERIALIZED" && before.initHash === current.initHash)
+  );
 }
 
 /** Capture identities as well as bytes, so an identical replacement is not trusted evidence. */
@@ -178,6 +257,10 @@ async function evidence(profile: StateStore) {
   await visit(profile.file);
   await visit(new SettingsStore(profile).dir);
   await visit(join(profile.dir, "runtime", profile.profile));
+  const catalog = new ClaudeCatalogStore(profile);
+  catalog.assertStartup();
+  await visit(catalog.directory);
+  await visit(join(profile.dir, `${profile.profile}.claude-catalog.identity.json`));
   return stableJson(result);
 }
 
@@ -213,30 +296,24 @@ export async function prepareRecovery(
       expired(await previous.read(), connector.client.origin, input);
       const configured = await settings.read();
       if (configured) {
-        const pointers = [
-          ...configured.retained,
-          ...(configured.current ? [configured.current] : []),
-        ];
-        for (const context of [configured.journal?.context, configured.journal?.catalogContext]) {
-          if (!context) continue;
-          const pointer = pointers.find((p) => p.generation === context.generation);
-          if (!pointer) throw new RuntimeError("CONTEXT_UNCONFIRMED");
-          const store = pointer.legacy
-            ? new RuntimeStore(previous.dir, previous.profile, pointer.agentId)
-            : settings.generationStore(pointer.agentId, pointer.generation);
-          if ((await store.read())?.context?.threadId !== context.threadId)
-            throw new RuntimeError("CONTEXT_UNCONFIRMED");
-        }
-        return withConfiguredProfileProtection(previous, settings, async () => evidence(previous));
+        return withConfiguredProfileProtection(
+          previous,
+          settings,
+          async (_owner, metadata) => {
+            await configuredSetupEvidence(previous, settings, configured);
+            return { snapshot: await evidence(previous), ...metadata };
+          },
+          "expired-fresh-approval",
+        );
       }
       await legacyEvidence(previous, owner);
       return withLocalProfileProtection(
         previous,
         (agent) => runner(previous, agent),
-        async () => evidence(previous),
+        async () => ({ snapshot: await evidence(previous), unresolvedCount: 0 }),
       );
     };
-    const snapshot = await inspect();
+    const { snapshot, unresolvedCount } = await inspect();
     check();
     const next = await connector.store.read();
     if (next?.credential) {
@@ -248,7 +325,18 @@ export async function prepareRecovery(
         next.scope.roomId !== owner.scope!.roomId
       )
         throw new ConnectionError("FORBIDDEN");
-    } else {
+    }
+    // Locks exclude a live connector owner; they do not reconstruct a vanished terminal's proof.
+    // A retry with fresh credentials must acknowledge preserved UNKNOWN answers again.
+    if (unresolvedCount > 0) {
+      interaction.write(
+        `이전 답변 ${unresolvedCount}건은 결과 확인 불가로 보존합니다. 이전 질문을 자동 재실행하지 않습니다. 원래 연결 터미널을 종료하고 웹에서 이전 기기를 연결 취소한 뒤 새 대화로 연결하세요.\n`,
+      );
+      if (!(await interaction.confirmUnresolved?.(unresolvedCount, interaction.signal)))
+        throw new ConnectionError("CONFLICT");
+      check();
+    }
+    if (!next?.credential) {
       const safe = (text: string) => text.replace(/[\p{Cc}\p{Cf}]/gu, "").slice(0, 160);
       interaction.write(
         `이전 기록은 그대로 보존합니다. 새 기기의 AI와 폴더는 웹에서 다시 고르세요.\n` +
@@ -260,7 +348,9 @@ export async function prepareRecovery(
         throw new ConnectionError("CONFLICT");
     }
     check();
-    if ((await inspect()) !== snapshot) throw new RuntimeError("AUTHORITY_LOST");
+    const rechecked = await inspect();
+    if (rechecked.snapshot !== snapshot || rechecked.unresolvedCount !== unresolvedCount)
+      throw new RuntimeError("AUTHORITY_LOST");
     // All old runtime/session/profile protections have returned before acquiring the new device.
     await withSettingsDeviceLock(connector.store, "connect", async () => {
       check();
