@@ -43,6 +43,7 @@ function RoomInvestigation({ userId, roomId, role }: Props) {
     busy,
     pendingDirect,
     observedAt,
+    cancelReceipts,
     mutate,
     loseAccess,
   } = useRoomChat({ userId, roomId, role });
@@ -119,6 +120,7 @@ function RoomInvestigation({ userId, roomId, role }: Props) {
     pollError,
     gap: history.gap,
     role,
+    cancelReceipts,
   });
   const cycleStatuses = cycle
     ? presentation.statuses.filter((status) => status.cycleId === cycle.cycleId)
@@ -127,6 +129,17 @@ function RoomInvestigation({ userId, roomId, role }: Props) {
     ["QUEUED", "LEASED", "RUNNING", "UNKNOWN"].includes(status.state),
   );
   const currentStatuses = pendingStatuses.length ? pendingStatuses : cycleStatuses;
+  const directStatus = directRun
+    ? cycleStatuses.find(
+        (status) =>
+          status.requestId === directRun.requestId &&
+          status.agentId === directRun.agentId &&
+          status.epoch === directRun.bindingEpoch,
+      )
+    : undefined;
+  const cancelConfirmed = !!directStatus?.interruptStage || !!directStatus?.cancelReceiptState;
+  const cancelUncertain =
+    pendingDirect?.action === "cancel" && pendingDirect.body.requestId === directRun?.requestId;
 
   async function speak(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
@@ -417,7 +430,7 @@ function RoomInvestigation({ userId, roomId, role }: Props) {
                   <Button
                     variant="outline"
                     size="sm"
-                    disabled={busy || !!pendingDirect}
+                    disabled={busy || !!pendingDirect || cancelConfirmed}
                     onClick={() =>
                       mutate("cancel", {
                         requestId: directRun.requestId,
@@ -425,7 +438,17 @@ function RoomInvestigation({ userId, roomId, role }: Props) {
                       })
                     }
                   >
-                    이 직접 질문 중단 요청
+                    {cancelUncertain
+                      ? busy
+                        ? "중단 요청 전송 중"
+                        : "중단 요청 결과 미확정"
+                      : directStatus?.interruptStage === "ACKNOWLEDGED"
+                        ? "중단 요청 수신 확인"
+                        : directStatus?.cancelReceiptState === "NO_ACTIVE_RUN"
+                          ? "중단할 활성 실행 없음"
+                          : cancelConfirmed
+                            ? "중단 요청 접수"
+                            : "이 직접 질문 중단 요청"}
                   </Button>
                 )}
               </div>

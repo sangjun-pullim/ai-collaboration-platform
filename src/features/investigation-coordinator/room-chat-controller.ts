@@ -1,4 +1,10 @@
-import { WorkflowError, type Body, type HistoryPage, type HumanAction } from "./contracts.ts";
+import {
+  WorkflowError,
+  projectResponse,
+  type Body,
+  type HistoryPage,
+  type HumanAction,
+} from "./contracts.ts";
 import { emptyHistory, mergeHistory, type HistoryState } from "./history-state.ts";
 import {
   directIntentKey,
@@ -26,6 +32,14 @@ export type RoomChatState = {
   busy: boolean;
   pendingDirect: DirectIntent | null;
   observedAt: number;
+  cancelReceipts: CancelReceipt[];
+};
+export type CancelReceipt = {
+  requestId: string;
+  cycleId: string;
+  agentId: string;
+  epoch: number;
+  state: "REQUESTED" | "NO_ACTIVE_RUN";
 };
 type Environment = { storage: () => Storage; hidden: () => boolean; now: () => number };
 const accessDenied = (code: string) => ["FORBIDDEN", "UNAUTHENTICATED", "NOT_FOUND"].includes(code);
@@ -62,6 +76,7 @@ export class RoomChatController {
       busy: false,
       pendingDirect: null,
       observedAt: 0,
+      cancelReceipts: [],
     };
   }
 
@@ -142,6 +157,7 @@ export class RoomChatController {
     this.update({
       history: emptyHistory(this.actor.roomId),
       permissionDenied: true,
+      cancelReceipts: [],
       pollError: "접근 권한을 확인해 주세요.",
     });
   };
@@ -161,7 +177,32 @@ export class RoomChatController {
       )) as HistoryPage;
       if (!this.current(generation, abort)) return;
       const history = mergeHistory(this.state.history, page);
-      this.update({ history, observedAt: this.environment.now(), pollError: null });
+      const cancelReceipts = this.state.cancelReceipts.filter((receipt) => {
+        const run = history.snapshot?.runs.find(
+          (run) =>
+            run.requestId === receipt.requestId &&
+            run.cycleId === receipt.cycleId &&
+            run.agentId === receipt.agentId &&
+            run.bindingEpoch === receipt.epoch,
+        );
+        // An older backfill or a different target cannot clear this acceptance receipt.
+        const latest = history.events
+          .filter(
+            (event) =>
+              event.kind === "RUN_STATE" &&
+              event.requestId === receipt.requestId &&
+              event.cycleId === receipt.cycleId &&
+              event.agentId === receipt.agentId &&
+              event.bindingEpoch === receipt.epoch,
+          )
+          .at(-1);
+        const state =
+          latest && (!run || Date.parse(latest.createdAt) > Date.parse(run.updatedAt))
+            ? latest.runState
+            : run?.state;
+        return !state || !["COMPLETED", "FAILED", "INTERRUPTED", "CANCELLED"].includes(state);
+      });
+      this.update({ history, cancelReceipts, observedAt: this.environment.now(), pollError: null });
       this.failures = 0;
       backfill = page.hasMore || history.gap;
     } catch (failure) {
@@ -215,12 +256,48 @@ export class RoomChatController {
     let directIntent = false;
     try {
       const body = mutationBody(action, fields, this.actor.userId, this.actor.roomId, retryBody);
+      const cancelTarget =
+        action === "cancel"
+          ? (this.state.history.snapshot?.runs.find((run) => run.requestId === body.requestId) ??
+            this.state.history.events.find(
+              (event) =>
+                event.requestId === body.requestId &&
+                event.cycleId &&
+                event.agentId &&
+                event.bindingEpoch !== null,
+            ))
+          : undefined;
       if (action === "ask" || action === "cancel") {
         this.persistIntent(action, body);
         directIntent = true;
       }
-      await this.request(action, body, abort.signal);
+      const result = await this.request(action, body, abort.signal);
       if (!this.current(generation, abort)) return false;
+      if (action === "cancel") {
+        const receipt = projectResponse("cancel", result) as {
+          requestId: string | null;
+          state: CancelReceipt["state"];
+        };
+        if (receipt.state === "REQUESTED" && receipt.requestId !== body.requestId)
+          throw new WorkflowError("UNAVAILABLE");
+        if (cancelTarget?.cycleId && cancelTarget.agentId && cancelTarget.bindingEpoch !== null) {
+          const cancelReceipt: CancelReceipt = {
+            requestId: body.requestId as string,
+            cycleId: cancelTarget.cycleId,
+            agentId: cancelTarget.agentId,
+            epoch: cancelTarget.bindingEpoch,
+            state: receipt.state,
+          };
+          this.update({
+            cancelReceipts: [
+              ...this.state.cancelReceipts.filter(
+                (previous) => previous.requestId !== cancelReceipt.requestId,
+              ),
+              cancelReceipt,
+            ],
+          });
+        }
+      }
       if (directIntent) this.clearIntent();
       return true;
     } catch (failure) {
