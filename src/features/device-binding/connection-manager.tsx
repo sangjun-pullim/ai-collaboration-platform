@@ -287,6 +287,9 @@ export function ConnectionManager({
                   <li key={device.deviceId} className={styles.member}>
                     <div>
                       <strong>{device.deviceAlias}</strong>
+                      <p className="break-all text-xs" aria-label="공개 연결 ID">
+                        연결 ID: {device.deviceId}
+                      </p>
                       <p>
                         {device.state === "active"
                           ? "등록 · 실행 미검증"

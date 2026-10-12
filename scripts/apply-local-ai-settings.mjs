@@ -41,6 +41,10 @@ const migrations = [
     "20261009001700-runtime-model-display-names.sql",
     "9e9ffe47f3dbb5e7b312377c91dec7aec29e16c808fbfa6b0c42c46b58e36774",
   ],
+  [
+    "20261012001800-seven-day-device-credentials.sql",
+    "7e27362e86313bb1ea12f6f03ecf66375807b0e566e260e0bd4755db2db120c8",
+  ],
 ];
 const featureChecks = {
   aiSettings: `to_regprocedure('public.runtime_settings_human(text,jsonb)') IS NOT NULL
@@ -94,6 +98,19 @@ const corrections = [
     fixedHash: "cecd1af840fc72e425a5b57b273bc218",
     error: "COMMIT_BINDING_SOURCE_UNVERIFIED",
   },
+  {
+    key: "credentialLifetime",
+    migration: migrations[8][0],
+    signature: "device_binding_private.connector_010_runtime(text,jsonb,text)",
+    arguments: ["action", "b", "s"],
+    returnType: "jsonb",
+    securityDefiner: true,
+    volatility: "v",
+    baselineHash: "c648503fea2c446f279137e1b52aefa3",
+    legacyHash: "5ddfe023acf667121443a91bb3093797",
+    fixedHash: "a24c498139a82092565e650bfceb4986",
+    error: "CREDENTIAL_LIFETIME_SOURCE_UNVERIFIED",
+  },
 ];
 function reviewedSourceSql(correction, hash) {
   return `EXISTS (SELECT 1 FROM pg_catalog.pg_proc p
@@ -120,6 +137,27 @@ const correctionChecks = Object.fromEntries(
     [`${correction.key}Fixed`, reviewedSourceSql(correction, correction.fixedHash)],
   ]),
 );
+function credentialLifetimeSql(interval) {
+  return `EXISTS (SELECT 1 FROM pg_catalog.pg_attrdef d
+    JOIN pg_catalog.pg_attribute a ON a.attrelid=d.adrelid AND a.attnum=d.adnum
+    WHERE d.adrelid=to_regclass('device_binding_private.credentials') AND a.attname='expires_at'
+      AND NOT a.attisdropped
+      AND regexp_replace(pg_get_expr(d.adbin,d.adrelid),'[()[:space:]]','','g')=$default$now+'${interval}'::interval$default$)
+    AND (SELECT count(*)=1 FROM pg_catalog.pg_constraint c
+    WHERE c.conrelid=to_regclass('device_binding_private.credentials') AND c.contype='c' AND c.convalidated
+      AND regexp_replace(pg_get_expr(c.conbin,c.conrelid),'[()[:space:]]','','g')=$check$expires_at>created_atANDexpires_at<=created_at+'${interval}'::interval$check$)`;
+}
+const credentialCorrection = corrections.find(
+  (correction) => correction.key === "credentialLifetime",
+);
+const legacyLifetime = credentialLifetimeSql("01:00:00");
+const fixedLifetime = credentialLifetimeSql("7days");
+correctionChecks.credentialLifetimeAbsent = `to_regprocedure('${credentialCorrection.signature}') IS NULL
+  AND (${reviewedSourceSql({ ...credentialCorrection, signature: "device_binding_private.connector(text,jsonb,text)" }, credentialCorrection.baselineHash)})
+  AND (${legacyLifetime})`;
+correctionChecks.credentialLifetimeLegacy += ` AND (${legacyLifetime})`;
+correctionChecks.credentialLifetimeFixed += ` AND (${fixedLifetime})`;
+featureChecks.sevenDayCredentials = correctionChecks.credentialLifetimeFixed;
 function assertCorrectionState(state, installed) {
   for (const correction of corrections) {
     const values = correctionKinds(correction).map((kind) => state[`${correction.key}${kind}`]);
@@ -183,11 +221,14 @@ function readySql(checks) {
     .join(" AND\n");
 }
 const featureSql = checksSql(featureChecks);
+const priorFeatureChecks = Object.fromEntries(
+  Object.entries(featureChecks).filter(([name]) => name !== "sevenDayCredentials"),
+);
 const baselineSql = checksSql(baselineChecks);
 const correctionSql = checksSql(correctionChecks);
 function preconditionSql(patchOnly, state) {
   const installationGuard = patchOnly
-    ? `IF (${readySql(featureChecks)}) IS NOT TRUE THEN
+    ? `IF (${readySql(priorFeatureChecks)}) IS NOT TRUE THEN
     RAISE EXCEPTION USING MESSAGE='PARTIAL_UPGRADE_REQUIRES_INSPECTION', ERRCODE='P0001';
   END IF;`
     : `IF to_regnamespace('runtime_settings_private') IS NOT NULL
@@ -300,8 +341,8 @@ async function migrationBodies(selected) {
       if (createHash("sha256").update(bytes).digest("hex") !== hash)
         throw new UpgradeError("MIGRATION_INPUT_CHANGED");
       let sql = bytes.toString("utf8").trim();
-      // Only these two reviewed files have their own outer transaction.
-      if (name === migrations[0][0] || name === migrations[3][0]) {
+      // Reviewed transaction-bearing files join the same atomic upgrade transaction.
+      if ([migrations[0][0], migrations[3][0], migrations[8][0]].includes(name)) {
         if (!/^begin;\s/i.test(sql) || !/\scommit;$/i.test(sql))
           throw new UpgradeError("MIGRATION_TRANSACTION_CHANGED");
         sql = sql.replace(/^begin;\s*/i, "").replace(/\s*commit;$/i, "");
@@ -315,7 +356,7 @@ async function migrationBodies(selected) {
   );
 }
 
-function flags(raw, keys = ["aiSettings", "aiPause", "folderAutoRead", "answerSources"]) {
+function flags(raw, keys = Object.keys(featureChecks)) {
   let value;
   try {
     value = JSON.parse(raw);
@@ -354,8 +395,11 @@ export async function runLocalSettingsUpgrade(apply = false, execute = executeDo
     execute(args, `BEGIN READ ONLY;\nSET LOCAL statement_timeout='5s';\n${sql}\nROLLBACK;`);
   const before = flags(await inspect());
   if (!apply) return { status: "CHECKED", features: before, modelInputs: 0 };
-  const installed = Object.values(before).every(Boolean);
-  if (!installed && Object.values(before).some(Boolean))
+  const originalFeatures = Object.entries(before)
+    .filter(([key]) => key !== "sevenDayCredentials")
+    .map(([, value]) => value);
+  const installed = originalFeatures.every(Boolean);
+  if (!installed && originalFeatures.some(Boolean))
     throw new UpgradeError("PARTIAL_UPGRADE_REQUIRES_INSPECTION");
   const state = flags(await inspect(correctionSql), Object.keys(correctionChecks));
   assertCorrectionState(state, installed);

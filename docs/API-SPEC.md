@@ -108,6 +108,8 @@ Git 기준과 작업트리의 사람 cookie Auth·기기 bearer·내구 조사·
 
 `workspace`/`agent`/`replace`에는 확인한 공개 metadata와 opaque ID/operation/epoch만 받는다. 임의 owner/tenant·root·native session·provider key·RPC·명령·callback URL은 받지 않는다. exchange·rotate·등록·교체 receipt는 동일 operation/payload와 현재 credential·scope·epoch 조건을 만족할 때 제한된 시간 동안 복구한다. 후속 회전·교체·권한 취소 뒤 옛 결과를 재사용하지 않는다.
 
+SQL018 적용 후 exchange·rotate의 expiresAt은 신규 발급 시각부터 7일이다. 기존 만료 인증을 되살리거나 RPC의 입력·권한·signature를 바꾸지 않는다. 입력 ACK와 lease의 원래 기한은 인증 기간과 별개다. 연결기가 인증 교체 경쟁을 복구할 때도 같은 본문·operation을 최대 한 번 재전달하며 새 AI 입력을 만들지 않는다. 이전 기기 연결 취소와 새 승인은 기존 사람 API를 사용한다.
+
 기존 Codex 등록과 v1 로컬 profile은 유지한다. 설정 migration의 공개 runtime은 `codex` 또는 `claude`이며 `registered/unverified` 표시는 유지한다. owned context·native session·선택 파일의 원문은 로컬 private 계약이다. 모델/effort의 웹 선택은 별도의 runtime-settings 계약으로 전달하며 실행 명령을 받지 않는다. 실제 Claude 수용·Realtime는 후속 범위다. 내구 질문·실행 보고는 별도의 workflow 계약을 사용한다. 제품의 device upstream과 CLI server는 HTTPS 또는 canonical loopback HTTP만 허용하고 redirect를 거절한다. CLI의 private state와 복구 순서는 [온보딩](guides/onboarding-and-settings.md#현재-로컬-기기와-저장소-등록)을 따른다.
 
 

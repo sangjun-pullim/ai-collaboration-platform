@@ -16,6 +16,8 @@ import {
 } from "../runtime-contracts.ts";
 import { SettingsClient } from "./client.ts";
 import { reportConnectionHeartbeat } from "./connection-heartbeat.ts";
+import type { ConnectionRenewalControl } from "../connection-renewal.ts";
+import { ConnectionError } from "../contracts.ts";
 import {
   SettingsError,
   capabilityHash,
@@ -49,6 +51,7 @@ type Runner = {
   run(options: { once: boolean; signal: AbortSignal }): Promise<{ ready?: boolean }>;
 };
 export type SettingsManagerOptions = {
+  renewal?: ConnectionRenewalControl;
   adapter?: (provider: Provider, reserveCatalog: CatalogReservation) => RuntimeAdapter;
   folder?: (signal: AbortSignal) => Promise<FolderPickerResult>;
   confirm?: (
@@ -152,6 +155,35 @@ export class SettingsManager {
       reason: this.reason ?? this.state?.journal?.reason ?? null,
     };
   }
+  private assertOwner(p: ConnectorState) {
+    if (
+      this.state &&
+      (p.server !== this.state.server ||
+        p.deviceId !== this.state.deviceId ||
+        p.scope?.organizationId !== this.state.organizationId ||
+        p.scope?.roomId !== this.state.roomId)
+    )
+      throw new SettingsError("FORBIDDEN");
+  }
+  private async renewConnection(signal = this.signal) {
+    if (!this.options.renewal || signal.aborted) return;
+    const state = await this.profile.read();
+    if (state) this.assertOwner(state);
+    try {
+      await this.options.renewal.ensure(() => {
+        if (signal.aborted) throw new RuntimeError("RUNTIME_CLOSED");
+      });
+    } catch (error) {
+      if (error instanceof ConnectionError) {
+        if (error.code === "UNAUTHENTICATED" || error.code === "NOT_FOUND")
+          throw new SettingsError("UNAUTHENTICATED");
+        if (error.code === "FORBIDDEN" || error.code === "CONFLICT")
+          throw new SettingsError(error.code);
+        throw new SettingsError("UNAVAILABLE");
+      }
+      throw error;
+    }
+  }
   private async connected(): Promise<ConnectorState> {
     const p = await this.profile.read();
     if (
@@ -169,22 +201,45 @@ export class SettingsManager {
       p.server !== this.client.origin
     )
       throw new SettingsError("UNAUTHENTICATED");
-    if (
-      this.state &&
-      (p.server !== this.state.server ||
-        p.deviceId !== this.state.deviceId ||
-        p.scope.organizationId !== this.state.organizationId ||
-        p.scope.roomId !== this.state.roomId)
-    )
-      throw new SettingsError("FORBIDDEN");
+    this.assertOwner(p);
     return p;
   }
   private async call(action: "poll" | "receipt", body: Body = {}): Promise<SettingsResponse> {
+    const deadline = performance.now() + 10_000;
+    const remaining = () => {
+      const ms = deadline - performance.now();
+      if (ms <= 0) throw new SettingsError("UNAUTHENTICATED");
+      return ms;
+    };
+    await this.renewConnection();
     const p = await this.connected();
     const journal = this.state?.journal;
     if (action === "poll" && journal && !closed(journal))
       body = { ...body, operationId: journal.operation.operationId };
-    const response = await this.client.call(action, body, p.credential!);
+    const pinned = structuredClone(body);
+    let response: SettingsResponse;
+    try {
+      response = await this.client.call(action, pinned, p.credential!, remaining());
+    } catch (error) {
+      if (
+        !(error instanceof SettingsError) ||
+        !["UNAUTHENTICATED", "FORBIDDEN"].includes(error.code)
+      )
+        throw error;
+      remaining();
+      await this.renewConnection();
+      const current = await this.connected();
+      if (
+        current.credential === p.credential ||
+        current.server !== p.server ||
+        current.deviceId !== p.deviceId ||
+        current.scope!.organizationId !== p.scope!.organizationId ||
+        current.scope!.roomId !== p.scope!.roomId
+      )
+        throw error;
+      response = await this.client.call(action, pinned, current.credential!, remaining());
+    }
+    remaining();
     if (response.deviceId !== p.deviceId) throw new SettingsError("FORBIDDEN");
     this.latestResponse = response;
     return response;
@@ -211,6 +266,7 @@ export class SettingsManager {
       operation.deviceId !== this.state.deviceId
     )
       throw new SettingsError("CONFLICT");
+    await this.renewConnection();
     const p = await this.connected();
     let previous = this.state.current;
     if (!previous && response.currentBinding) {
@@ -629,6 +685,7 @@ export class SettingsManager {
         await new RuntimeFilePolicy(record.context!.root, record.settings!.files).assertUnchanged(
           () => {},
         );
+        await this.renewConnection();
         const p = await this.connected();
         if (
           !p.mappings.some(
@@ -853,6 +910,7 @@ export class SettingsManager {
         }
         // A readable rename is not proof that its parent directory was synced.
         await generated.write(existing ?? record);
+        await this.renewConnection();
         await this.profile.transaction(async () => {
           const p = await this.connected();
           const mapping = {
@@ -977,7 +1035,6 @@ export class SettingsManager {
   }
   private async failure(error: unknown) {
     this.ready = false;
-    if (this.state?.journal && closed(this.state.journal)) return;
     this.reason =
       error instanceof RuntimeError || error instanceof SettingsError ? error.code : "UNKNOWN";
     const j = this.state?.journal;
@@ -1039,8 +1096,11 @@ export class SettingsManager {
     this.reason = null;
     this.latestResponse = undefined;
     return this.store.locked(async () => {
+      const stored = await this.store.read();
+      if (stored) this.state = stored;
+      await this.renewConnection();
       const p = await this.connected();
-      this.state = (await this.store.read()) ?? {
+      this.state = stored ?? {
         version: 1,
         server: p.server,
         deviceId: p.deviceId!,
@@ -1055,13 +1115,15 @@ export class SettingsManager {
       const heartbeatSignal = AbortSignal.any([this.signal, heartbeatAbort.signal]);
       const heartbeat = this.options.heartbeat;
       const heartbeatJob =
-        heartbeat && !options.once
+        (heartbeat || this.options.renewal) && !options.once
           ? reportConnectionHeartbeat(async (signal) => {
+              if (signal.aborted) return;
+              await this.renewConnection(signal);
               if (signal.aborted) return;
               // Snapshot validation and network I/O must stay outside profile transactions.
               const current = await this.connected();
               if (signal.aborted) return;
-              await heartbeat(current.credential!, signal);
+              await heartbeat?.(current.credential!, signal);
             }, heartbeatSignal)
           : undefined;
       let ranRunner = false;
@@ -1083,6 +1145,8 @@ export class SettingsManager {
             } else if (journal && !closed(journal)) await this.recover(response);
             if (!this.state.journal || closed(this.state.journal)) {
               if (this.state.current) this.assertBinding(this.latestResponse ?? response);
+              if (this.reason === "UNAUTHENTICATED" || this.reason === "FORBIDDEN")
+                this.reason = null;
               if (this.runnerSettled) await this.stopRunner();
               if (!options.once || !ranRunner) this.startRunner(options.once === true);
               ranRunner ||= !!this.runnerJob;

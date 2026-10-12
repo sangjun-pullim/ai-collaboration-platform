@@ -150,7 +150,9 @@ Vercel은 화면과 짧은 제어 API를 제공하고 AI 실행·지속 연결�
 
 기기는 짧은 만료시간의 일회용 pairing code로 로그인한 소유자에게 연결한다. 발급 토큰은 소유자·조직·방·연결 범위로 제한하고 갱신·취소·기기 제거를 지원한다. 공급자 로그인 토큰/API 키와 중앙 관리자 키를 pairing token으로 사용하지 않는다. 사용자 단계는 [첫 사용 설정](guides/onboarding-and-settings.md), 신뢰·키 경계는 [인증·Realtime·서버 키](guides/constraints-and-security.md#인증realtime서버-키)를 따른다.
 
-현재 기기 인증은 사람 JWT와 분리한 opaque bearer다. 일회용 code와 로컬 proof는 서로 다른 256-bit 난수이며 승인 유효 기간은 5분, 기기 credential은 1시간이다. 공개 RPC는 원문 bearer를 hash해 저장 hash와 대조하고 현재 사람·조직·방·기기 scope를 다시 검사한다. 교환/회전/등록/교체는 로컬 선기록과 제한된 동일-operation receipt로 응답 유실을 복구한다. 권한 취소 뒤 재초대해도 옛 연결을 되살리지 않는다.
+현재 기기 인증은 사람 JWT와 분리한 opaque bearer다. 일회용 code와 로컬 proof는 서로 다른 256-bit 난수이며 승인 유효 기간은 5분이다. SQL018 이후 새 기기 credential과 회전 credential은 7일이며 기존 만료·취소 인증을 연장하지 않는다. 공개 RPC는 원문 bearer를 hash해 저장 hash와 대조하고 현재 사람·조직·방·기기 scope를 다시 검사한다. 교환/회전/등록/교체는 로컬 선기록과 제한된 동일-operation receipt로 응답 유실을 복구한다. 권한 취소 뒤 재초대해도 옛 연결을 되살리지 않는다.
+
+[공유 갱신](../packages/local-connector/src/connection-renewal.ts)은 한 기기의 설정 관리와 답변 실행이 같은 진행 중 작업을 기다리게 한다. 만료 5분 전 기존 회전을 수행하고 프로필 잠금 밖에서 대기한다. 기한·scope가 유효하고 실제 인증이 바뀐 경우만 같은 HTTP 요청을 한 번 재전달한다. AI 입력·질문·대화를 재실행하지 않는다. 완전히 만료된 기기의 [복구 검사](../packages/local-connector/src/cli/connection-recovery.ts)는 원래 실행·설정 기록과 잠금을 확인하고 원본을 보존한 뒤 사용자의 웹 취소·새 승인으로 연결한다. 인증 기간과 웹의 최근 통신 90초 판정은 별개다.
 
 `packages/local-connector/`는 macOS·Node 24 CLI다. canonical root와 native session mapping은 0700/0600 private state에, 사용자 별칭·Git metadata만 중앙에 둔다. v1 profile과 별도로 binding별 설정·소유 맥락·실행/outbox 저널을 저장하며 짧은 credential 잠금과 실행/session 잠금을 분리한다. 기존 등록 locator만으로 실행을 허용하지 않는다. 공식 Codex stdio child의 소유권·모델·선택 파일을 검증하고 개인·프로젝트 지침과 설정 파일을 유지한다. 공동 조사에서는 읽기 전용 native 권한과 일시적인 기능 제한으로 미검증 MCP/plugin/hook 실행을 막는다. 기존 v1 Codex profile은 유지하며 설정 경로의 공개 runtime은 `codex` 또는 `claude`, 연결 표시는 `registered/unverified`다. 등록과 PC 설정 적용을 provider 실행 검증으로 표시하지 않는다. 로컬 명령은 [온보딩](guides/onboarding-and-settings.md#로컬-codex-실행-준비), 참가자별 설정의 배경은 [실행 설정](research/ai-runtime-integration.md#참가자별-도구모델effort-선택)을 따른다.
 

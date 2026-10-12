@@ -77,8 +77,10 @@ import {
   type SourceGitExecutor,
 } from "./workflow/source-snapshot.ts";
 import { withLocalRemovalProtection } from "./workflow/local-removal.ts";
+import type { ConnectionRenewalControl } from "./connection-renewal.ts";
 
 export interface RuntimeConnections {
+  renewal?: ConnectionRenewalControl;
   rotate(assertLive?: () => void): Promise<unknown>;
   bindings(credential: string): Promise<PublicBinding[]>;
   replace(input: {
@@ -392,6 +394,9 @@ export class WorkflowRunner {
     }
   }
   private async profileState(guard = this.check): Promise<ConnectorState> {
+    guard();
+    await this.connections.renewal?.ensure(guard);
+    guard();
     const deadline = performance.now() + 2000;
     for (;;) {
       guard();
@@ -470,17 +475,36 @@ export class WorkflowRunner {
     body: Body,
     expected = this.record.scope,
     guard = this.check,
+    timeoutMs = 10_000,
   ): Promise<unknown> {
     guard();
+    const deadline = performance.now() + timeoutMs;
+    const leaseDeadline = this.active ? this.deadline() : Number.POSITIVE_INFINITY;
+    const assertDeadline = (retry = false) => {
+      const currentLeaseDeadline = this.active ? this.deadline() : Number.POSITIVE_INFINITY;
+      if (
+        performance.now() >= deadline ||
+        Date.now() >= (retry ? Math.min(leaseDeadline, currentLeaseDeadline) : currentLeaseDeadline)
+      )
+        throw new RuntimeError("AUTHORITY_LOST");
+    };
+    const timeout = (retry = false) =>
+      Math.max(
+        1,
+        Math.min(
+          deadline - performance.now(),
+          retry ? leaseDeadline - Date.now() : Number.POSITIVE_INFINITY,
+          this.active ? this.deadline() - Date.now() : Number.POSITIVE_INFINITY,
+        ),
+      );
     const pinned = validateBody(action, body);
     const secret = await this.credential(expected, guard);
     guard();
-    if (Date.now() >= this.deadline()) throw new RuntimeError("AUTHORITY_LOST");
-    const timeout = () => Math.max(1, Math.min(10000, this.deadline() - Date.now()));
+    assertDeadline();
     try {
       const result = await this.client.call(action, pinned, secret, timeout());
       guard();
-      if (Date.now() >= this.deadline()) throw new RuntimeError("AUTHORITY_LOST");
+      assertDeadline();
       return result;
     } catch (error) {
       guard();
@@ -490,16 +514,16 @@ export class WorkflowRunner {
         ["ready", "poll", "lease"].includes(action)
       ) {
         await delay(
-          Math.min(100, Math.max(1, this.deadline() - Date.now())),
+          Math.min(100, Math.max(1, deadline - performance.now())),
           this.admission.signal,
         );
         guard();
         const current = await this.credential(expected, guard);
         guard();
-        if (Date.now() >= this.deadline()) throw new RuntimeError("AUTHORITY_LOST");
-        const result = await this.client.call(action, pinned, current, timeout());
+        assertDeadline(true);
+        const result = await this.client.call(action, pinned, current, timeout(true));
         guard();
-        if (Date.now() >= this.deadline()) throw new RuntimeError("AUTHORITY_LOST");
+        assertDeadline(true);
         return result;
       }
       if (
@@ -511,12 +535,12 @@ export class WorkflowRunner {
       try {
         const recovered = await this.credential(expected, guard);
         guard();
-        if (recovered === secret || Date.now() >= this.deadline())
-          throw new RuntimeError("AUTHORITY_LOST");
+        assertDeadline(true);
+        if (recovered === secret) throw new RuntimeError("AUTHORITY_LOST");
         // Same action/body/operation ID, once, within the unchanged scope/epoch lease.
-        const result = await this.client.call(action, pinned, recovered, timeout());
+        const result = await this.client.call(action, pinned, recovered, timeout(true));
         guard();
-        if (Date.now() >= this.deadline()) throw new RuntimeError("AUTHORITY_LOST");
+        assertDeadline(true);
         return result;
       } catch {
         throw new RuntimeError("AUTHORITY_LOST");
@@ -778,25 +802,15 @@ export class WorkflowRunner {
       this.inputAdmission = new InputAdmission(scope.agentId, scope.bindingEpoch);
     }
     return this.inputAdmission.refresh(
-      async () => {
-        const secret = await this.credential(scope, guard);
-        guard();
-        const value = await this.client.call("admission", this.base(), secret, 2000);
-        guard();
-        return value;
-      },
-      async (state) => {
-        const secret = await this.credential(scope, guard);
-        guard();
-        const value = await this.client.call(
+      () => this.workflow("admission", this.base(), scope, guard, 2000),
+      (state) =>
+        this.workflow(
           "admission-ack",
           { ...this.base(), revision: state.revision, paused: state.paused },
-          secret,
+          scope,
+          guard,
           2000,
-        );
-        guard();
-        return value;
-      },
+        ),
     );
   }
   private async refreshReady(guard = this.check) {
@@ -1050,6 +1064,8 @@ export class WorkflowRunner {
       await this.mutate("replace-intent", (record) => {
         record.preparation!.state = "REPLACE_PENDING";
       });
+      guard();
+      await this.connections.renewal?.ensure(guard);
       guard();
       await this.profile.transaction(async () => {
         guard();

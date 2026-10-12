@@ -125,6 +125,56 @@ async function connect(page: Page, id: string, name: string, roomId: string) {
   await expect(page).toHaveURL(new RegExp(`/app/rooms/${roomId}$`));
   await expect(page.getByRole("heading", { name: "기기 검사방", exact: true })).toBeVisible();
 }
+test("should retain an explicitly confirmed recovery command across reload and block changed tabs", async ({
+  browser,
+}, info) => {
+  const a = await context(browser, info);
+  try {
+    const page = await a.newPage();
+    await login(page, "복구 선택 소유자");
+    const scope = await createRoom(page);
+    await connectionsFromRoom(page, scope.roomId);
+    const command = page.getByRole("textbox", { name: "로컬 연결 명령", exact: true });
+    const copy = page.getByRole("button", { name: "연결 명령 복사", exact: true });
+    await expect(copy).toBeEnabled();
+    await page.getByText("명령 확인·직접 복사", { exact: true }).click();
+    const defaultCommand = await command.inputValue();
+    await page.getByRole("button", { name: "새 승인으로 다시 연결", exact: true }).click();
+    await expect(copy).toBeDisabled();
+    const prepare = page.getByRole("button", { name: "새 승인 명령 준비", exact: true });
+    await expect(prepare).toBeDisabled();
+    await page
+      .getByRole("checkbox", { name: "이전 연결의 터미널 실행을 종료했습니다", exact: true })
+      .check();
+    await prepare.click();
+    await expect(copy).toBeEnabled();
+    const selected = await command.inputValue();
+    expect(selected).not.toBe(defaultCommand);
+    await page.reload();
+    await expect(copy).toBeEnabled();
+    await page.getByText("명령 확인·직접 복사", { exact: true }).click();
+    await expect(command).toHaveValue(selected);
+    const other = await a.newPage();
+    await other.goto(`/app/connections?room=${scope.roomId}`);
+    await expect(other.getByRole("button", { name: "연결 명령 복사", exact: true })).toBeEnabled();
+    await other.getByRole("button", { name: "새 승인으로 다시 연결", exact: true }).click();
+    await other
+      .getByRole("checkbox", { name: "이전 연결의 터미널 실행을 종료했습니다", exact: true })
+      .check();
+    await other.getByRole("button", { name: "새 승인 명령 준비", exact: true }).click();
+    await expect(copy).toBeDisabled();
+    await expect(command).toHaveValue("");
+    await page.getByRole("button", { name: "현재 선택 다시 확인", exact: true }).click();
+    await expect(copy).toBeEnabled();
+    expect(await command.inputValue()).not.toBe(selected);
+    await page.getByRole("link", { name: "이전 채팅방으로", exact: true }).click();
+    await expect(page).toHaveURL(new RegExp(`/app/rooms/${scope.roomId}$`));
+    await expect(page.getByRole("heading", { name: "기기 검사방", exact: true })).toBeVisible();
+  } finally {
+    await a.close();
+  }
+});
+
 test("should approve an owned connection and display only public unverified bindings", async ({
   browser,
 }, info) => {

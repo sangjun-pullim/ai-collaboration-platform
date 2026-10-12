@@ -72,6 +72,22 @@ Supabase의 신규 로컬 개발 흐름은 CLI·container runtime으로 시작�
 
 이전에 실패한 명령은 재사용하지 않는다. 개발자는 웹을 새로고침한 뒤 **연결 명령 복사**로 현재 명령을 받는다. 기기 등록 전의 연결 코드가 만료됐다면 새 명령이 `restart` 입력을 요청한다. 개발자가 `restart`를 입력한 경우에만 원래 연결 기록을 PC에 보관하고 새 코드를 받아 웹 승인을 다시 진행한다. 처리 중인 등록·기존 인증·AI 설정·실행 기록이 남아 있으면 새 코드로 바꾸지 않는다.
 
+### 인증 기간과 만료된 연결 복구
+
+SQL018을 설치한 서비스의 신규 기기 인증은 7일이다. 연결 명령을 실행 중이면 만료 5분 전에 자동 갱신한다. 기존 만료 인증은 자동 연장하지 않으며 5분짜리 일회용 기기 승인 코드는 별개다. 초록·빨강은 계속 최근 PC 통신 기준으로 확인한다.
+
+1. 이미 만료된 연결이라면 개발자는 웹의 **내 AI 연결**에서 원래 채팅방을 고르고 **새 승인으로 다시 연결**을 선택한다. 이전 기록 보존과 새 AI·폴더 설정 필요를 확인할 수 있다.
+2. 개발자는 확인란을 선택하고 **새 승인 명령 준비**를 누른다. 새로고침·재복사에도 같은 명령을 사용하며 준비 중·다른 탭 변경·저장 오류에서는 복사가 차단된다.
+3. 개발자는 자기 Mac의 터미널에서 새 명령을 실행한다. 이전 실행의 종료·기록·소유권을 검사하고 이전 기기의 공개 연결 ID를 보여 준다.
+
+다음 단계는 서버의 해당 기기 연결을 취소한다. 같은 이름의 다른 기기를 중단하지 않도록 터미널과 웹의 공개 연결 ID를 대조한다.
+
+4. 개발자는 웹의 **내 연결**에서 같은 ID인 본인 기기의 **연결 취소**를 누른다. 이전 로컬 기록은 유지하며 기기 제거는 필요 없다.
+5. 개발자는 터미널에서 `revoked`를 입력한다. 새 기기 코드가 발급되며 기존 웹 승인·터미널 `yes` 확인을 진행할 수 있다.
+6. 개발자는 웹에서 AI·폴더·모델을 다시 선택한다. 이전 대화·설정·실행 기록을 삭제하거나 옛 질문을 자동 재실행하지 않는다.
+
+미확인 실행·남은 작업·다른 소유 기록·실행 중인 관리자가 있으면 새 프로필로 우회하지 않고 확인 위치를 안내한다. 토큰·native 대화 식별자·절대 저장소 경로는 복구 명령에 넣지 않는다.
+
 ### 웹에서 AI와 모델 설정
 
 기기 등록이 확인되면 **본인 기기 AI 설정**에 프로그램 선택이 표시된다. 모델 목록은 선택한 Mac의 실제 CLI에서 읽으며, 폴더 확인 전에는 표시되지 않는다.
@@ -202,7 +218,7 @@ node scripts/dev-local-web.mjs --check
 
 공유 DB·운영 Auth에 적용하면 다른 사용자의 접근 정책과 실행 계약이 바뀐다. 운영자는 대상과 변경을 확인한 뒤 적용한다.
 
-1. 운영자는 해당 DB의 미적용 SQL을 번호 순서로 적용한다. [소유자 설정](../../supabase/migrations/20261005001000-owner-local-ai-setup.sql)·[새 답변 제어](../../supabase/migrations/20261006001100-own-ai-input-pause.sql)·[자동 탐색 승인](../../supabase/migrations/20261006001200-owner-approved-repository-access.sql)·[자료 이력](../../supabase/migrations/20261006001300-shared-input-source-history.sql) 뒤에 [모델 목록 검증 보정](../../supabase/migrations/20261008001400-runtime-settings-catalog-validation.sql)·[자료 요약 보정](../../supabase/migrations/20261008001500-source-history-summary-validation.sql)·[설정 적용 영수증 보정](../../supabase/migrations/20261008001600-runtime-settings-binding-receipt.sql)·[모델 표시 이름](../../supabase/migrations/20261009001700-runtime-model-display-names.sql)까지 010–017 순서로 설치한다. 이미 설치한 SQL은 재적용하지 않고 남은 번호만 적용한다. DB를 reset하지 않는다.
+1. 운영자는 해당 DB의 미적용 SQL을 번호 순서로 적용한다. [소유자 설정](../../supabase/migrations/20261005001000-owner-local-ai-setup.sql)·[새 답변 제어](../../supabase/migrations/20261006001100-own-ai-input-pause.sql)·[자동 탐색 승인](../../supabase/migrations/20261006001200-owner-approved-repository-access.sql)·[자료 이력](../../supabase/migrations/20261006001300-shared-input-source-history.sql) 뒤에 [모델 목록 검증 보정](../../supabase/migrations/20261008001400-runtime-settings-catalog-validation.sql)·[자료 요약 보정](../../supabase/migrations/20261008001500-source-history-summary-validation.sql)·[설정 적용 영수증 보정](../../supabase/migrations/20261008001600-runtime-settings-binding-receipt.sql)·[모델 표시 이름](../../supabase/migrations/20261009001700-runtime-model-display-names.sql)·[7일 기기 인증](../../supabase/migrations/20261012001800-seven-day-device-credentials.sql)까지 010–018 순서로 설치한다. 이미 설치한 SQL은 재적용하지 않고 남은 번호만 적용한다. DB를 reset하지 않는다.
 2. 운영자는 같은 DB의 PostgREST schema cache를 갱신한다. 고정 자료 RPC를 사용하는 중앙 API가 준비된다.
 3. AI를 제공하는 개발자는 중앙 API·DB 준비 뒤 자기 Mac의 연결 프로그램을 갱신한다. 연결 프로그램은 현재 연결의 자료 버전 지원을 확인한 뒤 새 입력을 허용한다.
 
@@ -246,13 +262,13 @@ SQL
 
 **로컬 DB 스키마를 변경하는 명령이다.** 기존 입장·방·대화 데이터를 보존하면서 AI 설정 기능을 추가한다. 이 프로젝트의 지정한 OrbStack 개발 DB만 대상으로 하며 공유·운영 DB에는 사용하지 않는다.
 
-1. 운영자는 이 프로젝트 루트의 Node.js 24 터미널에서 아래 명령을 실행한다. 컨테이너의 프로젝트·고정 ID·로컬 DB 포트·소유한 임시 작업 위치와 SQL 파일 hash를 검사한다. 기존001–009의 필수 함수, SQL005의 기기 삭제 관련 외래키 3개의 지연 검사 설정, SQL008의 질문자 확인 함수·공개 호출 함수의 원문을 먼저 조회하고 적용 transaction에서도 같은 조건을 확인한다. 새 설정 schema가 없으면 SQL010–017을 한 transaction으로 적용한다. SQL010–013이 이미 설치된 DB는 현재 함수 원문이 검토한 기존·보정 상태와 정확히 일치할 때만 남은 SQL014–017을 적용한다. 카탈로그 검증의 기존·014 원문은017로 갱신하고017은014로 되돌리지 않는다. 다른 원문·부분 schema·알 수 없는 설치 상태는 거절하며 SQL 오류는 전체 rollback한다. PostgREST cache 갱신 알림도 같은 commit에 포함한다.
+1. 운영자는 이 프로젝트 루트의 Node.js 24 터미널에서 아래 명령을 실행한다. 컨테이너의 프로젝트·고정 ID·로컬 DB 포트·소유한 임시 작업 위치와 SQL 파일 hash를 검사한다. 기존001–009의 필수 함수, SQL005의 기기 삭제 관련 외래키 3개의 지연 검사 설정, SQL008의 질문자 확인 함수·공개 호출 함수의 원문을 먼저 조회하고 적용 transaction에서도 같은 조건을 확인한다. 새 설정 schema가 없으면 SQL010–018을 한 transaction으로 적용한다. SQL010–013이 이미 설치된 DB는 현재 함수 원문이 검토한 기존·보정 상태와 정확히 일치할 때만 남은 SQL014–018을 적용한다. 카탈로그 검증의 기존·014 원문은017로 갱신하고017은014로 되돌리지 않는다. 다른 원문·부분 schema·알 수 없는 설치 상태는 거절하며 기간 보정은 발급 본체·기본값·제약의 현재 원문을 확인하고 7일로 바꾸며 이전 행은 수정하지 않는다. SQL 오류는 전체 rollback한다. PostgREST cache 갱신 알림도 같은 commit에 포함한다.
 
    ```sh
    node scripts/apply-local-ai-settings.mjs --apply
    ```
 
-2. 운영자는 출력의 `status`와 `features`를 확인한다. `APPLIED`와 네 값 `true`는 이 명령의 DB 적용·재조회 완료이며 실제 웹·Claude 답변 통과와 구분한다. `ALREADY_PRESENT`는 기능 표식과 SQL014–017의 보정된 함수 원문을 확인한 상태이며 쓰기·SQL 재적용은 하지 않는다.
+2. 운영자는 출력의 `status`와 `features`를 확인한다. `APPLIED`와 다섯 값 `true`는 이 명령의 DB 적용·재조회 완료이며 실제 웹·Claude 답변 통과와 구분한다. 기존 네 기능 뒤의 `sevenDayCredentials`는 SQL018의 7일 발급·저장 제약을 뜻한다. `ALREADY_PRESENT`는 기능 표식과 SQL014–018의 보정된 함수 원문을 확인한 상태이며 쓰기·SQL 재적용은 하지 않는다.
 3. `BLOCKED`나 `APPLY_NOT_CONFIRMED`이면 운영자는 출력을 보존한다. `--apply` 없이 같은 명령으로 설치 표식만 다시 조회하며 자동 재시도·DB reset·이미 적용한 SQL의 덮어쓰기는 하지 않는다. `BASELINE_NOT_READY`는 기존 필수 조건 누락으로 적용 전에 거절한 상태다. 부분 적용이나 다른 작업 위치는 별도 상태 확인이 필요하다.
 
 이 명령은 AI CLI·모델을 실행하거나 웹 서버를 재시작하지 않는다. 현재 실제 검증과 남은 적용 상태는 [진행 정본](../planning/delivery-and-validation.md#현재-진행-상태)을 따른다.

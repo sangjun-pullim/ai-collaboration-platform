@@ -1,11 +1,15 @@
 import assert from "node:assert/strict";
 import test from "node:test";
+import { createHash } from "node:crypto";
 import {
   connectionOrigin,
   connectionProfile,
   consumeConnectionFragment,
   localConnectionCommand,
   parseConnectionManifest,
+  readConnectionSelection,
+  nextConnectionSelection,
+  connectionSelectionKey,
 } from "../../src/features/device-binding/local-connection-command.ts";
 
 const userId = "11111111-1111-4111-8111-111111111111";
@@ -32,6 +36,68 @@ test("should namespace profiles by user and room", async () => {
   assert.notEqual(p, await connectionProfile("https://example.com", organizationId, roomId));
   assert.notEqual(p, await connectionProfile("https://example.com", userId, organizationId));
   assert.notEqual(p, await connectionProfile("https://other.example.com", userId, roomId));
+});
+
+test("should carry a verified recovery generation while leaving the default profile unchanged", async () => {
+  const base = await connectionProfile("https://example.com", userId, roomId);
+  const recoveryId = "12345678-1234-4123-8123-123456789abc";
+  const profile = `web-${createHash("sha256")
+    .update(JSON.stringify(["connection-recovery", base, recoveryId]))
+    .digest("hex")
+    .slice(0, 32)}`;
+  const input = {
+    origin: "https://example.com",
+    userId,
+    roomId,
+    organizationId,
+    deviceAlias: "내 Mac",
+    manifest: manifest(),
+    selection: {
+      version: 1,
+      baseProfile: base,
+      chain: [{ previousProfile: base, recoveryId, profile }],
+    },
+  };
+  const command = await localConnectionCommand(input);
+  assert.ok(command.includes(`'${profile}'`));
+  assert.ok(command.includes(`'${base}'`));
+  assert.ok(command.includes(`'${recoveryId}'`));
+  await assert.rejects(localConnectionCommand({ ...input, roomId: organizationId }));
+});
+
+test("should retain public recovery chains across refresh and reject foreign or altered selections", async () => {
+  const origin = "https://example.com";
+  const base = await readConnectionSelection(null, origin, userId, roomId);
+  const first = await nextConnectionSelection(base, "12345678-1234-4123-8123-123456789abc");
+  const raw = JSON.stringify(first);
+  assert.deepEqual(await readConnectionSelection(raw, origin, userId, roomId), first);
+  const second = await nextConnectionSelection(first, "12345678-1234-4123-8123-123456789abd");
+  assert.equal(second.chain[1].previousProfile, first.chain[0].profile);
+  assert.deepEqual(second.chain[0], first.chain[0]);
+  for (const scope of [
+    ["https://other.example", userId, roomId],
+    [origin, organizationId, roomId],
+    [origin, userId, organizationId],
+  ])
+    await assert.rejects(readConnectionSelection(raw, ...(scope as [string, string, string])));
+  for (const bad of [
+    "invalid",
+    "null",
+    JSON.stringify({ ...first, token: "private" }),
+    JSON.stringify({ ...first, chain: [{ ...first.chain[0], profile: first.baseProfile }] }),
+    JSON.stringify({ ...second, chain: [...second.chain].reverse() }),
+    JSON.stringify({ ...first, chain: [{ ...first.chain[0], recoveryId: "not-uuid" }] }),
+  ])
+    await assert.rejects(readConnectionSelection(bad, origin, userId, roomId));
+  assert.notEqual(
+    connectionSelectionKey(origin, userId, roomId),
+    connectionSelectionKey(origin, organizationId, roomId),
+  );
+  assert.notEqual(
+    connectionSelectionKey(origin, userId, roomId),
+    connectionSelectionKey(origin, userId, organizationId),
+  );
+  assert.ok(!Object.keys(first).some((key) => /token|native|path|credential/.test(key)));
 });
 
 test("should reject a foreign origin or unsafe manifest path", () => {

@@ -7,6 +7,10 @@ import {
   localConnectionCommand,
   parseConnectionManifest,
   type ConnectionManifest,
+  connectionSelectionKey,
+  readConnectionSelection,
+  nextConnectionSelection,
+  type ConnectionSelection,
 } from "./local-connection-command";
 
 type Room = { roomId: string; organizationId: string; roomTitle: string; organizationName: string };
@@ -73,6 +77,25 @@ export function LocalConnectionGuide({
   const [failure, setError] = useState<{ key: string; value: string } | null>(null);
   const [copied, setNotice] = useState<{ command: string; value: string } | null>(null);
   const commandField = useRef<HTMLTextAreaElement>(null);
+  const preparingRef = useRef(false);
+  const scopeKey = rooms.some((item) => item.roomId === roomId)
+    ? connectionSelectionKey(origin, userId, roomId)
+    : "";
+  const [selectionReceipt, setSelection] = useState<{
+    key: string;
+    raw: string | null;
+    value: ConnectionSelection;
+  } | null>(null);
+  const [storageFailure, setStorageFailure] = useState<{ key: string; message: string } | null>(
+    null,
+  );
+  const [recoveryDialog, setRecoveryDialog] = useState<{ key: string; confirmed: boolean } | null>(
+    null,
+  );
+  const [preparing, setPreparing] = useState<string | null>(null);
+  const selection = selectionReceipt?.key === scopeKey ? selectionReceipt : null;
+  const blocked = storageFailure?.key === scopeKey ? storageFailure.message : "";
+  const recovering = recoveryDialog?.key === scopeKey ? recoveryDialog : null;
   const room = rooms.find((item) => item.roomId === roomId);
   const manifest = manifestReceipt?.origin === origin ? manifestReceipt.value : null;
   const key = JSON.stringify([
@@ -82,10 +105,50 @@ export function LocalConnectionGuide({
     room?.organizationId,
     deviceAlias,
     manifest?.bootstrap.sha256,
+    selection?.raw,
+    selection?.value.baseProfile,
   ]);
-  const command = prepared?.key === key ? prepared.value : "";
+  const command =
+    selection && !blocked && !recovering && preparing !== scopeKey && prepared?.key === key
+      ? prepared.value
+      : "";
   const error = failure?.key === key || failure?.key === `manifest:${origin}` ? failure.value : "";
   const notice = command && copied?.command === command ? copied.value : "";
+  useEffect(() => {
+    if (!scopeKey) return;
+    let live = true;
+    const load = async () => {
+      try {
+        const raw = window.localStorage.getItem(scopeKey);
+        const value = await readConnectionSelection(raw, origin, userId, roomId);
+        if (window.localStorage.getItem(scopeKey) !== raw) throw new Error("SELECTION_CHANGED");
+        if (live) {
+          setSelection({ key: scopeKey, raw, value });
+          setStorageFailure(null);
+        }
+      } catch {
+        if (live)
+          setStorageFailure({
+            key: scopeKey,
+            message:
+              "연결 선택을 읽지 못했습니다. 브라우저 저장소를 확인한 뒤 현재 선택을 다시 확인하세요.",
+          });
+      }
+    };
+    const changed = (event: StorageEvent) => {
+      if (event.key === null || event.key === scopeKey)
+        setStorageFailure({
+          key: scopeKey,
+          message: "다른 탭에서 연결 선택이 바뀌었습니다. 현재 선택을 다시 확인한 뒤 복사하세요.",
+        });
+    };
+    void load();
+    window.addEventListener("storage", changed);
+    return () => {
+      live = false;
+      window.removeEventListener("storage", changed);
+    };
+  }, [scopeKey, origin, userId, roomId]);
   useEffect(() => {
     let live = true;
     const controller = new AbortController();
@@ -115,7 +178,7 @@ export function LocalConnectionGuide({
   }, [origin]);
   useEffect(() => {
     let live = true;
-    if (manifest && room) {
+    if (manifest && room && selection && !blocked) {
       localConnectionCommand({
         origin,
         userId,
@@ -123,6 +186,7 @@ export function LocalConnectionGuide({
         organizationId: room.organizationId,
         deviceAlias,
         manifest,
+        ...(selection.value.chain.length ? { selection: selection.value } : {}),
       }).then(
         (value) => {
           if (live) {
@@ -143,8 +207,62 @@ export function LocalConnectionGuide({
     return () => {
       live = false;
     };
-  }, [manifest, room, origin, userId, deviceAlias, key]);
+  }, [manifest, room, origin, userId, deviceAlias, key, selection, blocked]);
+  async function confirmSelection() {
+    setSelection(null);
+    setRecoveryDialog(null);
+    try {
+      const raw = window.localStorage.getItem(scopeKey);
+      const value = await readConnectionSelection(raw, origin, userId, roomId);
+      if (window.localStorage.getItem(scopeKey) !== raw) throw new Error("SELECTION_CHANGED");
+      setSelection({ key: scopeKey, raw, value });
+      setStorageFailure(null);
+    } catch {
+      setStorageFailure({
+        key: scopeKey,
+        message:
+          "저장된 연결 선택을 확인할 수 없습니다. 브라우저 저장소와 선택한 계정·방을 확인하세요.",
+      });
+    }
+  }
+  async function prepareRecoveryCommand() {
+    if (!selection || !recovering?.confirmed || blocked || preparingRef.current) return;
+    preparingRef.current = true;
+    setPreparing(scopeKey);
+    try {
+      if (window.localStorage.getItem(scopeKey) !== selection.raw)
+        throw new Error("SELECTION_CHANGED");
+      const value = await nextConnectionSelection(selection.value, crypto.randomUUID());
+      if (window.localStorage.getItem(scopeKey) !== selection.raw)
+        throw new Error("SELECTION_CHANGED");
+      const raw = JSON.stringify(value);
+      window.localStorage.setItem(scopeKey, raw);
+      if (window.localStorage.getItem(scopeKey) !== raw) throw new Error("SELECTION_CHANGED");
+      setSelection({ key: scopeKey, raw, value });
+      setRecoveryDialog(null);
+    } catch {
+      setStorageFailure({
+        key: scopeKey,
+        message:
+          "새 연결 선택을 저장하지 못했거나 다른 탭에서 바뀌었습니다. 현재 선택을 다시 확인하세요.",
+      });
+    } finally {
+      preparingRef.current = false;
+      setPreparing(null);
+    }
+  }
   async function copy() {
+    if (!command || !selection || preparingRef.current) return;
+    try {
+      if (window.localStorage.getItem(scopeKey) !== selection.raw)
+        throw new Error("SELECTION_CHANGED");
+    } catch {
+      setStorageFailure({
+        key: scopeKey,
+        message: "연결 선택이 바뀌었거나 저장소를 읽지 못했습니다. 현재 선택을 다시 확인하세요.",
+      });
+      return;
+    }
     try {
       await navigator.clipboard.writeText(command);
       setNotice({ command, value: "명령을 복사했습니다. 내 Mac의 터미널에 붙여 넣어 실행하세요." });
@@ -202,6 +320,61 @@ export function LocalConnectionGuide({
       <Button type="button" disabled={!command} onClick={copy}>
         연결 명령 복사
       </Button>
+      <Button
+        type="button"
+        variant="outline"
+        disabled={!selection || !!blocked || preparing === scopeKey}
+        onClick={() => setRecoveryDialog({ key: scopeKey, confirmed: false })}
+      >
+        새 승인으로 다시 연결
+      </Button>
+      {recovering && (
+        <div className="space-y-2 rounded-md border p-3 text-sm" aria-label="새 승인 연결 확인">
+          <p>
+            기존 AI 기록은 그대로 보존합니다. 만료된 연결은 새 웹 승인이 필요하며, AI·폴더·모델은
+            다시 선택합니다.
+          </p>
+          <p>
+            기존 터미널 실행을 종료하세요. 새 명령은 이전 기록을 검사한 뒤 공개 연결 ID를 보여
+            줍니다. 내 연결 카드에서 같은 ID인 본인 연결만 연결 취소하고 터미널에서 완료를
+            확인하세요.
+          </p>
+          <label className="flex items-center gap-2">
+            <input
+              type="checkbox"
+              checked={recovering.confirmed}
+              onChange={(event) =>
+                setRecoveryDialog({ key: scopeKey, confirmed: event.target.checked })
+              }
+            />
+            이전 연결의 터미널 실행을 종료했습니다
+          </label>
+          <Button
+            type="button"
+            disabled={!recovering.confirmed || preparing === scopeKey || !!blocked}
+            onClick={prepareRecoveryCommand}
+          >
+            새 승인 명령 준비
+          </Button>
+          <Button
+            type="button"
+            variant="outline"
+            disabled={preparing === scopeKey}
+            onClick={() => setRecoveryDialog(null)}
+          >
+            취소
+          </Button>
+        </div>
+      )}
+      {blocked && (
+        <div role="alert" aria-label="연결 선택 확인 필요" className="text-sm">
+          <p>{blocked}</p>
+          <Button type="button" variant="outline" onClick={confirmSelection}>
+            현재 선택 다시 확인
+          </Button>
+        </div>
+      )}
+      {preparing === scopeKey && <p role="status">새 승인 명령을 준비하고 있습니다.</p>}
       {notice && (
         <p role="status" aria-label="연결 명령 복사 결과" className="text-sm">
           {notice}

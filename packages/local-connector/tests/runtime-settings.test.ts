@@ -23,11 +23,15 @@ import {
   type Body,
   type Receipt,
   type SettingsResponse,
+  SettingsError,
 } from "../src/settings/contracts.ts";
 import { runtimeFixture, uuid, observation } from "./runtime-fixture.ts";
 import { claudeRecord } from "./provider-runtime-fixture.ts";
 import { runnerFixture, deferred } from "./runner-fixture.ts";
 import { ConnectionError } from "../src/contracts.ts";
+import { ConnectionRenewal } from "../src/connection-renewal.ts";
+import { Connector } from "../src/cli.ts";
+import { CentralClient } from "../src/central-client.ts";
 
 /** This HTTP fixture exercises the real client's projection, not an actual DB transaction. */
 async function fixture(provider: "codex" | "claude" = "codex") {
@@ -1982,3 +1986,317 @@ test(
     }
   },
 );
+
+function settingsRenewal(f: Awaited<ReturnType<typeof fixture>>) {
+  let rotations = 0;
+  const rotated = deferred();
+  const renewal = new ConnectionRenewal(
+    new Connector(
+      f.profile,
+      new CentralClient(f.scope.server, async () => {
+        rotations++;
+        rotated.resolve();
+        return Response.json({
+          ok: true,
+          data: {
+            protocol: 1,
+            deviceId: f.scope.deviceId,
+            expiresAt: new Date(Date.now() + 7 * 86400000).toISOString(),
+          },
+        });
+      }),
+    ),
+  );
+  return { renewal, rotations: () => rotations, rotated: rotated.promise };
+}
+
+for (const boundary of ["bootstrap", "with-idle"] as const)
+  test(`should await a shared slow rotation at the ${boundary} connection snapshot during settings change`, async (t) => {
+    const f = await fixture(),
+      entered = deferred(),
+      release = deferred();
+    let rotation: Promise<void> | undefined;
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    try {
+      if (boundary === "with-idle") {
+        await local(f);
+        await f.manager().run({ once: true });
+        const operationId = uuid();
+        f.response = {
+          ...f.response,
+          operation: {
+            operationId,
+            deviceId: f.scope.deviceId,
+            expectedConfigRevision: f.response.configRevision,
+            state: "REQUESTED",
+            requested: {
+              operationId,
+              deviceId: f.scope.deviceId,
+              expectedConfigRevision: f.response.configRevision,
+              runtime: "codex",
+            },
+            receipt: null,
+          },
+          catalog: null,
+        };
+        assert.equal((await f.manager().run({ once: true })).state, "LOCAL_CONFIRMATION");
+        f.applying();
+      }
+      const renewal = new ConnectionRenewal(
+        new Connector(
+          f.profile,
+          new CentralClient(f.scope.server, async () => {
+            entered.resolve();
+            await release.promise;
+            return Response.json({
+              ok: true,
+              data: {
+                protocol: 1,
+                deviceId: f.scope.deviceId,
+                expiresAt: new Date(Date.now() + 604800000).toISOString(),
+              },
+            });
+          }),
+        ),
+      );
+      const rotate = async () => {
+        if (rotation) return;
+        const state = (await f.profile.read())!;
+        state.credentialExpiresAt = new Date(Date.now() + 299000).toISOString();
+        await f.profile.write(state);
+        rotation = renewal.ensure();
+        await entered.promise;
+        timer = setTimeout(() => release.resolve(), 100);
+      };
+      if (boundary === "bootstrap") {
+        const call = f.client.call.bind(f.client);
+        t.mock.method(f.client, "call", async (...args: Parameters<SettingsClient["call"]>) => {
+          const result = await call(...args);
+          if (args[0] === "poll") await rotate();
+          return result;
+        });
+      } else {
+        const assertUnchanged = RuntimeFilePolicy.prototype.assertUnchanged;
+        t.mock.method(
+          RuntimeFilePolicy.prototype,
+          "assertUnchanged",
+          async function (this: RuntimeFilePolicy, ...args: Parameters<typeof assertUnchanged>) {
+            await assertUnchanged.apply(this, args);
+            await rotate();
+          },
+        );
+      }
+      const status = await f.manager({ renewal }).run({ once: true });
+      await rotation;
+      assert.equal(status.state, boundary === "bootstrap" ? "LOCAL_CONFIRMATION" : "APPLIED");
+      assert.notEqual((await f.store.read())!.journal!.phase, "UNKNOWN");
+      assert.equal(status.reason, null);
+    } finally {
+      release.resolve();
+      if (timer) clearTimeout(timer);
+      await rotation;
+      await f.close();
+    }
+  });
+async function waitForRenewal(check: () => boolean | Promise<boolean>) {
+  for (let i = 0; i < 100; i++) {
+    if (await check()) return;
+    await new Promise((resolve) => setTimeout(resolve, 5));
+  }
+  assert.fail("synthetic renewal did not reach the expected boundary");
+}
+
+test("should renew an idle manager before its first credential-bearing poll", async () => {
+  const f = await fixture();
+  try {
+    f.response = { ...f.response, operation: null };
+    const state = (await f.profile.read())!;
+    state.credentialExpiresAt = new Date(Date.now() + 299000).toISOString();
+    await f.profile.write(state);
+    const r = settingsRenewal(f);
+    await f.manager({ renewal: r.renewal }).run({ once: true });
+    assert.equal(r.rotations(), 1);
+    assert.equal(f.requests[0].secret, `Bearer ${(await f.profile.read())!.credential}`);
+    assert.equal(f.prepares, 0);
+  } finally {
+    await f.close();
+  }
+});
+
+for (const dialog of ["folder", "consent"] as const)
+  test(`should renew while the owner ${dialog} dialog is pending`, async (t) => {
+    t.mock.timers.enable({ apis: ["Date"], now: Date.now() });
+    const f = await fixture(),
+      entered = deferred(),
+      release = deferred();
+    const abort = new AbortController(),
+      r = settingsRenewal(f);
+    let run: Promise<unknown> | undefined;
+    try {
+      const state = (await f.profile.read())!;
+      state.credentialExpiresAt = new Date(Date.now() + 330000).toISOString();
+      await f.profile.write(state);
+      const options: SettingsManagerOptions = { renewal: r.renewal };
+      if (dialog === "folder")
+        options.folder = async () => {
+          entered.resolve();
+          await release.promise;
+          return { status: "CANCELLED" };
+        };
+      else
+        options.confirm = async () => {
+          entered.resolve();
+          await release.promise;
+          return { confirmed: false };
+        };
+      run = f.manager(options).run({ signal: abort.signal });
+      await entered.promise;
+      t.mock.timers.setTime(Date.now() + 30000);
+      await waitForRenewal(() => r.rotations() === 1);
+      assert.equal(f.prepares, 0);
+      abort.abort();
+      release.resolve();
+      await run;
+    } finally {
+      abort.abort();
+      release.resolve();
+      await run;
+      await f.close();
+    }
+  });
+
+for (const action of ["poll", "receipt"] as const)
+  test(`should retry the exact stale settings ${action} once after a credential change`, async (t) => {
+    const f = await fixture();
+    try {
+      const manager = f.manager();
+      await manager.run({ once: true });
+      const calls: { body: Body; credential: string }[] = [];
+      const original = f.client.call.bind(f.client);
+      t.mock.method(
+        f.client,
+        "call",
+        async (...[current, body, credential, timeout]: Parameters<SettingsClient["call"]>) => {
+          calls.push({ body: structuredClone(body), credential });
+          if (calls.length === 1) {
+            await f.profile.transaction(async () => {
+              const state = (await f.profile.read())!;
+              state.credential = "b".repeat(64);
+              await f.profile.write(state);
+            });
+            throw new SettingsError("UNAUTHENTICATED");
+          }
+          return original(current, body, credential, timeout);
+        },
+      );
+      const call = (
+        manager as unknown as { call(action: "poll" | "receipt", body: Body): Promise<unknown> }
+      ).call.bind(manager);
+      await call(
+        action,
+        action === "receipt" ? (f.response.operation!.receipt as unknown as Body) : {},
+      );
+      assert.equal(calls.length, 2);
+      assert.deepEqual(calls[0].body, calls[1].body);
+      assert.notEqual(calls[0].credential, calls[1].credential);
+      assert.equal(f.prepares, 0);
+    } finally {
+      await f.close();
+    }
+  });
+
+for (const invalid of ["unchanged", "scope", "deadline"] as const)
+  test(`should refuse settings stale-auth retry after ${invalid}`, async (t) => {
+    t.mock.timers.enable({ apis: ["Date"], now: Date.now() });
+    const f = await fixture();
+    let elapsed = performance.now();
+    t.mock.method(performance, "now", () => elapsed);
+    try {
+      const manager = f.manager();
+      await manager.run({ once: true });
+      let calls = 0;
+      t.mock.method(f.client, "call", async () => {
+        calls++;
+        const state = (await f.profile.read())!;
+        if (invalid !== "unchanged") state.credential = "b".repeat(64);
+        if (invalid === "scope") state.scope!.roomId = uuid();
+        await f.profile.write(state);
+        if (invalid === "deadline") elapsed += 10000;
+        throw new SettingsError("UNAUTHENTICATED");
+      });
+      await assert.rejects(
+        (manager as unknown as { call(action: "poll"): Promise<unknown> }).call("poll"),
+      );
+      assert.equal(calls, 1);
+    } finally {
+      await f.close();
+    }
+  });
+
+test("should surface authentication loss after a closed settings journal", async () => {
+  const f = await fixture();
+  try {
+    const first = await f
+      .manager({ folder: async () => ({ status: "CANCELLED" }) })
+      .run({ once: true });
+    assert.equal(first.state, "CANCELLED");
+    f.refusePoll = true;
+    const failed = await f.manager().run({ once: true });
+    assert.equal(failed.reason, "FORBIDDEN");
+    assert.equal(failed.ready, false);
+  } finally {
+    await f.close();
+  }
+});
+
+test("should renew from the thirty-second background pulse without a foreground settings poll", async (t) => {
+  t.mock.timers.enable({ apis: ["Date", "setTimeout"], now: Date.now() });
+  const f = await fixture(),
+    firstReport = deferred(),
+    firstPoll = deferred(),
+    pulseScheduled = deferred();
+  const r = settingsRenewal(f),
+    abort = new AbortController();
+  const schedule = setTimeout;
+  t.mock.method(globalThis, "setTimeout", (...args: Parameters<typeof setTimeout>) => {
+    const timer = schedule(...args);
+    if (args[1] === 30000) pulseScheduled.resolve();
+    return timer;
+  });
+  let job: Promise<unknown> | undefined;
+  try {
+    f.response = { ...f.response, operation: null };
+    const state = (await f.profile.read())!;
+    state.credentialExpiresAt = new Date(Date.now() + 330000).toISOString();
+    await f.profile.write(state);
+    f.pollHook = () => {
+      firstPoll.resolve();
+    };
+    job = f
+      .manager({
+        renewal: r.renewal,
+        pollIntervalMs: 100000,
+        heartbeat: async () => {
+          firstReport.resolve();
+        },
+      })
+      .run({ signal: abort.signal });
+    await firstReport.promise;
+    await firstPoll.promise;
+    await pulseScheduled.promise;
+    await new Promise((resolve) => setImmediate(resolve));
+    assert.equal(r.rotations(), 0);
+    t.mock.timers.tick(30000);
+    await r.rotated;
+    assert.equal(r.rotations(), 1);
+    assert.equal(f.requests.filter((request) => request.action === "poll").length, 1);
+    abort.abort();
+    await job;
+    assert.equal(f.prepares, 0);
+  } finally {
+    abort.abort();
+    await job;
+    await r.renewal.stop();
+    await f.close();
+  }
+});

@@ -19,7 +19,7 @@
 
 ## DB 준비
 
-저장소의 기존 SQL 파일은 `날짜-이름.sql` 형식이다. 현재 Supabase CLI는 `날짜_이름.sql`만 인식하므로 원본 위치에서 `db push`를 실행하면 17개를 건너뛰면서 최신 상태라고 표시할 수 있다. 다음 준비 명령은 임시 사본의 파일명만 바꾸며 원본 SQL, migration version, 내용 hash를 보존한다. DB 연결·변경·AI 호출은 하지 않는다.
+저장소의 기존 SQL 파일은 `날짜-이름.sql` 형식이다. 현재 Supabase CLI는 `날짜_이름.sql`만 인식하므로 원본 위치에서 `db push`를 실행하면 18개를 건너뛰면서 최신 상태라고 표시할 수 있다. 다음 준비 명령은 임시 사본의 파일명만 바꾸며 원본 SQL, migration version, 내용 hash를 보존한다. DB 연결·변경·AI 호출은 하지 않는다.
 
 1. 운영자는 프로젝트 루트에서 준비 명령을 실행한다. `PREPARED`, 임시 `workdir`와 SQL 목록이 출력된다.
 
@@ -27,7 +27,7 @@
    node scripts/prepare-supabase-cloud.mjs
    ```
 
-2. 운영자는 출력된 `workdir`을 아래 명령의 경로로 넣어 적용 예정 목록을 확인한다. 새 프로젝트는 SQL 17개가 보여야 한다. 기존 프로젝트는 이미 적용한 version을 제외한 목록이 보여야 한다.
+2. 운영자는 출력된 `workdir`을 아래 명령의 경로로 넣어 적용 예정 목록을 확인한다. 새 프로젝트는 SQL 18개가 보여야 한다. 기존 프로젝트는 이미 적용한 version을 제외한 목록이 보여야 한다.
 
    ```sh
    npx --yes supabase@2.118.0 db push --linked \

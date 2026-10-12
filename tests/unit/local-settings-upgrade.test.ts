@@ -10,6 +10,7 @@ type Features = {
   aiPause: boolean;
   folderAutoRead: boolean;
   answerSources: boolean;
+  sevenDayCredentials: boolean;
 };
 type Execute = (args: string[], input?: string) => Promise<string>;
 type Result = { status: string; features: Features; modelInputs: number; migrations?: string[] };
@@ -18,12 +19,14 @@ const missing: Features = {
   aiPause: false,
   folderAutoRead: false,
   answerSources: false,
+  sevenDayCredentials: false,
 };
 const present: Features = {
   aiSettings: true,
   aiPause: true,
   folderAutoRead: true,
   answerSources: true,
+  sevenDayCredentials: true,
 };
 
 type CatalogState = {
@@ -96,6 +99,7 @@ const migrationNames = [
   "20261008001500-source-history-summary-validation.sql",
   "20261008001600-runtime-settings-binding-receipt.sql",
   "20261009001700-runtime-model-display-names.sql",
+  "20261012001800-seven-day-device-credentials.sql",
 ];
 
 async function fixture(t: TestContext) {
@@ -117,6 +121,7 @@ async function fixture(t: TestContext) {
     baseline: { requiredFunctions: true, receiptIntegrity: true, actorPrecondition: true },
     applied: false,
     failApply: false,
+    executeInstallationGuard: false,
     failFeatureConfirmation: false,
     failCatalogConfirmation: false,
     catalogBefore: undefined as CatalogState | undefined,
@@ -125,6 +130,9 @@ async function fixture(t: TestContext) {
     sourceSummaryAfter: { ...fixedSourceSummary },
     commitBindingBefore: undefined as CommitBindingState | undefined,
     commitBindingAfter: { ...fixedCommitBinding },
+    sevenDayBefore: true,
+    sevenDayAfter: true,
+    credentialState: undefined as Record<string, boolean> | undefined,
     raw: undefined as string | undefined,
     calls: [] as { args: string[]; input: string }[],
     metadata: {
@@ -144,6 +152,15 @@ async function fixture(t: TestContext) {
       if (f.applied && f.failCatalogConfirmation)
         throw new Error("private confirmation diagnostic");
       return JSON.stringify({
+        ...(input.includes("'credentialLifetimeAbsent'")
+          ? (f.credentialState ?? {
+              credentialLifetimeAbsent: !f.before.aiSettings && !f.applied,
+              credentialLifetimeLegacy: f.before.aiSettings && !f.applied && !f.sevenDayBefore,
+              credentialLifetimeFixed: f.applied
+                ? f.sevenDayAfter
+                : f.before.aiSettings && f.sevenDayBefore,
+            })
+          : {}),
         catalogPrevious: false,
         ...(f.applied
           ? f.catalogAfter
@@ -164,15 +181,105 @@ async function fixture(t: TestContext) {
     if (input.startsWith("BEGIN READ ONLY;")) {
       if (f.applied && f.failFeatureConfirmation)
         throw new Error("private confirmation diagnostic");
-      return f.raw ?? JSON.stringify(f.applied ? f.after : f.before);
+      return (
+        f.raw ??
+        JSON.stringify({
+          ...(f.applied ? f.after : f.before),
+          ...(input.includes("'sevenDayCredentials'")
+            ? {
+                sevenDayCredentials: f.applied
+                  ? f.sevenDayAfter
+                  : f.before.aiSettings && f.sevenDayBefore,
+              }
+            : {}),
+        })
+      );
     }
     assert.ok(input.includes("$local_settings_guard$"));
+    if (f.executeInstallationGuard) {
+      const installation = input
+        .split("MESSAGE='BASELINE_NOT_READY'")[1]
+        .split("MESSAGE='PARTIAL_UPGRADE_REQUIRES_INSPECTION'")[0];
+      if (!f.sevenDayBefore && installation.includes("a24c498139a82092565e650bfceb4986"))
+        throw new Error("P0001: PARTIAL_UPGRADE_REQUIRES_INSPECTION");
+    }
     if (f.failApply) throw new Error("private database diagnostic must remain private");
     f.applied = true;
     return "";
   };
   return f;
 }
+
+test("should install SQL018 even when every prior correction is fixed and detect repeated apply", async (t) => {
+  const f = await fixture(t);
+  f.before = { ...present };
+  f.catalogBefore = { ...fixedCatalog };
+  f.sevenDayBefore = false;
+  const result = await f.run(true, f.execute);
+  assert.equal(result.status, "APPLIED");
+  assert.deepEqual(result.migrations, ["20261012001800-seven-day-device-credentials.sql"]);
+  const writes = f.calls.filter((call) => call.input.startsWith("BEGIN;"));
+  assert.equal(writes.length, 1);
+  assert.match(
+    writes[0].input,
+    /create or replace function device_binding_private\.connector_010_runtime/,
+  );
+  assert.equal(writes[0].input.match(/^begin;$/gim)?.length, 1);
+  assert.equal(writes[0].input.match(/^commit;$/gim)?.length, 1);
+  assert.equal((await f.run(true, f.execute)).status, "ALREADY_PRESENT");
+  assert.equal(f.calls.filter((call) => call.input.startsWith("BEGIN;")).length, 1);
+});
+
+test("should admit the generated patch transaction before SQL018 changes its false lifetime feature", async (t) => {
+  const f = await fixture(t);
+  f.before = { ...present };
+  f.catalogBefore = { ...fixedCatalog };
+  f.sevenDayBefore = false;
+  f.executeInstallationGuard = true;
+  assert.equal((await f.run(true, f.execute)).status, "APPLIED");
+  assert.equal((await f.run(true, f.execute)).status, "ALREADY_PRESENT");
+});
+
+test("should inspect SQL018 issuance and lifetime constraints independently of its outer connector wrapper", async (t) => {
+  const f = await fixture(t);
+  f.before = { ...present };
+  f.sevenDayBefore = false;
+  const result = await f.run(false, f.execute);
+  assert.equal(
+    (result.features as Features & { sevenDayCredentials?: boolean }).sevenDayCredentials,
+    false,
+  );
+  assert.equal(f.applied, false);
+  assert.match(f.calls[1].input, /connector_010_runtime/);
+  assert.match(f.calls[1].input, /pg_constraint/);
+  assert.match(f.calls[1].input, /pg_attrdef/);
+});
+
+test("should refuse partial SQL018 or failed confirmation without repeating a write", async (t) => {
+  for (const stage of ["partial", "apply", "confirmation"] as const) {
+    await t.test(stage, async (t) => {
+      const f = await fixture(t);
+      f.before = { ...present };
+      f.catalogBefore = { ...fixedCatalog };
+      f.sevenDayBefore = false;
+      if (stage === "partial")
+        f.credentialState = {
+          credentialLifetimeAbsent: false,
+          credentialLifetimeLegacy: false,
+          credentialLifetimeFixed: false,
+        };
+      if (stage === "apply") f.failApply = true;
+      if (stage === "confirmation") f.sevenDayAfter = false;
+      await assert.rejects(f.run(true, f.execute), {
+        code: stage === "partial" ? "CREDENTIAL_LIFETIME_SOURCE_UNVERIFIED" : "APPLY_NOT_CONFIRMED",
+      });
+      assert.equal(
+        f.calls.filter((call) => call.input.startsWith("BEGIN;")).length,
+        stage === "partial" ? 0 : 1,
+      );
+    });
+  }
+});
 
 test("should inspect local settings without applying migrations by default", async (t) => {
   const f = await fixture(t);
@@ -185,7 +292,7 @@ test("should inspect local settings without applying migrations by default", asy
   assert.equal(f.applied, false);
 });
 
-test("should apply all eight reviewed migrations in one transaction and confirm installed features", async (t) => {
+test("should apply all nine reviewed migrations in one transaction and confirm installed features", async (t) => {
   const f = await fixture(t);
   const result = await f.run(true, f.execute);
   assert.equal(result.status, "APPLIED");
@@ -469,7 +576,7 @@ test("should reject modified migration inputs before opening the write transacti
   assert.equal(f.applied, false);
 });
 
-test("should keep the original four-feature check read only on a legacy catalog", async (t) => {
+test("should keep the five-feature check read only on a legacy catalog", async (t) => {
   const f = await fixture(t);
   f.before = { ...present };
   assert.deepEqual(await f.run(false, f.execute), {

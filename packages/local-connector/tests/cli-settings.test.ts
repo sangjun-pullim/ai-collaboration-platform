@@ -1,10 +1,14 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { readFile } from "node:fs/promises";
+import { readFile, mkdir } from "node:fs/promises";
+import { join } from "node:path";
 import { StateStore } from "../src/state-store.ts";
 import { RuntimeError } from "../src/runtime-contracts.ts";
 import { SettingsStore, type SettingsState } from "../src/settings/store.ts";
-import { revokeConfiguredProfile } from "../src/cli/remove-local-profile.ts";
+import {
+  revokeConfiguredProfile,
+  withConfiguredProfileProtection,
+} from "../src/cli/remove-local-profile.ts";
 import { withSettingsDeviceLock } from "../src/cli/settings-lock.ts";
 import { runtimeFixture, uuid } from "./runtime-fixture.ts";
 import { runRuntimeCommand } from "../src/cli/runtime-command.ts";
@@ -257,6 +261,26 @@ async function retainedLegacyFixture() {
   return { ...f, profile, settings, state };
 }
 
+test("should refuse an unlisted generation before a read-only configured recovery inspection", async () => {
+  const f = await retainedLegacyFixture();
+  let inspected = false;
+  try {
+    await mkdir(join(f.settings.dir, "generations", uuid()), { recursive: true, mode: 0o700 });
+    await assert.rejects(
+      withSettingsDeviceLock(f.profile, "connect", (settings) =>
+        withConfiguredProfileProtection(f.profile, settings, async () => {
+          inspected = true;
+        }),
+      ),
+      { code: "RUNTIME_BUSY" },
+    );
+    assert.equal(inspected, false);
+    assert.ok(await f.profile.read());
+  } finally {
+    await f.close();
+  }
+});
+
 test("should revoke a configured local credential while retaining exact owned histories", async () => {
   const f = await retainedLegacyFixture();
   try {
@@ -399,6 +423,53 @@ test("should wire only the validated heartbeat callback and preserve manual auth
     );
     await assert.rejects(connector.heartbeat(), { code: "UNAUTHENTICATED" });
     assert.equal((await profile.read())!.status, "disconnected");
+  } finally {
+    await f.close();
+  }
+});
+
+test("should share the same renewal coordinator between the actual CLI manager and configured runner", async (t) => {
+  const f = await runtimeFixture();
+  try {
+    t.mock.method(SettingsManager.prototype, "run", async function (this: SettingsManager) {
+      const options = (this as unknown as { options: SettingsManagerOptions }).options;
+      const renewal = (
+        options as unknown as { renewal?: { ensure(): Promise<void>; stop(): Promise<void> } }
+      ).renewal;
+      assert.ok(renewal);
+      const runtime = options.runner!(
+        {
+          generation: f.context.generation,
+          agentId: f.scope.agentId,
+          workspaceId: uuid(),
+          bindingEpoch: 1,
+          configRevision: 1,
+          provider: "codex",
+          localRootReference: uuid(),
+        },
+        f.store,
+      );
+      assert.equal(
+        (runtime as unknown as { connections: { renewal?: unknown } }).connections.renewal,
+        renewal,
+      );
+      return {
+        state: "UNCONFIGURED",
+        ready: false,
+        operationId: null,
+        configRevision: 0,
+        reason: null,
+      };
+    });
+    await main([
+      "manage",
+      "--server",
+      f.scope.server,
+      "--state-dir",
+      f.stateDir,
+      "--profile",
+      "one",
+    ]);
   } finally {
     await f.close();
   }

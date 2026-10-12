@@ -5,7 +5,7 @@ builtin unset BASH_ENV ENV NODE_OPTIONS NODE_PATH PERL5OPT PERL5DB PERL5LIB PERL
 umask 077
 
 fail() { /usr/bin/printf '%s\n' "로컬 연결을 시작하지 못했습니다: $1" >&2; exit 1; }
-[ "$#" -eq 5 ] || fail INVALID_ARGUMENTS
+[ "$#" -eq 5 ] || [ "$#" -eq 7 ] || fail INVALID_ARGUMENTS
 origin=$1
 profile=$2
 device_alias=$3
@@ -13,6 +13,19 @@ organization=$4
 room=$5
 [[ "$origin" =~ ^https://[^/?\#@[:space:]]+$ || "$origin" =~ ^http://(localhost|127\.0\.0\.1|\[::1\])(:[0-9]+)?$ ]] || fail UNSAFE_ORIGIN
 [[ "$profile" =~ ^web-[a-f0-9]{32}$ ]] || fail INVALID_PROFILE
+if [ "$#" -eq 7 ]; then
+  previous_profile=$6
+  recovery_id=$7
+  [[ "$previous_profile" =~ ^web-[a-f0-9]{32}$ ]] || fail INVALID_PREVIOUS_PROFILE
+  [[ "$recovery_id" =~ ^[a-f0-9]{8}-[a-f0-9]{4}-4[a-f0-9]{3}-[89ab][a-f0-9]{3}-[a-f0-9]{12}$ ]] || fail INVALID_RECOVERY_ID
+  [ "$previous_profile" != "$profile" ] || fail INVALID_PROFILE_RELATION
+  expected=$(/usr/bin/printf '["connection-recovery","%s","%s"]' "$previous_profile" "$recovery_id" | /usr/bin/shasum -a 256)
+  expected=${expected%% *}
+  [ "$profile" = "web-${expected:0:32}" ] || fail INVALID_PROFILE_RELATION
+  set -- --previous-profile "$previous_profile" --recovery-id "$recovery_id"
+else
+  set --
+fi
 [ "$(/usr/bin/uname -s)" = Darwin ] || fail MACOS_REQUIRED
 os=$(/usr/bin/sw_vers -productVersion)
 [[ "$os" =~ ^[0-9]+\.[0-9]+(\.[0-9]+)?$ ]] || fail MACOS_VERSION
@@ -189,15 +202,19 @@ import {writeFile} from "node:fs/promises";
 import {pathToFileURL} from "node:url";
 // Keep argv[1] separate from the imported CLI entry so its direct-run guard stays idle.
 const [, entry, proof, ...args] = process.argv.slice(1);
+let hint;
 try {
-  const {main} = await import(pathToFileURL(entry).href);
+  const module = await import(pathToFileURL(entry).href);
+  hint = module.connectionFailureHint;
+  const {main} = module;
   await main(args);
   await writeFile(proof, "VERIFIED\n", {flag:"wx",mode:0o600});
 } catch (error) {
   const code = typeof error?.code === "string" && /^[A-Z_]{1,40}$/.test(error.code) ? error.code : "UNAVAILABLE";
   process.stderr.write(JSON.stringify({state:"disconnected",error:code}) + "\n");
+  process.stdout.write((typeof hint === "function" ? hint(error) : "내 AI 연결에서 이전 연결 취소 여부와 연결 명령을 확인하세요.") + "\n");
   process.exitCode = 1;
-}' ai-collab-bootstrap "$work/code/src/cli.js" "$work/shutdown" connect --server "$origin" --profile "$profile" --device-alias "$device_alias" --organization-id "$organization" --room-id "$room" <&0 &
+}' ai-collab-bootstrap "$work/code/src/cli.js" "$work/shutdown" connect --server "$origin" --profile "$profile" --device-alias "$device_alias" --organization-id "$organization" --room-id "$room" "$@" <&0 &
 child=$!
 set +e
 while true; do

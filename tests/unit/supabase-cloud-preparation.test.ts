@@ -58,6 +58,22 @@ test("should reject duplicate migration versions before preparing a partial migr
   assert.deepEqual(await readdir(f.root), ["supabase"]);
 });
 
+test("should include SQL018 unchanged in the cloud migration manifest", async (t) => {
+  const f = await fixture(t);
+  const name = "20261012001800-seven-day-device-credentials.sql";
+  const sql = await readFile(join("supabase/migrations", name));
+  await writeFile(join(f.root, "supabase/migrations", name), sql);
+  const result = await f.prepare(f);
+  assert.equal(result.migrations[0].version, "20261012001800");
+  assert.equal(result.migrations[0].sha256, createHash("sha256").update(sql).digest("hex"));
+  assert.deepEqual(
+    await readFile(
+      join(result.workdir, "supabase/migrations/20261012001800_seven-day-device-credentials.sql"),
+    ),
+    sql,
+  );
+});
+
 test("should reject invalid SQL filenames instead of silently skipping migrations", async (t) => {
   const f = await fixture(t);
   await writeFile(join(f.root, "supabase/migrations/001-first.sql"), "select 1;");

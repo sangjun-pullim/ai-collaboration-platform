@@ -3,12 +3,53 @@ import { execFile, spawn } from "node:child_process";
 import { readFile, readdir, writeFile } from "node:fs/promises";
 import { join, resolve } from "node:path";
 import test from "node:test";
+import { createHash } from "node:crypto";
 import { setTimeout as delay } from "node:timers/promises";
 import { promisify } from "node:util";
 import { connectionFixture, pins, preloadNames } from "../helpers/local-connection-fixture.ts";
 import { localConnectionCommand } from "../../src/features/device-binding/local-connection-command.ts";
 
 const macOnly = { skip: process.platform !== "darwin" };
+test(
+  "should pass exactly seven recovery arguments through the verified bootstrap",
+  macOnly,
+  async (t) => {
+    const f = await connectionFixture(t);
+    const previous = f.args[1],
+      id = "12345678-1234-4123-8123-123456789abc";
+    f.args[1] = `web-${createHash("sha256")
+      .update(JSON.stringify(["connection-recovery", previous, id]))
+      .digest("hex")
+      .slice(0, 32)}`;
+    f.args.push(previous, id);
+    await f.run();
+    const executed = JSON.parse(await readFile(f.runFile, "utf8"));
+    assert.deepEqual(executed.args.slice(-4), [
+      "--previous-profile",
+      previous,
+      "--recovery-id",
+      id,
+    ]);
+    assert.deepEqual(await readdir(join(f.root, "work")), []);
+  },
+);
+
+for (const fault of ["partial", "same", "forged", "nonce"] as const)
+  test(
+    `should reject ${fault} recovery arguments before download or execution`,
+    macOnly,
+    async (t) => {
+      const f = await connectionFixture(t);
+      const previous = f.args[1],
+        id = "12345678-1234-4123-8123-123456789abc";
+      f.args.push(previous);
+      if (fault !== "partial") f.args.push(fault === "nonce" ? "not-uuid" : id);
+      if (fault !== "same") f.args[1] = `web-${"b".repeat(32)}`;
+      await assert.rejects(f.run());
+      await assert.rejects(readFile(f.runFile), { code: "ENOENT" });
+      await assert.rejects(readFile(f.log), { code: "ENOENT" });
+    },
+  );
 test("should import a CLI entry without also executing its direct command", macOnly, async (t) => {
   const f = await connectionFixture(t, { directEntry: true });
   const result = await f.run();

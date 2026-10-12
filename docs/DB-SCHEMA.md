@@ -60,6 +60,8 @@ Auth 계정은 Supabase의 `auth.users`가 소유한다. 제품은 이메일이�
 
 기기·credential·binding의 복합 scope는 소유자·조직·방·기기를 일치시킨다. 사람 cookie Auth와 별도의 원문 bearer 인증을 사용하며 DB는 hash만 저장한다. 저장 hash 자체를 public RPC bearer로 제시해도 인증되지 않는다. 절대 root·native locator·공급자 key는 중앙 모델에 저장하지 않는다.
 
+[기간 보정 SQL018](../supabase/migrations/20261012001800-seven-day-device-credentials.sql)은 신규 exchange·rotate 발급과 credentials의 기본값·기간 상한을 7일로 변경한다. expires_at은 created_at보다 뒤이고 최대 7일 이내여야 한다. 기존 행의 expires_at·revoked_at·기기 current_hash는 수정하지 않는다. 발급 본체·기존 제약을 검토한 원문과 대조하고 하나의 transaction으로 적용한다. 사람 권한 상실과 기기 취소는 7일이 지나기 전에도 즉시 인증을 거절한다. 같은 회전 결과의 재수신은 기존 2분 경계와 동일 기기·operation·hash 조건을 유지한다.
+
 같은 mutation의 제한된 receipt는 현재 credential·scope·epoch가 유효할 때만 복구한다. `operations`는 device별 operation UUID 재사용을 추적해 다른 action/payload의 재사용을 거절한다. 감사는 성공 상태 변경과 같은 transaction에 기록하고 receipt 재전달로 새 감사를 만들지 않는다.
 
 기기 변경과 기존 membership 취소는 공통 advisory guard를 먼저 취득한다. 취소는 대상 사람·방/그룹 scope의 기기와 승인 pairing을 영구 취소하고 재참가로 복구하지 않는다. 다른 참가자의 기기는 유지한다. 최근 heartbeat와 `registered/unverified`는 provider 실행이나 runtime 종결의 증거가 아니다.
