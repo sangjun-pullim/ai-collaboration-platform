@@ -1,5 +1,5 @@
 ---
-verified-against: feec883ec0d3914ce14a87ae41893f968011733b
+verified-against: 1227eae3dd071f3b592dc7d5cf3b523a69ccb887
 sources:
   - src/**
   - packages/local-connector/src/**

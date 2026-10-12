@@ -1,5 +1,5 @@
 ---
-verified-against: cecc55c213c3d34b2c6480de55aa20ac10d9b0b9
+verified-against: 1227eae3dd071f3b592dc7d5cf3b523a69ccb887
 sources:
   - src/app/api/**
   - src/features/room-access/contracts.ts
