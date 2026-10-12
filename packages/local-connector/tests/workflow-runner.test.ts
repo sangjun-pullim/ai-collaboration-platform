@@ -20,6 +20,7 @@ import { CodexAdapter } from "../src/codex-adapter.ts";
 import { FakeProvider } from "./fake-provider.ts";
 import { WorkflowError, type AttemptSnapshot } from "../src/workflow-contracts.ts";
 import { WorkflowClient } from "../src/workflow-client.ts";
+import { ConnectionRenewal } from "../src/connection-renewal.ts";
 
 function callback(
   authority: AttemptAuthority,
@@ -3996,14 +3997,28 @@ test("should replay an unresolved readiness receipt after exact terminal recover
   }
 });
 
-test("should keep monitoring through a maximum continuation lease receipt and publish the completed turn", async () => {
+test("should keep monitoring through a maximum continuation lease receipt and publish the completed turn", async (t) => {
   const f = await runnerFixture();
+  const committed = deferred();
+  let timeout: ReturnType<typeof setTimeout> | undefined;
   try {
     const payload = f.queue("CONTINUATION");
     payload.publicText = "\u0001".repeat(4000);
     payload.replyText = "\u0001".repeat(4000);
     let leaseCount = 0;
     let boundaryLease: string | undefined;
+    const write = f.store.write.bind(f.store);
+    t.mock.method(f.store, "write", async (...args: Parameters<typeof write>) => {
+      await write(...args);
+      if (!boundaryLease) return;
+      const disk = (await f.store.read())!;
+      const operation = disk.operations.find((item) => item.operationId === boundaryLease);
+      if (
+        operation?.state === "CONFIRMED" &&
+        stableJson(disk.attempts.at(-1)!.snapshot) === stableJson(operation.result)
+      )
+        committed.resolve();
+    });
     f.faults.before = async (action, body) => {
       if (action !== "lease") return;
       leaseCount++;
@@ -4022,17 +4037,20 @@ test("should keep monitoring through a maximum continuation lease receipt and pu
     };
     const adapter = new SyntheticAdapter();
     adapter.executeHook = async () => {
-      await waitForSynthetic(async () => {
-        if (!boundaryLease) return false;
-        const disk = (await f.store.read())!;
-        const confirmed = disk.operations.find(
-          (operation) => operation.operationId === boundaryLease,
-        );
-        return (
-          confirmed?.state === "CONFIRMED" &&
-          stableJson(disk.attempts.at(-1)!.snapshot) === stableJson(confirmed.result)
-        );
-      }, "maximum continuation lease receipt and snapshot must commit before terminal");
+      await Promise.race([
+        committed.promise,
+        new Promise<void>((_resolve, reject) => {
+          timeout = setTimeout(
+            () =>
+              reject(
+                new Error(
+                  "maximum continuation lease receipt and snapshot must commit before terminal",
+                ),
+              ),
+            5000,
+          );
+        }),
+      ]);
     };
     const status = await f
       .runner(adapter, { pollIntervalMs: 5, leaseIntervalMs: 100 })
@@ -4051,6 +4069,7 @@ test("should keep monitoring through a maximum continuation lease receipt and pu
       "CONFIRMED",
     );
   } finally {
+    if (timeout) clearTimeout(timeout);
     await f.close();
   }
 });
@@ -4144,6 +4163,9 @@ test("should preserve admitted native tools and terminal publication when input 
       f.queue();
       f.adapter.executeHook = async (authority) => {
         const reads = f.requests.filter((r) => r.action === "admission").length;
+        const closedReports = f.requests.filter(
+          (r) => r.action === "ready" && r.body.reportedReady === false,
+        ).length;
         if (failure === "pause") f.pauseInput(true);
         else if (failure === "stale-ack") {
           f.pauseInput(true);
@@ -4157,6 +4179,12 @@ test("should preserve admitted native tools and terminal publication when input 
         await waitForSynthetic(
           () => f.requests.filter((r) => r.action === "admission").length > reads,
           "active input read did not run",
+        );
+        await waitForSynthetic(
+          () =>
+            f.requests.filter((r) => r.action === "ready" && r.body.reportedReady === false)
+              .length > closedReports,
+          "failed input admission did not settle before the admitted native tool",
         );
         const turn = (await f.store.read())!.attempts[0].native!.turnId;
         const result = await authority.tool(
@@ -4172,7 +4200,8 @@ test("should preserve admitted native tools and terminal publication when input 
       };
       await f.runner().run({ once: true });
       assert.equal(f.adapter.starts, 1);
-      assert.equal((await f.store.read())!.attempts[0].state, "UPLOADED");
+      const saved = (await f.store.read())!.attempts[0];
+      assert.equal(saved.state, "UPLOADED", JSON.stringify({ failure, reason: saved.reason }));
       assert.equal(
         f.requests.some((r) => r.action === "complete"),
         true,
@@ -4668,3 +4697,297 @@ test(
     }
   },
 );
+
+test("should retain a stale authenticated question without resending it or its model input", async () => {
+  const f = await runnerFixture();
+  try {
+    f.queue();
+    f.adapter.executeHook = async (authority) => {
+      const attempt = (await f.store.read())!.attempts[0];
+      await authority.tool(callback(authority, attempt.native!.turnId));
+    };
+    let rotated = false;
+    f.faults.before = async (action) => {
+      if (action === "question" && !rotated) {
+        rotated = true;
+        await f.rotate();
+      }
+    };
+    await f.runner().run({ once: true });
+    assert.equal(f.requests.filter((request) => request.action === "question").length, 1);
+    assert.equal(f.questionCount(), 0);
+    assert.equal(f.adapter.starts, 1);
+    assert.equal(
+      (await f.store.read())!.operations.find((operation) => operation.action === "question")
+        ?.state,
+      "TRANSMITTED",
+    );
+  } finally {
+    await f.close();
+  }
+});
+
+for (const target of ["admission", "admission-ack"] as const)
+  test(`should retry stale ${target} with unchanged admission identity and one model input`, async () => {
+    const f = await runnerFixture();
+    try {
+      f.queue();
+      let rotated = false;
+      f.faults.before = async (action) => {
+        if (action === target && !rotated) {
+          rotated = true;
+          await f.rotate();
+        }
+      };
+      const runtime = f.runner();
+      const inspection = runtime as unknown as {
+        record: unknown;
+        refreshInput(check: () => void): Promise<boolean>;
+      };
+      inspection.record = await f.store.read();
+      assert.equal(await inspection.refreshInput(() => {}), true);
+      assert.equal(f.adapter.starts, 0);
+      const result = await runtime.run({ once: true });
+      assert.equal(result.state, "UPLOADED");
+      assert.equal(f.adapter.starts, 1);
+      const requests = f.requests.filter((request) => request.action === target);
+      assert.ok(requests.length >= 2);
+      assert.deepEqual(requests[0].body, requests[1].body);
+      assert.notEqual(requests[0].secret, requests[1].secret);
+      assert.equal(f.questionCount(), 0);
+    } finally {
+      await f.close();
+    }
+  });
+
+for (const invalid of ["deadline", "scope", "missing-ack", "pause-revision"] as const)
+  test(`should keep admission closed after rotated credentials with ${invalid}`, async (t) => {
+    t.mock.timers.enable({ apis: ["Date"], now: Date.now() });
+    const f = await runnerFixture();
+    let elapsed = performance.now();
+    t.mock.method(performance, "now", () => elapsed);
+    try {
+      f.queue();
+      let rotated = false;
+      f.faults.before = async (action) => {
+        if (action !== "admission-ack" || rotated) return;
+        rotated = true;
+        await f.rotate();
+        if (invalid === "deadline") elapsed += 2001;
+        if (invalid === "scope") {
+          const state = (await f.profile.read())!;
+          state.mappings[0].bindingEpoch = state.mappings[0].bindingEpoch! + 1;
+          await f.profile.write(state);
+        }
+        if (invalid === "pause-revision") f.pauseInput(true);
+      };
+      if (invalid === "missing-ack")
+        f.faults.after = async (action, _body, _result, response) => {
+          if (action === "admission-ack") {
+            response.destroy();
+            return true;
+          }
+        };
+      const inspection = f.runner() as unknown as {
+        record: unknown;
+        refreshInput(check: () => void): Promise<boolean>;
+      };
+      inspection.record = await f.store.read();
+      assert.equal(await inspection.refreshInput(() => {}), false);
+      assert.equal(f.adapter.starts, 0);
+      assert.equal(f.questionCount(), 0);
+      if (invalid === "deadline" || invalid === "scope")
+        assert.equal(f.requests.filter((r) => r.action === "admission-ack").length, 1);
+    } finally {
+      await f.close();
+    }
+  });
+
+test("should renew during an executing attempt without resubmitting its model input", async () => {
+  const f = await runnerFixture({ pollIntervalMs: 5 }),
+    entered = deferred(),
+    release = deferred();
+  const renewal = new ConnectionRenewal(f.connector);
+  const runtime = f.runner();
+  runtime.connections.renewal = renewal;
+  let job: Promise<unknown> | undefined;
+  try {
+    f.queue();
+    f.adapter.executeHook = async () => {
+      entered.resolve();
+      await release.promise;
+    };
+    job = runtime.run({ once: true });
+    await entered.promise;
+    const state = (await f.profile.read())!;
+    state.credentialExpiresAt = new Date(Date.now() + 299000).toISOString();
+    await f.profile.transaction(() => f.profile.write(state));
+    await waitForSynthetic(
+      () => f.requests.some((request) => request.action === "rotate"),
+      "SYNTHETIC_RUNNING_RENEWAL_MISSING",
+    );
+    release.resolve();
+    await job;
+    assert.equal(f.adapter.starts, 1);
+    assert.equal(f.questionCount(), 0);
+    assert.equal(f.requests.filter((request) => request.action === "rotate").length, 1);
+  } finally {
+    runtime.stop();
+    release.resolve();
+    await job;
+    await renewal.stop();
+    await f.close();
+  }
+});
+
+test("should wait for shared renewal before entering the runner profile transaction budget", async () => {
+  const f = await runnerFixture(),
+    entered = deferred(),
+    release = deferred();
+  const renewal = new ConnectionRenewal(f.connector);
+  const runtime = f.runner();
+  runtime.connections.renewal = renewal;
+  let owner: Promise<void> | undefined, read: Promise<unknown> | undefined;
+  try {
+    const state = (await f.profile.read())!;
+    state.credentialExpiresAt = new Date(Date.now() + 299000).toISOString();
+    await f.profile.write(state);
+    f.faults.before = async (action) => {
+      if (action === "rotate") {
+        entered.resolve();
+        await release.promise;
+      }
+    };
+    owner = renewal.ensure();
+    await entered.promise;
+    read = (
+      runtime as unknown as { profileState(check: () => void): Promise<unknown> }
+    ).profileState(() => {});
+    await new Promise((resolve) => setTimeout(resolve, 3100));
+    release.resolve();
+    await owner;
+    await read;
+    assert.equal(f.adapter.starts, 0);
+    assert.equal(f.requests.filter((request) => request.action === "rotate").length, 1);
+  } finally {
+    release.resolve();
+    await owner;
+    await read;
+    await renewal.stop();
+    await f.close();
+  }
+});
+
+test("should use the actually extended lease for a first request delayed by credential renewal", async (t) => {
+  t.mock.timers.enable({ apis: ["Date"], now: Date.now() });
+  const f = await runnerFixture();
+  try {
+    const runtime = f.runner();
+    const active = {
+      attempt: {
+        leaseExpiresAt: new Date(Date.now() + 50).toISOString(),
+        payload: { deadline: new Date(Date.now() + 120000).toISOString() },
+      },
+    };
+    const inspection = runtime as unknown as {
+      record: unknown;
+      active?: typeof active;
+      workflow(
+        action: "ready",
+        body: Record<string, unknown>,
+        scope: typeof f.scope,
+        check: () => void,
+      ): Promise<unknown>;
+    };
+    inspection.record = await f.store.read();
+    inspection.active = active;
+    runtime.connections.renewal = {
+      stop: async () => {},
+      ensure: async () => {
+        t.mock.timers.setTime(Date.now() + 51);
+        active.attempt.leaseExpiresAt = new Date(Date.now() + 60000).toISOString();
+      },
+    };
+    t.mock.method(runtime.client, "call", async (...args: Parameters<WorkflowClient["call"]>) => {
+      const timeout = args[3];
+      assert.ok(timeout! > 1000, `normal request has only ${timeout}ms`);
+      return { protocol: 1 };
+    });
+    await inspection.workflow(
+      "ready",
+      {
+        protocol: 1,
+        agentId: f.scope.agentId,
+        bindingEpoch: 1,
+        operationId: uuid(),
+        reportedReady: true,
+      },
+      f.scope,
+      () => {},
+    );
+    inspection.active = undefined;
+    assert.equal(f.adapter.starts, 0);
+  } finally {
+    await f.close();
+  }
+});
+
+for (const boundary of ["request", "lease"] as const)
+  test(`should retain the original ${boundary} deadline during stale workflow authentication recovery`, async (t) => {
+    t.mock.timers.enable({ apis: ["Date"], now: Date.now() });
+    const f = await runnerFixture();
+    let elapsed = performance.now();
+    t.mock.method(performance, "now", () => elapsed);
+    try {
+      const runtime = f.runner();
+      const inspection = runtime as unknown as {
+        record: unknown;
+        active?: unknown;
+        workflow(
+          action: "ready",
+          body: Record<string, unknown>,
+          scope: typeof f.scope,
+          check: () => void,
+        ): Promise<unknown>;
+      };
+      inspection.record = await f.store.read();
+      if (boundary === "lease")
+        inspection.active = {
+          attempt: {
+            leaseExpiresAt: new Date(Date.now() + 1500).toISOString(),
+            payload: { deadline: new Date(Date.now() + 120000).toISOString() },
+          },
+        };
+      let calls = 0;
+      t.mock.method(runtime.client, "call", async () => {
+        calls++;
+        if (calls === 1) {
+          await f.rotate();
+          if (boundary === "lease") t.mock.timers.setTime(Date.now() + 1501);
+          else elapsed += 10001;
+          throw new WorkflowError("UNAUTHENTICATED");
+        }
+        assert.fail("expired request must not be retried");
+      });
+      await assert.rejects(
+        inspection.workflow(
+          "ready",
+          {
+            protocol: 1,
+            operationId: uuid(),
+            agentId: f.scope.agentId,
+            bindingEpoch: 1,
+            reportedReady: true,
+          },
+          f.scope,
+          () => {},
+        ),
+        { code: "AUTHORITY_LOST" },
+      );
+      assert.equal(calls, 1);
+      assert.equal(f.adapter.starts, 0);
+      inspection.active = undefined;
+    } finally {
+      await f.close();
+    }
+  });

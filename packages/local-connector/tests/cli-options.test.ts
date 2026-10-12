@@ -2,8 +2,31 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import { ConnectionError } from "../src/contracts.ts";
 import { parseCliOptions } from "../src/cli/parse-options.ts";
+import { createHash } from "node:crypto";
 
 const objectPrototype = Object.prototype;
+
+test("should accept only a complete connect recovery relation", () => {
+  const previous = `web-${"a".repeat(32)}`;
+  const recoveryId = "12345678-1234-4123-8123-123456789abc";
+  const profile = `web-${createHash("sha256")
+    .update(JSON.stringify(["connection-recovery", previous, recoveryId]))
+    .digest("hex")
+    .slice(0, 32)}`;
+  const parse = parseCliOptions as (args: string[], command?: string) => Record<string, string>;
+  const args = ["--profile", profile, "--previous-profile", previous, "--recovery-id", recoveryId];
+  assert.equal(parse(args, "connect").profile, profile);
+  for (const command of [undefined, "pair", "manage", "runtime-run", "revoke-local"])
+    assert.throws(() => parse(args, command), { code: "INVALID_BODY" });
+  for (const invalid of [
+    args.slice(0, 4),
+    ["--profile", previous, ...args.slice(2)],
+    ["--profile", `web-${"b".repeat(32)}`, ...args.slice(2)],
+    [...args.slice(0, 5), "not-a-uuid"],
+    [...args, "--recovery-id", recoveryId],
+  ])
+    assert.throws(() => parse(invalid, "connect"), { code: "INVALID_BODY" });
+});
 
 // These values and cases are independent of the source loader and stay fixed after extraction.
 const allOptions = {

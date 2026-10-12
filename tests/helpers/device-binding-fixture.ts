@@ -560,6 +560,14 @@ export class DeviceFixture {
     );
     ensure(row.rowCount === 1, "Anonymous pairing must match exact fixture hashes");
   }
+  async captureCliPairing(name: string) {
+    const intent = this.pairingIntents.get(name);
+    ensure(intent?.source === "cli", "A pre-recorded CLI pairing intent is required");
+    await this.recoverIntent(intent);
+    const profile = this.profiles.get(name);
+    ensure(profile, "Owned CLI pairing journal must match the server registration");
+    return profile;
+  }
   async human(person: FixturePerson, action: string, body: unknown) {
     await this.saveCleanupIdentity();
     const response = await person.web.post(`/api/connections/${action}`, body);

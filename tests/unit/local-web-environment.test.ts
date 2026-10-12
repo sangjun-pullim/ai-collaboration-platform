@@ -44,7 +44,13 @@ async function fixture(t: TestContext) {
       id: "b".repeat(64),
       ports: { "8000/tcp": [{ HostIp: "127.0.0.1", HostPort: "56321" }] },
     },
-    features: { aiSettings: true, aiPause: true, folderAutoRead: true, answerSources: true },
+    features: {
+      aiSettings: true,
+      aiPause: true,
+      folderAutoRead: true,
+      answerSources: true,
+      sevenDayCredentials: true,
+    },
     status: {
       API_URL: "http://127.0.0.1:56321",
       ANON_KEY: anon,

@@ -23,6 +23,8 @@
 
 ## 현재 진행 상태
 
+2026-10-12 [기기 인증 갱신과 만료 후 재승인](../impl-spec/034-local-connection-renewal-and-reapproval.md)을 승인 범위에서 구현하고 최종 검증 중이다. 신규 발급 7일·만료 5분 전 갱신과 기록 보존 새 승인 복구를 분리한다. 실제 소유 로컬 DB의 발급·회전·철회·기존 행 보존과 기존 DB 업그레이드, AI 설정 없는 연결 명령의 갱신·35초 통신 유지·정상 종료를 확인했다. 웹 단위544개·연결기982개·기기 browser10개를 통과했으며 실제 AI 입력은0회다. 복구 보정 검사42개와 실제 DB/HTTP의 기기10개·AI연결2개 경계에서 이전 연결 취소→새 승인→새 합성 AI 실행 준비·원본 바이트 보존·정리도 통과했다. 독립 구현 검토3차 C0/H0/M0/L0/INFO0이며 같은 운영13파일의 앞선 검토를 재사용했다. 클라우드 적용·main 병합·운영 배포는 완료 뒤 아래에 기록한다.
+
 2026-10-12 내 AI 연결 화면의 공통 채팅방 메뉴와 이전 방 이동을 구현하고 관련 검증을 완료했다. 모바일 메뉴·설정 스크롤·접근 가능한 방과 승인 가능한 방의 구분을 유지한다. 검사·리뷰 근거는 아래 절을 따르며 운영 반영은 [Vercel 배포 기록](https://vercel.com/sangjuns-projects-488d9a9d/ai-collaboration-platform/deployments)의 main/Production에서 확인한다.
 
 2026-10-12 채팅의 사람 확인 안내와 AI 답변 상태의 코드·관련 검증을 완료했다. 질문 아래와 입력창 위의 상태, 중단 요청·실제 중단·결과 미확인의 구분, 본인 연결 관리·Mac 터미널 확인 안내를 제공한다. 검토·병합 기록은 [PR13](https://github.com/sangjun-pullim/ai-collaboration-platform/pull/13), 운영 반영 상태는 [Vercel 배포 기록](https://vercel.com/sangjuns-projects-488d9a9d/ai-collaboration-platform/deployments)의 main/Production에서 확인한다. 검사·리뷰 근거는 아래 절을 따른다.

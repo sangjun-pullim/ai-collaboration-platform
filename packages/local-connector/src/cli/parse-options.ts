@@ -1,6 +1,7 @@
 import { ConnectionError } from "../contracts.ts";
+import { createHash } from "node:crypto";
 
-export function parseCliOptions(rest: string[]): Record<string, string> {
+export function parseCliOptions(rest: string[], command?: string): Record<string, string> {
   const options: Record<string, string> = {};
   const allowed = new Set([
     "server",
@@ -25,6 +26,8 @@ export function parseCliOptions(rest: string[]): Record<string, string> {
     "confirm-new-context",
     "confirm-auto-questions",
     "once",
+    "previous-profile",
+    "recovery-id",
   ]);
   for (let i = 0; i < rest.length; i += 2) {
     const key = rest[i]?.slice(2);
@@ -36,6 +39,22 @@ export function parseCliOptions(rest: string[]): Record<string, string> {
     )
       throw new ConnectionError("INVALID_BODY");
     options[key] = rest[i + 1];
+  }
+  if (options["previous-profile"] !== undefined || options["recovery-id"] !== undefined) {
+    const previous = options["previous-profile"],
+      id = options["recovery-id"];
+    if (
+      command !== "connect" ||
+      !/^web-[a-f0-9]{32}$/.test(previous ?? "") ||
+      !/^[a-f0-9]{8}-[a-f0-9]{4}-4[a-f0-9]{3}-[89ab][a-f0-9]{3}-[a-f0-9]{12}$/.test(id ?? "") ||
+      options.profile === previous ||
+      options.profile !==
+        `web-${createHash("sha256")
+          .update(JSON.stringify(["connection-recovery", previous, id]))
+          .digest("hex")
+          .slice(0, 32)}`
+    )
+      throw new ConnectionError("INVALID_BODY");
   }
   return options;
 }

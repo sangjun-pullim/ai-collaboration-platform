@@ -5,6 +5,10 @@ import { runInNewContext } from "node:vm";
 import ts from "typescript";
 import { consumeConnectionFragment } from "../../src/features/device-binding/local-connection-command.ts";
 import {
+  connectionSelectionKey,
+  readConnectionSelection,
+} from "../../src/features/device-binding/local-connection-command.ts";
+import {
   capabilityHash,
   SettingsError,
   validateSelection,
@@ -789,6 +793,12 @@ test("should restrict setup to a live owned device in the selected room and pres
     return ui(props);
   }
   const first = render();
+  assert.deepEqual(
+    nodes(first)
+      .filter((node) => node.props["aria-label"] === "공개 연결 ID")
+      .map(textContent),
+    [deviceId, operationId, agentId, secondOperationId].map((id) => `연결 ID: ${id}`),
+  );
   assert.equal(nodes(first).filter((node) => node.type === "settings-form").length, 1);
   assert.equal(
     nodes(first).find((node) => node.type === "settings-form")!.props.deviceId,
@@ -1111,7 +1121,7 @@ test("should prepare a room-specific command and expose it when clipboard permis
     {
       react: {
         useEffect: (f: () => unknown) => effects.push(f),
-        useRef: () => ({ current: field }),
+        useRef: (value: unknown) => ({ current: value === false ? false : field }),
         useState(initial: unknown) {
           const slot = cursor++;
           if (!(slot in states)) states[slot] = initial;
@@ -1121,6 +1131,8 @@ test("should prepare a room-specific command and expose it when clipboard permis
       "../../components/ui/button": { Button: "button" },
       "../../components/ui/input": { Input: "input" },
       "./local-connection-command": {
+        connectionSelectionKey,
+        readConnectionSelection,
         connectionOrigin: (value: string) => value,
         parseConnectionManifest: () => manifest,
         localConnectionCommand: async (value: unknown) => {
@@ -1147,6 +1159,11 @@ test("should prepare a room-specific command and expose it when clipboard permis
           },
         },
       },
+      window: {
+        localStorage: { getItem: () => null },
+        addEventListener() {},
+        removeEventListener() {},
+      },
     },
   ).LocalConnectionGuide as (props: unknown) => UINode;
   const props = {
@@ -1157,12 +1174,13 @@ test("should prepare a room-specific command and expose it when clipboard permis
     onRoomChange() {},
   };
   ui(props);
-  const cleanup = effects[0]() as () => void;
-  await new Promise((resolve) => setImmediate(resolve));
+  const cleanup = effects[1]() as () => void;
+  effects[0]();
+  for (let i = 0; i < 10; i++) await new Promise((resolve) => setImmediate(resolve));
   cursor = 0;
   effects.length = 0;
   ui(props);
-  effects[1]();
+  effects[2]();
   await new Promise((resolve) => setImmediate(resolve));
   cursor = 0;
   const tree = ui(props),

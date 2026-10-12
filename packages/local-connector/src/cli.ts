@@ -7,6 +7,8 @@ import { CentralClient } from "./central-client.ts";
 import { StateStore, type ConnectorState, type Pending, type Mapping } from "./state-store.ts";
 import {
   ConnectionError,
+  isId,
+  isAlias,
   validateBody,
   type Body,
   type Scope,
@@ -28,7 +30,13 @@ import { withSettingsDeviceLock, RetiredProfileError } from "./cli/settings-lock
 import { currentRunner, configuredRunner } from "./cli/runtime-context.ts";
 import { runRuntimeCommand, untilStopped } from "./cli/runtime-command.ts";
 import { createProviderAdapter } from "./provider-adapter.ts";
-import { prepareConnection, terminalInteraction } from "./cli/connect-command.ts";
+import {
+  prepareConnection,
+  terminalInteraction,
+  connectionFailureHint,
+} from "./cli/connect-command.ts";
+export { connectionFailureHint } from "./cli/connect-command.ts";
+import { ConnectionRenewal } from "./connection-renewal.ts";
 export const hash = (value: string) => createHash("sha256").update(value).digest("hex");
 export class Connector {
   constructor(
@@ -93,6 +101,8 @@ export class Connector {
       }
       throw error;
     }
+    if (pending.action === "rotate" && result.deviceId !== state.deviceId)
+      throw new ConnectionError("FORBIDDEN");
     if (pending.action === "begin") {
       state.pairingId = String(result.pairingId);
       state.pairingExpiresAt = String(result.expiresAt);
@@ -400,7 +410,7 @@ export async function main(args: string[]) {
   if (process.platform !== "darwin" || Number(process.versions.node.split(".")[0]) !== 24)
     throw new ConnectionError("UNAVAILABLE");
   const [command, ...rest] = args;
-  const options = parseCliOptions(rest);
+  const options = parseCliOptions(rest, command);
   const required = (key: string) => {
     if (!options[key]) throw new ConnectionError("INVALID_BODY");
     return options[key];
@@ -417,22 +427,38 @@ export async function main(args: string[]) {
       : required("server"));
   const client = new CentralClient(origin),
     connector = new Connector(store, client);
+  const renewal = new ConnectionRenewal(connector);
+  const withRenewal = async <T>(signal: AbortSignal, run: () => Promise<T>) => {
+    const stop = () => {
+      void renewal.stop();
+    };
+    signal.addEventListener("abort", stop, { once: true });
+    if (signal.aborted) stop();
+    try {
+      return await run();
+    } finally {
+      signal.removeEventListener("abort", stop);
+      await renewal.stop();
+    }
+  };
   const runnerOptions = {
+    renewal,
     rotate: (check: () => void) => connector.rotate(check),
     bindings: async (credential: string) =>
       (await client.call("bindings", {}, credential)).bindings as PublicBinding[],
     replace: (input: Parameters<Connector["replace"]>[0]) => connector.replace(input),
   };
-  const legacyRunner = (agentId: string) =>
+  const legacyRunner = (agentId: string, profile = store) =>
     new WorkflowRunner(
-      store,
-      new RuntimeStore(store.dir, store.profile, agentId),
+      profile,
+      new RuntimeStore(profile.dir, profile.profile, agentId),
       new WorkflowClient(client.origin),
-      createProviderAdapter("codex", { profile: store }),
+      createProviderAdapter("codex", { profile }),
       runnerOptions,
     );
   const manage = (signal: AbortSignal) =>
     new SettingsManager(store, new SettingsStore(store), new SettingsClient(client.origin), {
+      renewal,
       heartbeat: (credential, signal) => {
         if (signal.aborted) return Promise.resolve();
         return client.call("heartbeat", {}, credential);
@@ -441,65 +467,106 @@ export async function main(args: string[]) {
         configuredRunner(store, client.origin, runnerOptions, pointer, runtime),
     }).run({ once: options.once === "yes", signal });
   if (command === "connect" && options.once) throw new ConnectionError("INVALID_BODY");
-  const result =
-    command === "connect"
-      ? await untilStopped(async (signal) => {
-          await withSettingsDeviceLock(store, command, () =>
-            prepareConnection(
-              connector,
-              {
+  try {
+    const result =
+      command === "connect"
+        ? await untilStopped((signal) =>
+            withRenewal(signal, async () => {
+              const interaction = terminalInteraction(signal);
+              const input = {
                 organizationId: required("organization-id"),
                 roomId: required("room-id"),
                 deviceAlias: required("device-alias"),
-              },
-              terminalInteraction(signal),
-            ),
-          );
-          if (signal.aborted) throw new ConnectionError("CONFLICT");
-          return manage(signal);
-        })
-      : command === "manage"
-        ? await untilStopped(manage)
-        : await withSettingsDeviceLock(store, command, async (settings) => {
-            const runtime = () =>
-              currentRunner(store, client.origin, runnerOptions, settings, required("agent-id"));
-            if (command?.startsWith("runtime-"))
-              return runRuntimeCommand(command, options, required, runtime, { profile: store });
-            if (command === "revoke-local")
-              return (await settings.read())
-                ? revokeConfiguredProfile(store, settings)
-                : revokeLocalProfile(store, legacyRunner);
-            if (command === "replace")
-              return (await runtime()).guardMutation(() =>
-                store.transaction(() =>
-                  connector.replace({
-                    agentId: required("agent-id"),
+              };
+              if (!isId(input.organizationId) || !isId(input.roomId) || !isAlias(input.deviceAlias))
+                throw new ConnectionError("INVALID_BODY");
+              if (!interaction.interactive) throw new ConnectionError("FORBIDDEN");
+              const renewRegistered = async () => {
+                const state = await store.read();
+                if (state?.credential) {
+                  if (
+                    state.server !== client.origin ||
+                    state.scope?.organizationId !== input.organizationId ||
+                    state.scope.roomId !== input.roomId
+                  )
+                    throw new ConnectionError("FORBIDDEN");
+                  await renewal.ensure(() => {
+                    if (signal.aborted) throw new ConnectionError("CONFLICT");
+                  });
+                }
+              };
+              if (options["previous-profile"])
+                await prepareConnection(
+                  connector,
+                  {
+                    ...input,
+                    previousProfile: options["previous-profile"],
+                    recoveryId: options["recovery-id"],
+                  },
+                  interaction,
+                  (profile, agent) => legacyRunner(agent, profile),
+                  renewRegistered,
+                );
+              else
+                await withSettingsDeviceLock(store, command, async () => {
+                  await renewRegistered();
+                  await prepareConnection(connector, input, interaction);
+                });
+              if (signal.aborted) throw new ConnectionError("CONFLICT");
+              return manage(signal);
+            }),
+          )
+        : command === "manage"
+          ? await untilStopped((signal) => withRenewal(signal, () => manage(signal)))
+          : await withSettingsDeviceLock(store, command, async (settings) => {
+              const runtime = () =>
+                currentRunner(store, client.origin, runnerOptions, settings, required("agent-id"));
+              if (command === "runtime-run")
+                return untilStopped((signal) =>
+                  withRenewal(signal, async () =>
+                    (await runtime()).run({ once: options.once === "yes", signal }),
+                  ),
+                );
+              if (command?.startsWith("runtime-"))
+                return runRuntimeCommand(command, options, required, runtime, { profile: store });
+              if (command === "revoke-local")
+                return (await settings.read())
+                  ? revokeConfiguredProfile(store, settings)
+                  : revokeLocalProfile(store, legacyRunner);
+              if (command === "replace")
+                return (await runtime()).guardMutation(() =>
+                  store.transaction(() =>
+                    connector.replace({
+                      agentId: required("agent-id"),
+                      root: required("root"),
+                      nativeSessionId: required("native-session"),
+                      repositoryAlias: required("repository-alias"),
+                      sessionAlias: required("session-alias"),
+                      confirmed: options["confirm-public"] === "yes",
+                    }),
+                  ),
+                );
+              return store.transaction(async () => {
+                if (command === "pair") return connector.pair(required("device-alias"));
+                if (command === "status") return connector.status();
+                if (command === "exchange") return connector.exchange(required("confirm-scope"));
+                if (command === "rotate") return connector.rotate();
+                if (command === "heartbeat") return connector.heartbeat();
+                if (command === "register")
+                  return connector.register({
                     root: required("root"),
                     nativeSessionId: required("native-session"),
                     repositoryAlias: required("repository-alias"),
                     sessionAlias: required("session-alias"),
                     confirmed: options["confirm-public"] === "yes",
-                  }),
-                ),
-              );
-            return store.transaction(async () => {
-              if (command === "pair") return connector.pair(required("device-alias"));
-              if (command === "status") return connector.status();
-              if (command === "exchange") return connector.exchange(required("confirm-scope"));
-              if (command === "rotate") return connector.rotate();
-              if (command === "heartbeat") return connector.heartbeat();
-              if (command === "register")
-                return connector.register({
-                  root: required("root"),
-                  nativeSessionId: required("native-session"),
-                  repositoryAlias: required("repository-alias"),
-                  sessionAlias: required("session-alias"),
-                  confirmed: options["confirm-public"] === "yes",
-                });
-              throw new ConnectionError("INVALID_BODY");
+                  });
+                throw new ConnectionError("INVALID_BODY");
+              });
             });
-          });
-  process.stdout.write(JSON.stringify(result) + "\n");
+    process.stdout.write(JSON.stringify(result) + "\n");
+  } finally {
+    await renewal.stop();
+  }
 }
 if (process.argv[1] && pathToFileURL(resolve(process.argv[1])).href === import.meta.url)
   main(process.argv.slice(2)).catch((error) => {
@@ -508,7 +575,7 @@ if (process.argv[1] && pathToFileURL(resolve(process.argv[1])).href === import.m
         state: "disconnected",
         ...(error instanceof RetiredProfileError
           ? {
-              hint: "이전 AI 기록을 보존한 프로필입니다. 새 --profile 이름으로 기기를 다시 연결하세요.",
+              hint: "이전 AI 기록을 보존한 프로필입니다. 웹의 내 AI 연결에서 새 승인으로 다시 연결을 선택하세요.",
             }
           : {}),
         error:
@@ -519,5 +586,6 @@ if (process.argv[1] && pathToFileURL(resolve(process.argv[1])).href === import.m
             : "UNAVAILABLE",
       }) + "\n",
     );
+    if (process.stdout.isTTY) process.stdout.write(connectionFailureHint(error) + "\n");
     process.exitCode = 1;
   });

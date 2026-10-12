@@ -1,15 +1,17 @@
 import { constants } from "node:fs";
-import { lstat, open, unlink } from "node:fs/promises";
+import { lstat, open, unlink, readdir } from "node:fs/promises";
+import { join } from "node:path";
 import { RuntimeStore, unresolvedRuntime } from "../runtime-store.ts";
 import { RuntimeError, stableJson } from "../runtime-contracts.ts";
 import type { StateStore } from "../state-store.ts";
 import type { WorkflowRunner } from "../workflow-runner.ts";
 import { SettingsStore, type GenerationPointer, type SettingsState } from "../settings/store.ts";
-import type { ConnectorState } from "../state-store.ts";
+import type { ConnectorState, Mapping } from "../state-store.ts";
 
-export async function revokeLocalProfile(
+export async function withLocalProfileProtection<T>(
   store: StateStore,
   runner: (agentId: string) => WorkflowRunner,
+  mutation: (snapshot: ConnectorState | undefined, remove: () => Promise<unknown>) => Promise<T>,
 ) {
   const snapshot = await store.read(),
     storedAgents = await RuntimeStore.agents(store.dir, store.profile);
@@ -24,12 +26,12 @@ export async function revokeLocalProfile(
   const check = () => {
     for (const proof of protections) proof.check();
   };
-  const remove = async (index: number): Promise<unknown> => {
+  const guard = async (index: number): Promise<T> => {
     if (index < agents.length)
       return runner(agents[index]).guardLocalRemoval(async (proof) => {
         protections.push(proof);
         try {
-          return await remove(index + 1);
+          return await guard(index + 1);
         } finally {
           protections.pop();
         }
@@ -47,58 +49,68 @@ export async function revokeLocalProfile(
         await proof.validate();
         check();
       }
-      for (const proof of protections) {
-        check();
-        await proof.remove();
-        check();
-      }
-      if (protections.length && snapshot) {
-        const before = await lstat(store.file);
-        check();
-        const final = await store.read();
-        check();
-        if (stableJson(final) !== stableJson(snapshot)) throw new RuntimeError("AUTHORITY_LOST");
-        const current = await lstat(store.file);
-        check();
-        if (
-          !current.isFile() ||
-          current.isSymbolicLink() ||
-          current.uid !== process.getuid?.() ||
-          (current.mode & 0o777) !== 0o600 ||
-          current.nlink !== 1 ||
-          current.ino !== before.ino ||
-          current.dev !== before.dev ||
-          current.size !== before.size ||
-          current.mtimeMs !== before.mtimeMs ||
-          current.ctimeMs !== before.ctimeMs
-        )
-          throw new RuntimeError("UNSAFE_STORAGE");
-        check();
-        await unlink(store.file);
-        check();
-        const directory = await open(store.dir, constants.O_RDONLY | constants.O_NOFOLLOW);
-        try {
+      return mutation(snapshot, async () => {
+        for (const proof of protections) {
           check();
-          await directory.sync();
+          await proof.remove();
           check();
-        } finally {
-          await directory.close();
         }
-      } else {
-        check();
-        await store.remove();
-        check();
-      }
-      return { state: "removed", scope: "local profile" };
+        if (protections.length && snapshot) {
+          const before = await lstat(store.file);
+          check();
+          const final = await store.read();
+          check();
+          if (stableJson(final) !== stableJson(snapshot)) throw new RuntimeError("AUTHORITY_LOST");
+          const current = await lstat(store.file);
+          check();
+          if (
+            !current.isFile() ||
+            current.isSymbolicLink() ||
+            current.uid !== process.getuid?.() ||
+            (current.mode & 0o777) !== 0o600 ||
+            current.nlink !== 1 ||
+            current.ino !== before.ino ||
+            current.dev !== before.dev ||
+            current.size !== before.size ||
+            current.mtimeMs !== before.mtimeMs ||
+            current.ctimeMs !== before.ctimeMs
+          )
+            throw new RuntimeError("UNSAFE_STORAGE");
+          check();
+          await unlink(store.file);
+          check();
+          const directory = await open(store.dir, constants.O_RDONLY | constants.O_NOFOLLOW);
+          try {
+            check();
+            await directory.sync();
+            check();
+          } finally {
+            await directory.close();
+          }
+        } else {
+          check();
+          await store.remove();
+          check();
+        }
+        return { state: "removed", scope: "local profile" };
+      });
     }, check);
   };
-  return remove(0);
+  return guard(0);
+}
+
+export function revokeLocalProfile(store: StateStore, runner: (agentId: string) => WorkflowRunner) {
+  return withLocalProfileProtection(store, runner, (_snapshot, remove) => remove());
 }
 
 /** Revoke the credential only after proving every retained generation is idle and owned.
  * The caller holds the settings device lock. Histories and settings remain on disk.
  */
-export async function revokeConfiguredProfile(profile: StateStore, settings: SettingsStore) {
+export async function withConfiguredProfileProtection<T>(
+  profile: StateStore,
+  settings: SettingsStore,
+  mutation: (owner: ConnectorState) => Promise<T>,
+) {
   await settings.assertIdle();
   const snapshot = await settings.read();
   const owner = await profile.read();
@@ -108,11 +120,13 @@ export async function revokeConfiguredProfile(profile: StateStore, settings: Set
   const pointers = [...snapshot.retained, ...(snapshot.current ? [snapshot.current] : [])].sort(
     (a, b) => a.generation.localeCompare(b.generation),
   );
+  const mappings = mappingEvidence(owner, pointers);
+  const generations = await generationInventory(settings, pointers);
   const legacyAgents = await RuntimeStore.agents(profile.dir, profile.profile);
   if (legacyAgents.some((agentId) => !pointers.some((p) => p.legacy && p.agentId === agentId)))
     throw new RuntimeError("RUNTIME_BUSY");
   const validations: (() => Promise<void>)[] = [];
-  const guard = async (index: number): Promise<unknown> => {
+  const guard = async (index: number): Promise<T> => {
     if (index === pointers.length)
       return profile.transaction(async () => {
         if (
@@ -124,8 +138,9 @@ export async function revokeConfiguredProfile(profile: StateStore, settings: Set
         const currentAgents = await RuntimeStore.agents(profile.dir, profile.profile);
         if (stableJson(currentAgents.sort()) !== stableJson(legacyAgents.sort()))
           throw new RuntimeError("AUTHORITY_LOST");
-        await removeOwnedProfile(profile, owner);
-        return { state: "removed", scope: "local profile", historyRetained: true };
+        if (stableJson(await generationInventory(settings, pointers)) !== stableJson(generations))
+          throw new RuntimeError("AUTHORITY_LOST");
+        return mutation(owner);
       });
     const pointer = pointers[index];
     const runtime = pointer.legacy
@@ -133,10 +148,12 @@ export async function revokeConfiguredProfile(profile: StateStore, settings: Set
       : settings.generationStore(pointer.agentId, pointer.generation);
     return runtime.locked(async () => {
       const record = await runtime.read();
+      const mapping = mappings.get(pointer.generation);
       if (
         !record ||
         !matchesPointer(snapshot, pointer, record) ||
-        !matchesCurrentMapping(snapshot, pointer, record, owner)
+        !matchesCurrentMapping(snapshot, pointer, record, owner) ||
+        (mapping && !matchesMapping(mapping, pointer, record))
       )
         throw new RuntimeError("CONTEXT_UNCONFIRMED");
       if (unresolvedRuntime(record)) throw new RuntimeError("RUNTIME_BUSY");
@@ -156,6 +173,52 @@ export async function revokeConfiguredProfile(profile: StateStore, settings: Set
     });
   };
   return guard(0);
+}
+
+export function revokeConfiguredProfile(profile: StateStore, settings: SettingsStore) {
+  return withConfiguredProfileProtection(profile, settings, async (owner) => {
+    await removeOwnedProfile(profile, owner);
+    return { state: "removed", scope: "local profile", historyRetained: true };
+  });
+}
+
+async function generationInventory(settings: SettingsStore, pointers: GenerationPointer[]) {
+  const parent = join(settings.dir, "generations");
+  let entries: string[];
+  try {
+    const stat = await lstat(parent);
+    if (
+      !stat.isDirectory() ||
+      stat.isSymbolicLink() ||
+      stat.uid !== process.getuid?.() ||
+      (stat.mode & 0o777) !== 0o700
+    )
+      throw new RuntimeError("UNSAFE_STORAGE");
+    entries = (await readdir(parent)).sort();
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
+    entries = [];
+  }
+  const expected = pointers
+    .filter((p) => !p.legacy)
+    .map((p) => p.generation)
+    .sort();
+  if (stableJson(entries) !== stableJson(expected)) throw new RuntimeError("RUNTIME_BUSY");
+  for (const pointer of pointers.filter((p) => !p.legacy)) {
+    const dir = join(parent, pointer.generation);
+    const stat = await lstat(dir);
+    if (
+      !stat.isDirectory() ||
+      stat.isSymbolicLink() ||
+      stat.uid !== process.getuid?.() ||
+      (stat.mode & 0o777) !== 0o700
+    )
+      throw new RuntimeError("UNSAFE_STORAGE");
+    const agents = await RuntimeStore.agents(dir, settings.profile.profile);
+    if (stableJson(agents.sort()) !== stableJson([pointer.agentId]))
+      throw new RuntimeError("CONTEXT_UNCONFIRMED");
+  }
+  return entries;
 }
 
 function sameOwner(settings: SettingsState, owner: ConnectorState) {
@@ -194,17 +257,47 @@ function matchesCurrentMapping(
   if (state.current?.generation !== pointer.generation) return true;
   const mappings = owner.mappings.filter((mapping) => mapping.agentId === pointer.agentId);
   const mapping = mappings[0];
+  return mappings.length === 1 && matchesMapping(mapping, pointer, record);
+}
+
+/** Live mappings must name exactly one protected generation; older histories may be unmapped. */
+function mappingEvidence(owner: ConnectorState, pointers: GenerationPointer[]) {
+  if (new Set(owner.mappings.map((mapping) => mapping.agentId)).size !== owner.mappings.length)
+    throw new RuntimeError("CONTEXT_UNCONFIRMED");
+  const mapped = new Map<string, Mapping>();
+  for (const mapping of owner.mappings) {
+    const matching = pointers.filter((pointer) => matchesMappingPointer(mapping, pointer));
+    if (matching.length !== 1 || mapped.has(matching[0].generation))
+      throw new RuntimeError("CONTEXT_UNCONFIRMED");
+    mapped.set(matching[0].generation, mapping);
+  }
+  return mapped;
+}
+
+function matchesMappingPointer(mapping: Mapping, pointer: GenerationPointer) {
   return (
-    mappings.length === 1 &&
+    mapping.agentId === pointer.agentId &&
     mapping.workspaceId === pointer.workspaceId &&
     mapping.bindingEpoch === pointer.bindingEpoch &&
+    (mapping.formatVersion === undefined
+      ? pointer.legacy === true
+      : mapping.formatVersion === 2 &&
+        mapping.runtime === pointer.provider &&
+        mapping.generation === pointer.generation)
+  );
+}
+
+function matchesMapping(
+  mapping: Mapping,
+  pointer: GenerationPointer,
+  record: import("../runtime-contracts.ts").RuntimeRecord,
+) {
+  return (
+    matchesMappingPointer(mapping, pointer) &&
     mapping.root === record.context?.root.path &&
     mapping.nativeSessionId === record.context?.threadId &&
-    (pointer.legacy ||
-      (mapping.formatVersion === 2 &&
-        mapping.runtime === pointer.provider &&
-        mapping.generation === pointer.generation &&
-        mapping.materialization === (record.context?.materialization?.state ?? "MATERIALIZED")))
+    (mapping.formatVersion === undefined ||
+      mapping.materialization === (record.context?.materialization?.state ?? "MATERIALIZED"))
   );
 }
 async function removeOwnedProfile(profile: StateStore, snapshot: ConnectorState) {

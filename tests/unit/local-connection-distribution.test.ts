@@ -10,6 +10,7 @@ import {
   rm,
   symlink,
   writeFile,
+  cp,
 } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
@@ -73,6 +74,37 @@ test("should run an isolated distribution without checkout or npm installation",
   });
   assert.deepEqual(JSON.parse(stdout), { answer: "ready", modelInputs: 0 });
   assert.ok(!(await readdir(unpacked)).includes("node_modules"));
+});
+
+test("should bundle and import the actual recovery and renewal modules without running the CLI", async (t) => {
+  const f = await fixture(t);
+  const manifest = await f.build({
+    ...f,
+    compiler: async (_root: string, out: string) => {
+      await cp(resolve("packages/local-connector/dist/src"), join(out, "src"), { recursive: true });
+    },
+  });
+  const archive = join(f.root, "public", manifest.code.path);
+  const { stdout: listing } = await promisify(execFile)("/usr/bin/tar", ["-tzf", archive]);
+  const entries = listing.trim().split("\n");
+  assert.ok(entries.includes("src/cli/connection-recovery.js"));
+  assert.ok(entries.includes("src/connection-renewal.js"));
+  const unpacked = join(f.root, "actual-unpacked");
+  await mkdir(unpacked);
+  await promisify(execFile)("/usr/bin/tar", ["-xzf", archive, "-C", unpacked]);
+  const { stdout, stderr } = await promisify(execFile)(
+    process.execPath,
+    [
+      "--input-type=module",
+      "-e",
+      'import {pathToFileURL} from "node:url"; const m=await import(pathToFileURL(process.argv[2]).href); process.stdout.write(JSON.stringify({main:typeof m.main,hint:typeof m.connectionFailureHint}));',
+      "ai-collab-import-probe",
+      join(unpacked, "src/cli.js"),
+    ],
+    { cwd: unpacked, env: {} },
+  );
+  assert.equal(stderr, "");
+  assert.deepEqual(JSON.parse(stdout), { main: "function", hint: "function" });
 });
 
 test("should refuse symlinks and external runtime dependencies before publishing", async (t) => {

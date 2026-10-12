@@ -73,6 +73,78 @@ export function parseConnectionManifest(input: unknown): ConnectionManifest {
 
 const quote = (value: string) => "'" + value.replace(/'/g, "'\\''") + "'";
 
+export type RecoveryGeneration = { previousProfile: string; recoveryId: string; profile: string };
+export type ConnectionSelection = { version: 1; baseProfile: string; chain: RecoveryGeneration[] };
+const recoveryUuid = (value: unknown): value is string =>
+  typeof value === "string" &&
+  /^[a-f0-9]{8}-[a-f0-9]{4}-4[a-f0-9]{3}-[89ab][a-f0-9]{3}-[a-f0-9]{12}$/.test(value);
+async function profileHash(parts: string[]) {
+  const digest = await crypto.subtle.digest(
+    "SHA-256",
+    new TextEncoder().encode(JSON.stringify(parts)),
+  );
+  const hex = Array.from(new Uint8Array(digest), (byte) => byte.toString(16).padStart(2, "0")).join(
+    "",
+  );
+  return `web-${hex.slice(0, 32)}`;
+}
+
+export function connectionSelectionKey(origin: string, userId: string, roomId: string) {
+  connectionOrigin(origin);
+  if (!isId(userId) || !isId(roomId)) throw new Error("INVALID_CONNECTION_SCOPE");
+  return `ai-collab-connection:${JSON.stringify([origin, userId, roomId])}`;
+}
+
+export async function readConnectionSelection(
+  raw: string | null,
+  origin: string,
+  userId: string,
+  roomId: string,
+): Promise<ConnectionSelection> {
+  const baseProfile = await connectionProfile(origin, userId, roomId);
+  if (raw === null) return { version: 1, baseProfile, chain: [] };
+  if (raw.length > 16384) throw new Error("INVALID_CONNECTION_SELECTION");
+  const value: unknown = JSON.parse(raw);
+  if (
+    !exact(value, ["version", "baseProfile", "chain"]) ||
+    value.version !== 1 ||
+    value.baseProfile !== baseProfile ||
+    !Array.isArray(value.chain) ||
+    value.chain.length > 32
+  )
+    throw new Error("INVALID_CONNECTION_SELECTION");
+  let previous = baseProfile;
+  for (const generation of value.chain) {
+    if (
+      !exact(generation, ["previousProfile", "recoveryId", "profile"]) ||
+      generation.previousProfile !== previous ||
+      !recoveryUuid(generation.recoveryId) ||
+      generation.profile !==
+        (await profileHash(["connection-recovery", previous, generation.recoveryId])) ||
+      generation.profile === previous
+    )
+      throw new Error("INVALID_CONNECTION_SELECTION");
+    previous = generation.profile as string;
+  }
+  return value as unknown as ConnectionSelection;
+}
+
+export async function nextConnectionSelection(
+  selection: ConnectionSelection,
+  recoveryId: string,
+): Promise<ConnectionSelection> {
+  if (!recoveryUuid(recoveryId) || selection.chain.length >= 32)
+    throw new Error("INVALID_CONNECTION_SELECTION");
+  const previousProfile = selection.chain.at(-1)?.profile ?? selection.baseProfile;
+  const profile = await profileHash(["connection-recovery", previousProfile, recoveryId]);
+  if (profile === previousProfile) throw new Error("INVALID_CONNECTION_SELECTION");
+  return {
+    version: 1,
+    baseProfile: selection.baseProfile,
+    chain: [...selection.chain, { previousProfile, recoveryId, profile }],
+  };
+}
+
 export async function connectionProfile(
   origin: string,
   userId: string,
@@ -80,12 +152,7 @@ export async function connectionProfile(
 ): Promise<string> {
   connectionOrigin(origin);
   if (!isId(userId) || !isId(roomId)) throw new Error("INVALID_CONNECTION_SCOPE");
-  const bytes = new TextEncoder().encode(JSON.stringify([origin, userId, roomId]));
-  const digest = await crypto.subtle.digest("SHA-256", bytes);
-  const hex = Array.from(new Uint8Array(digest), (byte) => byte.toString(16).padStart(2, "0")).join(
-    "",
-  );
-  return `web-${hex.slice(0, 32)}`;
+  return profileHash([origin, userId, roomId]);
 }
 
 export async function localConnectionCommand(input: {
@@ -95,12 +162,20 @@ export async function localConnectionCommand(input: {
   organizationId: string;
   deviceAlias: string;
   manifest: unknown;
+  selection?: unknown;
 }): Promise<string> {
   const origin = connectionOrigin(input.origin);
   if (!isId(input.organizationId) || !isAlias(input.deviceAlias))
     throw new Error("INVALID_CONNECTION_SCOPE");
   const manifest = parseConnectionManifest(input.manifest);
-  const profile = await connectionProfile(origin, input.userId, input.roomId);
+  const selection = await readConnectionSelection(
+    input.selection === undefined ? null : JSON.stringify(input.selection),
+    origin,
+    input.userId,
+    input.roomId,
+  );
+  const generation = selection.chain.at(-1);
+  const profile = generation?.profile ?? selection.baseProfile;
   // -p disables inherited shell functions/startup hooks without changing user IDs.
   const launcher = `set -euo pipefail
 umask 077
@@ -111,8 +186,18 @@ status=$(ulimit -f 128; /usr/bin/curl --disable --fail --silent --show-error --p
 [ "$(/usr/bin/wc -c < "$file")" -le 131072 ]
 digest=$(/usr/bin/shasum -a 256 "$file")
 [ "\${digest%% *}" = "$3" ]
-/bin/bash --noprofile --norc -p "$file" "$1" "$4" "$5" "$6" "$7"`;
-  return `(builtin unset ${preloadVariables.join(" ")}; /bin/bash --noprofile --norc -p -c ${quote(launcher)} ai-collab ${[origin, manifest.bootstrap.path, manifest.bootstrap.sha256, profile, input.deviceAlias, input.organizationId, input.roomId].map(quote).join(" ")})`;
+/bin/bash --noprofile --norc -p "$file" "$1" "$4" "$5" "$6" "$7"${generation ? ' "$8" "$9"' : ""}`;
+  const args = [
+    origin,
+    manifest.bootstrap.path,
+    manifest.bootstrap.sha256,
+    profile,
+    input.deviceAlias,
+    input.organizationId,
+    input.roomId,
+    ...(generation ? [generation.previousProfile, generation.recoveryId] : []),
+  ];
+  return `(builtin unset ${preloadVariables.join(" ")}; /bin/bash --noprofile --norc -p -c ${quote(launcher)} ai-collab ${args.map(quote).join(" ")})`;
 }
 
 export function consumeConnectionFragment(hash: string, rooms: { roomId: string }[]) {
