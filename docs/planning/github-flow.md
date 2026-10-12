@@ -40,3 +40,5 @@
 새 구현·검증 상태 정리는 최신 `origin/main`에서 짧은 작업 브랜치로 시작하고 PR로 검토한다. 실제 Claude 정상·후속 답변의 확인과 중단의 미확정, 나중에 참여 가능한 두 Mac 수용은 코드 병합과 구분하며 [개발·검증 상태](delivery-and-validation.md#현재-진행-상태)를 따른다. 최신 open/draft/merged 상태와 병합 커밋은 해당 PR의 GitHub 기록을 기준으로 확인한다.
 
 환경 전환 전의 Git·GitHub 접근 실패는 [과거 실행 기록](../records/verification-history-20261008.md#2026-10-08-goal-재개와-실행-환경-확인)에 남겼다. 현재 실행 환경에서는 정상 커밋·push·PR 생성·main 병합을 실제로 확인했다. GitHub Flow 전환이 Claude 입력 예산이나 UNKNOWN 실행의 재시도 제한을 변경하지는 않는다.
+
+Vercel이 빌드 전 `git_info_fail`로 거절하면 기존 운영 배포와 실패 기록을 보존한다. 운영자는 main 커밋의 존재·프로젝트 Git 연결·Production 기준 브랜치를 먼저 조회하고, 검증된 같은 SHA를 공식 CLI로 재배포한 뒤 READY·공개 alias·배포물 hash를 확인한다. 코드 오류로 단정하거나 실패 이메일만으로 운영 웹이 내려갔다고 판단하지 않는다.

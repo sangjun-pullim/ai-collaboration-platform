@@ -1,16 +1,16 @@
 ---
-status: active
+status: done
 date: 2026-10-12
 risk-surface: auth, permission, db-schema
 approval: approved
 ---
-> 이 문서는 구현 계획이다. 현재 동작의 근거로 사용하지 않는다. 2026-10-12 사용자가 계획대로 구현·검증·배포를 승인했다. 독립 계획 검토를 통과했으며 완료 시 archive로 옮긴다.
+> 이 문서는 구현 계획이다. 현재 동작의 근거로 사용하지 않는다. 2026-10-12 사용자가 계획대로 구현·검증·배포를 승인했다. 독립 계획 검토를 통과했으며 구현·검증·독립 리뷰·운영 배포를 완료해 archive에 보관한다.
 
 # 기기 인증 갱신과 만료 후 재승인
 
 ## Context
 
-기기 인증은 발급·갱신 후 1시간 동안 유효하다. 현재 접속 상태 보고는 인증을 갱신하지 않는다. 만료된 등록 프로필은 `disconnected`로 남으며 같은 웹 연결 명령을 다시 실행해도 새 승인 전에 `CONFLICT`로 거절된다. 현재 기기·실행·설정 이력을 지우지 않고 재접속할 수 있어야 한다. 제품 범위는 [PRD](../PRD.md)의 각 PC에 있는 AI에 질문하는 흐름을 따른다.
+기기 인증은 발급·갱신 후 1시간 동안 유효하다. 현재 접속 상태 보고는 인증을 갱신하지 않는다. 만료된 등록 프로필은 `disconnected`로 남으며 같은 웹 연결 명령을 다시 실행해도 새 승인 전에 `CONFLICT`로 거절된다. 현재 기기·실행·설정 이력을 지우지 않고 재접속할 수 있어야 한다. 제품 범위는 [PRD](../../PRD.md)의 각 PC에 있는 AI에 질문하는 흐름을 따른다.
 
 기준 코드: `3fa0ef42f6937284cd1e53aaa35b1ceb168c4599`. 사용자가 올린 실행 파일의 공개 배포 hash가 이 코드의 배포물과 같고, 해당 Mac의 등록 인증 만료·끊김 상태를 읽기 전용으로 확인했다. 실제 모델 입력은 사용하지 않았다. 사용자는 기기 연결 시간 연장도 요청했다. 새 기기 인증·회전은 7일을 기준으로 하고 기존 만료 인증은 새 승인으로 복구한다. 현재 수정 대상은 아래 운영 코드·migration 14개와 관련 테스트다. 왼쪽 메뉴 유지 변경은 별도 변경이며 이 계획의 인증 동작에 포함하지 않는다.
 
@@ -99,7 +99,7 @@ approval: approved
 - 다운로드·hash·크기·ustar 경로 검증·직접 CLI 이중 실행 차단·stdin TTY·명시적 계정 확인·signal 전달·종료 증명·실패 파일 보존을 유지한다. 새 기기 승인은 기존 begin/approve/exchange 절차를 그대로 사용한다.
 - 끊김·만료·pending 회전·미완료 실행을 구분해 사람이 취할 위치를 안내한다. 오류 JSON의 기존 code 계약을 바꾸지 않고 secret·절대 저장소 경로·native 식별자를 노출하지 않는다. bootstrap catch에도 같은 안내가 적용되는지 검증한다.
 
-### [ ] Step 6: 검증·리뷰·배포·문서 종료
+### [x] Step 6: 검증·리뷰·배포·문서 종료
 **File**: 관련 테스트, `docs/guides/onboarding-and-settings.md`, `docs/ARCHITECTURE.md`, `docs/DB-SCHEMA.md`, `docs/API-SPEC.md`, `docs/BUSINESS-LOGIC.md`, `docs/BUG-FIXES.md`, `docs/planning/delivery-and-validation.md`
 - 아래 회귀를 먼저 실패시킨 뒤 보정한다. 실제 AI 호출은 없이 기존 합성 adapter·소유 로컬 DB/Auth·HTTP·Mac bootstrap fixture를 사용한다.
 - 독립 reviewer가 인증 갱신·복구 증거·재시도·모델 입력 횟수 불변과 전체 diff를 검토한다. 필수 지적을 보정하고 영향을 받은 검사만 다시 실행한다.
@@ -153,4 +153,14 @@ approval: approved
 | 구현 1차 H2: 정상 요청에 이전 lease 기한 적용 | HIGH | RESOLVED | 첫 요청은 현재 유효 lease·절대 요청 기한을 사용하고 인증 재시도는 원래 lease 제한도 유지한다. 인증 조회 대기 중 lease 연장 경합을 재현한다. |
 | 구현 1차 H3: 설정 변경이 갱신 대기를 생략 | HIGH | RESOLVED | transaction 밖의 withIdle·bootstrap에서 공유 갱신을 기다린 뒤 연결을 확인한다. 느린 회전과 설정 변경의 경합으로 UNKNOWN 발생을 재현한다. |
 | 구현 2차 R2-1: 보호 대상 밖의 현존 매핑 | HIGH | RESOLVED | current/retained의 보호되는 pointer 하나와 현존 mapping을 일대일로 대조한다. runtime 잠금 안에서 소유권·epoch·root/native를 검증하며 누락·추가·중복·불일치 회귀를 먼저 실패시킨 뒤 보정했다. 기존 H1–H3은 2차 reviewer가 모두 해소 확인했다. 이 복구 지적은 첫 구현 검토이므로 연속 반복 설계 실패가 아니다. |
-| 최종 독립 구현 검토 | REQUIRED | PASS | 3차 C0/H0/M0/L0/INFO0. R2-1 해소와 추가 fixture·DB/HTTP 복구·문서를 검토했다. 동일 운영13파일과 SQL018·갱신/재시도·기존 H1–H3의 이전 검토를 재사용했다. 검토 당시 미완료인 배포·보관은 Step6 완료 뒤 기록한다. |
+| 최종 독립 구현 검토 | REQUIRED | PASS | 3차 C0/H0/M0/L0/INFO0. R2-1 해소와 추가 fixture·DB/HTTP 복구·문서를 검토했다. 동일 운영13파일과 SQL018·갱신/재시도·기존 H1–H3의 이전 검토를 재사용했다. 이후 Step6의 배포·공개 자산 확인과 보관을 완료했다. |
+
+## Completion
+
+2026-10-12 Step0–6을 완료했다. 검토한 운영 커밋 `142c8ea`를 [PR15](https://github.com/sangjun-pullim/ai-collaboration-platform/pull/15)로 정상 병합했다. main `1227eae3dd071f3b592dc7d5cf3b523a69ccb887`의 Production `dpl_A7o5UcurvLhsYrDs3SjN4rFwv8ex`가 READY이며 공개 HTTPS 검사7개와 배포물 바이트·hash 대조를 통과했다. Supabase `tcljbegdguixopfcaycs`에는 검토한 SQL018 하나만 추가했으며 전체18개 version과 실제 발급 본체 hash를 확인했다. 코드 빌드 전 Git 조회 실패는 원본을 보존하고 같은 main SHA의 공식 CLI 재배포로 복구했다. GitHub 연결·회사 코드·개인 AI 로그인은 바꾸지 않았다.
+
+웹544/544, 연결기 전체982/982와 이후 보정42/42, 실제 DB/HTTP3개·연결 명령 idle 갱신/종료1개·한도/새 승인/합성 AI 준비/기록 보존/정리1개, 기기 browser10/10을 통과했다. 타입·lint·Production/distribution 빌드·root format/check·diff 검사도 통과했다. source가 같은 검사·독립 검토는 재사용했으며 실제 공급자 입력0회다. 최초 fixture 정리 실패는 code/proof 소거 전 원래 seed 추적을 보완해 수정했다. 소유 사용자 삭제와 참조가 없음을 확인한 뒤 남은 hash14개만 매개변수 SQL로 제거했고 실패 원본을 보존했다. 후속 fixture 정리는 모두 성공했다.
+
+독립 구현 검토3차 최종 C0/H0/M0/L0/INFO0이다. H1–H3은 2차, R2-1은 3차에서 해소 확인했다. 같은 운영13파일·이전 유효 검사/리뷰를 재사용하고 변경된 guard·fixture·통합 테스트·정본 문서를 추가 검토했다. 같은 규칙의 연속 반복 차단 지적은 없다. 완료한 CLI 워커·리뷰 터미널은 보고서를 보존한 뒤 닫았다. Native close_agent는 제공되지 않았으며 이 한계와 CLI 대체 절차는 앞선 작업 보고에서 구분했다.
+
+개인 `next-env.d.ts`의 원래 hash와 기존 사용자 웹/기기 기록을 보존했다. 새 검증 웹·child와 합성 서버 데이터를 정리했으며 사용자의 실패 임시 실행 파일은 삭제하지 않았다. 상세 실행·실패·정리·검토 manifest는 `/private/tmp/ai-collab-reconnect-20261012-9177a3ll/auth034/`에 비공개로 보관한다. 두 Mac의 실제 AI 질문 왕복은 동료 참여 시 별도 수용하며 이 계획의 공급자 호환성 범위를 넓히지 않는다. 동작 정본과 진행 상태는 docs의 해당 문서를 따른다.

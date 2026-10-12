@@ -23,7 +23,7 @@
 
 ## 현재 진행 상태
 
-2026-10-12 [기기 인증 갱신과 만료 후 재승인](../impl-spec/034-local-connection-renewal-and-reapproval.md)을 승인 범위에서 구현하고 최종 검증 중이다. 신규 발급 7일·만료 5분 전 갱신과 기록 보존 새 승인 복구를 분리한다. 실제 소유 로컬 DB의 발급·회전·철회·기존 행 보존과 기존 DB 업그레이드, AI 설정 없는 연결 명령의 갱신·35초 통신 유지·정상 종료를 확인했다. 웹 단위544개·연결기982개·기기 browser10개를 통과했으며 실제 AI 입력은0회다. 복구 보정 검사42개와 실제 DB/HTTP의 기기10개·AI연결2개 경계에서 이전 연결 취소→새 승인→새 합성 AI 실행 준비·원본 바이트 보존·정리도 통과했다. 독립 구현 검토3차 C0/H0/M0/L0/INFO0이며 같은 운영13파일의 앞선 검토를 재사용했다. 클라우드 적용·main 병합·운영 배포는 완료 뒤 아래에 기록한다.
+2026-10-12 [기기 인증 갱신과 만료 후 재승인](../impl-spec/archive/034-local-connection-renewal-and-reapproval.md)의 구현·검증·독립 리뷰·운영 배포를 완료했다. 신규 인증7일과 만료5분 전 자동 갱신을 제공한다. 이미 만료된 연결은 기존 기록 보존 검사 뒤 본인 연결을 명시적으로 취소하고 새 웹 승인·터미널 확인으로 복구한다. [PR15](https://github.com/sangjun-pullim/ai-collaboration-platform/pull/15)를 정상 main 병합했고 같은 SHA의 Production과 공개 배포물 검사를 완료했다. 완료 계획은 archive에 보관한다. 아래 검증 범위와 두 Mac 현장 수용의 구분은 유지한다.
 
 2026-10-12 내 AI 연결 화면의 공통 채팅방 메뉴와 이전 방 이동을 구현하고 관련 검증을 완료했다. 모바일 메뉴·설정 스크롤·접근 가능한 방과 승인 가능한 방의 구분을 유지한다. 검사·리뷰 근거는 아래 절을 따르며 운영 반영은 [Vercel 배포 기록](https://vercel.com/sangjuns-projects-488d9a9d/ai-collaboration-platform/deployments)의 main/Production에서 확인한다.
 
@@ -32,6 +32,18 @@
 2026-10-12 [내 AI 연결 표시 계획](../impl-spec/archive/033-own-ai-connection-indicator.md)의 운영 코드와 관련 검증을 완료했다. 입장 후 세 화면의 초록·빨간 표시, 기기별 상세, 마지막 조회 시각과 수동 재확인을 추가했다. 실제 PC 통신과 AI 답변 준비를 구분하며 웹의 새 주기 조회는 없다. [PR11](https://github.com/sangjun-pullim/ai-collaboration-platform/pull/11)의 검토 head를 정상 main 병합하고 자동 Production 배포·공개 접속을 확인했다. 완료 계획은 archive에 보관했다.
 
 2026-10-10 개인·비상업용 Vercel Hobby + Supabase Free 배포와 실제 HTTPS 접속 검사14개·독립 운영 리뷰를 완료했다. 배포 설정과 정본 갱신은 [PR10](https://github.com/sangjun-pullim/ai-collaboration-platform/pull/10)에서 검토하며 정확한 병합 상태는 해당 PR을 따른다. 2026-10-09 모델 표시 보정·채팅/실행/저장 책임 분리와 공식 Claude의 로컬 정상·후속 답변·중단 검증을 완료하고022·030까지 보관했다. 서로 다른 두 Mac의 실제 질문·후속 답변은 동료가 참여할 때 확인하는 미완료 범위다. 공개 웹 접속 검사, 가짜 AI 공급자를 사용하는 DB·HTTP 검사, 공식 Claude의 실제 입력을 구분한다. 아래 이전 기록의 접근 차단은 당시 실행 환경의 결과다.
+
+### 기기 인증 갱신과 만료 후 재승인
+
+웹 단위544/544, 연결기 전체982/982와 마지막 guard 보정42/42, 실제 PostgreSQL·HTTP 기간/보존3개·idle 연결 명령 갱신/35초 통신/정상 종료1개·등록 한도/새 승인/합성 AI 실행 준비/기존 바이트 보존/정리1개, desktop/mobile 기기 browser10/10을 통과했다. 타입·lint·Production/distribution 빌드·root format/check와 diff도 통과했다. 마지막 guard 한 파일 이외의 같은 운영13파일과 영향을 받지 않은 검사/리뷰를 재사용했다. 실제 공급자 입력은0회다.
+
+최초 독립 구현 검토의 HIGH3개는 설치 전/후 판정·첫 요청의 lease·설정 변경의 갱신 대기였다. 보정 후2차에서 모두 해소 확인했다. 2차의 새 HIGH1개는 현존 mapping에 runtime 증거가 없어도 configured guard를 통과하던 문제였다. 누락·추가·중복·epoch/root/native 불일치 회귀를 먼저 실패시킨 뒤 일대일 대응과 잠금 안의 증거 검증을 보완했다. 3차 C0/H0/M0/L0/INFO0으로 해소 확인했다.
+
+실제 복구 fixture의 최초 제품 검사는 통과했지만 교환 후 code/proof가 사라져 원래 seed를 추적하지 못해 정리만 실패했다. 교환 전에 기존 fixture의 소유 journal·hash 복구를 호출하도록 보정했다. 소유 사용자3명 삭제·참조 없음 확인 뒤 남은 hash14개만 매개변수 SQL로 제거했고 최초 실패를 보존했다. 최종 실행의 새 승인·등록·가짜 실행 준비·정리는 모두 성공했다. 서버 기기10개·같은 소유자/조직/방 AI연결2개 한도는 유지하며 다른 기기를 자동 취소하지 않는다.
+
+클라우드 `tcljbegdguixopfcaycs`의 dry-run에서018만 미적용임을 확인한 뒤 검토된 hash `7e27362e…`의 SQL018을 적용했다. 기존 인증의 만료·철회·설정 이력은 바꾸지 않는다. 전체18개 migration version과 발급 함수의 변경된 본문 hash를 확인했다. [PR15](https://github.com/sangjun-pullim/ai-collaboration-platform/pull/15)의 검토 커밋142c8ea를 정상 main1227eae에 병합했다. 첫 자동 Production은 빌드 전 `git_info_fail`로 실패했지만 같은 main SHA의 공식 CLI 재배포는 READY였다. GitHub·공식 Vercel 조회에서 SHA·환경·공개 alias를 대조하고 공개 HTTPS7개 및 새 갱신/복구 JS·bootstrap/code hash·검증 tar 내용 동일성을 확인했다. gzip의 macOS/Linux 표시 바이트 차이만 허용했다.
+
+같은 Git 조회 오류가 main에서도 발생해 이전 작업 브랜치 삭제만을 확정 원인으로 보지 않는다. 코드 빌드 오류는 확인되지 않았다. GitHub 연결과 productionBranch=main은 정상이며 앞으로 자동 배포가 실패하면 정확한 main SHA와 오류를 확인한 뒤 같은 소스를 재배포한다. 웹 접속·다운로드 검사는 실제 AI 질문이나 두 Mac 수용을 대신하지 않는다. 완료한 소유 워커/리뷰 터미널과 검증 웹·child/합성 서버 데이터를 정리했고 개인 설정·실패 실행 파일·원래 next-env.d.ts를 보존했다. 상세 증거는 비공개 검증 산출물에 보관한다.
 
 ### 내 AI 연결 화면의 메뉴와 이전 방 이동
 
