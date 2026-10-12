@@ -64,6 +64,14 @@ export async function mutate(
   if (action === "invite") return { code: data.code, expiresAt: data.expiresAt };
   return { removed: data.removed === true };
 }
+export async function accessibleRooms(client: SupabaseClient): Promise<Room[]> {
+  await currentUser(client);
+  const { data, error } = await client
+    .from("rooms")
+    .select("id,organization_id,title,goal,observation,environment");
+  if (error || !data) throw new AccessError("UNAVAILABLE");
+  return data as Room[];
+}
 export async function dashboard(client: SupabaseClient) {
   const entry = await currentIdentity(client);
   const userId = entry.userId;

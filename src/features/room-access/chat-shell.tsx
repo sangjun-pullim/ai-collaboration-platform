@@ -18,6 +18,7 @@ import type { Room } from "./contracts";
 export function ChatShell({
   rooms = [],
   roomId,
+  page = "chat",
   title,
   children,
   details,
@@ -27,6 +28,7 @@ export function ChatShell({
 }: {
   rooms?: Room[];
   roomId?: string;
+  page?: "chat" | "connections";
   title: string;
   children: ReactNode;
   details?: ReactNode;
@@ -37,6 +39,10 @@ export function ChatShell({
   const [navigationOpen, setNavigationOpen] = useState(false);
   const navigationTrigger = useRef<HTMLButtonElement>(null);
   const pendingNewRoom = useRef(false);
+  const contextRoom = rooms.find((room) => room.id === roomId);
+  const connectionsHref = contextRoom
+    ? `/app/connections?room=${contextRoom.id}`
+    : "/app/connections";
   const navigation = (inSheet = false) => (
     <div
       className="flex h-full min-w-0 flex-col"
@@ -75,8 +81,8 @@ export function ChatShell({
             <Link
               key={room.id}
               href={`/app/rooms/${room.id}`}
-              aria-current={room.id === roomId ? "page" : undefined}
-              className={`flex min-w-0 items-center gap-2 rounded-md px-3 py-2.5 hover:bg-neutral-100 ${room.id === roomId ? "bg-neutral-100 font-medium" : "text-neutral-600"}`}
+              aria-current={page === "chat" && room.id === roomId ? "page" : undefined}
+              className={`flex min-w-0 items-center gap-2 rounded-md px-3 py-2.5 hover:bg-neutral-100 ${page === "chat" && room.id === roomId ? "bg-neutral-100 font-medium" : "text-neutral-600"}`}
             >
               <MessageSquare className="size-4 shrink-0" />
               <span className="truncate">{room.title}</span>
@@ -89,7 +95,7 @@ export function ChatShell({
       </ScrollArea>
       <div className="border-t p-4">
         <Button variant="ghost" className="w-full justify-start" asChild>
-          <Link href="/app/connections">
+          <Link href={connectionsHref} aria-current={page === "connections" ? "page" : undefined}>
             <Plug className="size-4" />내 AI 연결{" "}
             <span className="ml-auto text-xs text-neutral-500">선택 사항</span>
           </Link>

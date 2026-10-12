@@ -517,6 +517,7 @@ test("should discover a terminal registration and show the approved room AI sett
       "./local-connection-guide": { LocalConnectionGuide: "connection-guide" },
       "./local-connection-command": { consumeConnectionFragment },
       "../room-access/access.module.css": { default: {} },
+      "../room-access/chat-shell": { ChatShell: "shell" },
     },
     {
       Date: class extends Date {
@@ -753,6 +754,7 @@ test("should restrict setup to a live owned device in the selected room and pres
       },
     },
     "../room-access/access.module.css": { default: {} },
+    "../room-access/chat-shell": { ChatShell: "shell" },
   }).ConnectionManager as (props: unknown) => UINode;
   const future = new Date(Date.now() + 60000).toISOString();
   const past = new Date(Date.now() - 60000).toISOString();
@@ -997,6 +999,7 @@ test("should consume a known pairing fragment once without selecting approval", 
       "./local-connection-guide": { LocalConnectionGuide: "connection-guide" },
       "./local-connection-command": { consumeConnectionFragment },
       "../room-access/access.module.css": { default: {} },
+      "../room-access/chat-shell": { ChatShell: "shell" },
     },
     {
       window,
