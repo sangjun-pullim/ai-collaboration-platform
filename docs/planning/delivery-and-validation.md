@@ -23,11 +23,21 @@
 
 ## 현재 진행 상태
 
+2026-10-12 내 AI 연결 화면의 공통 채팅방 메뉴와 이전 방 이동을 구현하고 관련 검증을 완료했다. 모바일 메뉴·설정 스크롤·접근 가능한 방과 승인 가능한 방의 구분을 유지한다. 검사·리뷰 근거는 아래 절을 따르며 운영 반영은 [Vercel 배포 기록](https://vercel.com/sangjuns-projects-488d9a9d/ai-collaboration-platform/deployments)의 main/Production에서 확인한다.
+
 2026-10-12 채팅의 사람 확인 안내와 AI 답변 상태의 코드·관련 검증을 완료했다. 질문 아래와 입력창 위의 상태, 중단 요청·실제 중단·결과 미확인의 구분, 본인 연결 관리·Mac 터미널 확인 안내를 제공한다. 검토·병합 기록은 [PR13](https://github.com/sangjun-pullim/ai-collaboration-platform/pull/13), 운영 반영 상태는 [Vercel 배포 기록](https://vercel.com/sangjuns-projects-488d9a9d/ai-collaboration-platform/deployments)의 main/Production에서 확인한다. 검사·리뷰 근거는 아래 절을 따른다.
 
 2026-10-12 [내 AI 연결 표시 계획](../impl-spec/archive/033-own-ai-connection-indicator.md)의 운영 코드와 관련 검증을 완료했다. 입장 후 세 화면의 초록·빨간 표시, 기기별 상세, 마지막 조회 시각과 수동 재확인을 추가했다. 실제 PC 통신과 AI 답변 준비를 구분하며 웹의 새 주기 조회는 없다. [PR11](https://github.com/sangjun-pullim/ai-collaboration-platform/pull/11)의 검토 head를 정상 main 병합하고 자동 Production 배포·공개 접속을 확인했다. 완료 계획은 archive에 보관했다.
 
 2026-10-10 개인·비상업용 Vercel Hobby + Supabase Free 배포와 실제 HTTPS 접속 검사14개·독립 운영 리뷰를 완료했다. 배포 설정과 정본 갱신은 [PR10](https://github.com/sangjun-pullim/ai-collaboration-platform/pull/10)에서 검토하며 정확한 병합 상태는 해당 PR을 따른다. 2026-10-09 모델 표시 보정·채팅/실행/저장 책임 분리와 공식 Claude의 로컬 정상·후속 답변·중단 검증을 완료하고022·030까지 보관했다. 서로 다른 두 Mac의 실제 질문·후속 답변은 동료가 참여할 때 확인하는 미완료 범위다. 공개 웹 접속 검사, 가짜 AI 공급자를 사용하는 DB·HTTP 검사, 공식 Claude의 실제 입력을 구분한다. 아래 이전 기록의 접근 차단은 당시 실행 환경의 결과다.
+
+### 내 AI 연결 화면의 메뉴와 이전 방 이동
+
+웹 단위519/519, 실제 소유 로컬 DB·desktop/mobile 기기 browser8/8, 관련 타입·lint·production/distribution 빌드와 root format/check를 통과했다. 메뉴 누락6건과 조직 조회 장애3건을 수정 전 실패시킨 뒤 보정했다. 첫 browser6/8의 취소 검사2건은 채팅방에 돌아간 helper의 호출자가 연결 화면으로 재진입하지 않은 문제였다. 호출 위치를 바로잡고 전체8/8을 다시 검증했으며 취소·기기 제거·권한 철회·새 승인의 기존 검사는 유지했다.
+
+독립 구현 리뷰2회를 수행했다. 최초 HIGH1건의 취소 검사 위치와 MEDIUM1건의 불필요한 조직 조회 의존성을 수용했다. 최종 C0/H0/M0/L0/INFO0이다. 변경 없는 ChatShell·ConnectionManager·pairing·관찰자 제한의 1차 검토를 재사용하고 인증된 방 목록 조회와 관련 실패 경로·브라우저 보정·정본 문서를 추가 검토했다. 완료 뒤 추가한 이 검증 기록은 동일 소스의 실행·리뷰 근거를 기록하는 문서 변경이다.
+
+운영 코드4개이며 서버 RPC·기기 계약·SQL·연결기 source는 바꾸지 않았다. 같은 입력의 기존 connector919/919 검사를 재사용했다. 실제 AI 입력은0이다. 별도4418 검증 사본을 사용해 사용자4318 웹·개인 프로필·원래 next-env.d.ts와 기존6개 Docker container를 유지했으며 fixture·검증 웹이 정상 종료했다. 작업자·reviewer 보고, 해시, 실패 원본과 통과 결과는 `/private/tmp/ai-collab-reconnect-20261012-9177a3ll/`에 비공개 보관한다.
 
 ### 채팅의 AI 답변 상태와 확인 안내
 

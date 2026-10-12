@@ -61,9 +61,44 @@ async function join(owner: Page, member: Page, role: string) {
   await owner.getByRole("button", { name: "코드 숨기기", exact: true }).click();
   await owner.keyboard.press("Escape");
 }
+async function roomNavigation(page: Page) {
+  const menu = page.getByRole("button", { name: "채팅방 목록 열기", exact: true });
+  if (await menu.isVisible()) {
+    await menu.click();
+    return page.getByRole("dialog", { name: "AI 채팅방 목록", exact: true });
+  }
+  return page.getByRole("complementary", { name: "채팅방 탐색", exact: true });
+}
+async function connectionsFromRoom(page: Page, roomId: string) {
+  await page.goto(`/app/rooms/${roomId}`);
+  const navigation = await roomNavigation(page);
+  const connection = navigation.getByRole("link", { name: /내 AI 연결/ });
+  await expect(connection).toHaveAttribute("href", `/app/connections?room=${roomId}`);
+  await connection.click();
+  await expect(page).toHaveURL(new RegExp(`/app/connections\\?room=${roomId}$`));
+  await expect(
+    page.getByRole("heading", { name: "내 AI 연결", level: 1, exact: true }),
+  ).toBeVisible();
+  await expect(page.getByRole("dialog", { name: "AI 채팅방 목록", exact: true })).toHaveCount(0);
+  await expect(page.getByRole("main")).toHaveCount(1);
+  await expect(page.locator("main > section > header")).toHaveCount(1);
+  const connectionsNavigation = await roomNavigation(page);
+  await expect(
+    connectionsNavigation.getByRole("link", { name: "기기 검사방", exact: true }),
+  ).toHaveAttribute("href", `/app/rooms/${roomId}`);
+  await expect(connectionsNavigation.locator('a[aria-current="page"]')).toHaveCount(1);
+  await expect(connectionsNavigation.getByRole("link", { name: /내 AI 연결/ })).toHaveAttribute(
+    "aria-current",
+    "page",
+  );
+  if (await page.getByRole("dialog", { name: "AI 채팅방 목록", exact: true }).isVisible()) {
+    await page.keyboard.press("Escape");
+    await expect(page.getByRole("button", { name: "채팅방 목록 열기", exact: true })).toBeFocused();
+  }
+}
 async function connect(page: Page, id: string, name: string, roomId: string) {
   const p = await broker<{ name: string; code: string }>("pair", { id, name });
-  await page.goto("/app/connections");
+  await connectionsFromRoom(page, roomId);
   await page.getByRole("combobox", { name: "연결할 방", exact: true }).selectOption(roomId);
   await page.getByLabel("기기 연결 코드", { exact: true }).fill(p.code);
   await page.getByRole("checkbox").check();
@@ -78,6 +113,17 @@ async function connect(page: Page, id: string, name: string, roomId: string) {
     timeout: 15000,
   });
   await expect(page.getByRole("combobox", { name: "AI 프로그램", exact: true })).toBeVisible();
+  await expect(page.getByRole("link", { name: "이전 채팅방으로", exact: true })).toHaveAttribute(
+    "href",
+    `/app/rooms/${roomId}`,
+  );
+  if (await page.getByRole("button", { name: "채팅방 목록 열기", exact: true }).isVisible()) {
+    const navigation = await roomNavigation(page);
+    await navigation.getByRole("link", { name: "기기 검사방", exact: true }).click();
+    await expect(page.getByRole("dialog", { name: "AI 채팅방 목록", exact: true })).toHaveCount(0);
+  } else await page.getByRole("link", { name: "이전 채팅방으로", exact: true }).click();
+  await expect(page).toHaveURL(new RegExp(`/app/rooms/${roomId}$`));
+  await expect(page.getByRole("heading", { name: "기기 검사방", exact: true })).toBeVisible();
 }
 test("should approve an owned connection and display only public unverified bindings", async ({
   browser,
@@ -115,12 +161,18 @@ test("should approve an owned connection and display only public unverified bind
     await expect(roster.getByText("등록 · 최근 통신 있음", { exact: true })).toHaveCount(2);
     await expect(roster).toContainText("codex");
     await expect(op.getByRole("button", { name: "기기 승인", exact: true })).toHaveCount(0);
-    await op.goto("/app/connections");
+    await connectionsFromRoom(op, scope.roomId);
     await expect(
       op.getByText("승인할 수 있는 참가 방이 없습니다.", { exact: false }),
     ).toBeVisible();
     await expect(op.getByRole("heading", { name: "내 연결", exact: true })).toBeVisible();
     await expect(op.getByText("연결된 기기가 없습니다.", { exact: false })).toBeVisible();
+    await expect(op.getByRole("button", { name: "기기 승인", exact: true })).toHaveCount(0);
+    await expect(op.getByRole("combobox", { name: "연결할 방", exact: true })).toHaveCount(0);
+    await op.getByRole("link", { name: "이전 채팅방으로", exact: true }).click();
+    await expect(op).toHaveURL(new RegExp(`/app/rooms/${scope.roomId}$`));
+    await expect(op.getByRole("textbox", { name: "메시지", exact: true })).toHaveCount(0);
+    await connectionsFromRoom(op, scope.roomId);
     await ap.goto("/app/connections");
     await ap.getByLabel("기기 연결 코드", { exact: true }).fill("0".repeat(64));
     await ap.getByRole("checkbox").check();
@@ -158,6 +210,7 @@ test("should revoke a connection and require fresh approval after membership rem
       target = `revoke-member-${suffix}`;
     await connect(ap, owner.id, own, scope.roomId);
     await connect(bp, member.id, target, scope.roomId);
+    await connectionsFromRoom(bp, scope.roomId);
     await bp.getByRole("button", { name: `기기 ${target} 연결 취소`, exact: true }).click();
     await expect(bp.getByText("취소됨 · 새 승인 필요", { exact: true })).toBeVisible();
     check(
@@ -212,8 +265,11 @@ test("should revoke a connection and require fresh approval after membership rem
     await bp.goto("/app/connections");
     await expect(bp.getByText("제거됨 · 새 승인 필요", { exact: true })).toBeVisible();
     await expect(bp.getByText("취소됨 · 새 승인 필요", { exact: true })).toBeVisible();
-    await bp.getByRole("link", { name: "내 AI 채팅방", exact: true }).focus();
+    const appListReturn = bp.getByRole("link", { name: "채팅방 목록으로", exact: true });
+    await expect(appListReturn).toHaveAttribute("href", "/app");
+    await appListReturn.focus();
     await bp.keyboard.press("Enter");
+    await expect(bp).toHaveURL(/\/app$/);
     await expect(bp.getByRole("heading", { name: "내 AI 채팅방", exact: true })).toBeVisible();
     await connect(bp, member.id, `fresh-${suffix}`, scope.roomId);
     check(
@@ -339,7 +395,11 @@ test("should preserve the owned status snapshot and chat draft across explicit r
     await expect(checkedTime).not.toHaveAttribute("datetime", beforeFirstRefresh);
     await expectOwnedStatus();
     // Navigation may receive a newer server snapshot; validate its meaning and ownership.
-    await ap.getByRole("link", { name: "내 AI 채팅방", exact: true }).click();
+    const chatNavigation = await roomNavigation(ap);
+    const appList = chatNavigation.getByRole("link", { name: "AI 채팅방", exact: true });
+    await expect(appList).toHaveAttribute("href", "/app");
+    await appList.click();
+    await expect(ap).toHaveURL(/\/app$/);
     await expect(ap.getByRole("heading", { name: "내 AI 채팅방", exact: true })).toBeVisible();
     await expectOwnedStatus();
     const roomLink = ap
@@ -428,7 +488,8 @@ test("should preserve the owned status snapshot and chat draft across explicit r
     await expect(settingsEnd).toBeVisible();
     await expect(settingsEnd).toBeInViewport({ ratio: 1 });
     check(await ap.locator("body").evaluate((element) => element.scrollWidth <= innerWidth + 1));
-    const body = ap.locator("main").locator("..");
+    await expect(ap.getByRole("main")).toHaveCount(1);
+    const body = ap.getByRole("region", { name: "AI 연결 설정 내용", exact: true });
     await expect
       .poll(() =>
         body.evaluate((element) => ({
@@ -446,7 +507,7 @@ test("should preserve the owned status snapshot and chat draft across explicit r
     await memberBar.getByText("기기별 연결 상세", { exact: true }).click();
     await expect(memberBar).toContainText(`기기 ${other}`);
     await expect(memberBar).not.toContainText(`기기 ${first}`);
-    await ap.getByRole("link", { name: "내 AI 채팅방", exact: true }).click();
+    await ap.getByRole("link", { name: "채팅방 목록으로", exact: true }).click();
     await ap.getByRole("button", { name: "로그아웃", exact: true }).click();
     await expect(ap).toHaveURL(/\/login$/);
     await expect(bar).toHaveCount(0);
