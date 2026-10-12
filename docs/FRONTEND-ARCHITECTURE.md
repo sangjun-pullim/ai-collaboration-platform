@@ -1,5 +1,5 @@
 ---
-verified-against: feec883ec0d3914ce14a87ae41893f968011733b
+verified-against: efa884b0e2371a2d7b5487541a4879bc267b2fb6
 sources:
   - src/app/**
   - src/features/**
@@ -20,6 +20,12 @@ sources:
 실제 인증 화면은 `src/features/room-access/`에 있고 기존 prototype reducer를 import하지 않는다. Auth/접근 API와 Next proxy는 `src/lib/supabase/`의 요청별 cookie client를 사용한다.
 
 채팅의 원본 이벤트는 append-only 이력에 보존한다. 같은 방·request·question·agent·bindingEpoch의 ANSWER 상태 변경은 `chat-presentation.timelineEvents`에서 가장 큰 sequence를 선택해 한 답변으로 표시한다. 서로 다른 실행과 식별 정보가 부족한 이벤트는 합치지 않는다. 이 표시는 서버 이력·요청·실행 횟수를 바꾸지 않는다.
+
+질문 아래와 입력창 위의 **AI 답변 상태**는 같은 `chat-presentation.answerStatuses`와 `ChatTimeline`의 공통 표시 컴포넌트를 사용한다. 요청·질문·연결 세대와 저장된 별칭으로 대기·준비·생성·종료·미확인을 구분한다. 모든 참가자 역할에 공개 상태를 표시하고 기존 중단 권한은 유지한다. 현재 조사의 진행 중 요청을 우선 표시하며 이전 질문 상태는 해당 질문에 남긴다. 중단 수신 확인은 실제 종료와 다르고, 조회 실패·이력 누락·35초가 지난 관찰은 마지막 상태와 갱신 지연을 표시하며 회전 표시를 멈춘다. 시간 경과는 기존 렌더링 때 판정하고 별도 timer·조회·자동 재입력을 만들지 않는다.
+
+시스템의 `HUMAN_INPUT_REQUIRED` 기록은 정확한 원인 코드가 없어 이를 만들어 내지 않는다. `humanInputNotice`가 같은 조사와 해당 sequence까지의 근거로 당시 상태를 안내한다. 현재 상태나 다른 조사로 과거 원인을 덮어쓰지 않는다. 소유자가 확인할 Mac 터미널·실행 기록과 본인 연결 관리 위치를 안내하며 과거 기록을 새 질문의 현재 차단으로 표시하지 않는다. 사용 절차는 [AI 답변 상태와 확인 방법](guides/onboarding-and-settings.md#ai-답변-상태와-확인-방법)을 따른다.
+
+요청·조사별 검색 인덱스를 한 번 만들고 상태·질문별 상태·사람 확인 안내의 계산 결과를 두 화면에서 공유한다. 최근 실행 요약에서 빠졌고 답변도 없는 AI 간 질문의 취소는 같은 방 잠금 안에서 저장된 **PEER 예약 대기 → 바로 다음 질문**의 순서로 연결을 복원한다. 같은 방·조사·연결·기록 번호를 확인하고 누락이나 충돌이 있으면 연결을 추측하지 않는다. 현재 이름이나 시각이 같다는 이유로 연결하지 않는다.
 
 `/app/connections`의 [ConnectionManager](../src/features/device-binding/connection-manager.tsx)는 자기 참가 방 선택·연결 코드 승인·기기 취소/제거와 최근 수신·만료를 표시한다. 방의 [RoomBindings](../src/features/device-binding/room-bindings.tsx)는 공개 저장소/session 별칭·Git metadata·runtime·epoch·미검증 상태만 보여 주며 observer도 읽을 수 있다. 기기 credential·proof·절대 경로·native locator는 props/HTML/RSC에 포함하지 않는다. heartbeat와 등록을 AI 실행 가능으로 표시하지 않는다.
 

@@ -23,9 +23,21 @@
 
 ## 현재 진행 상태
 
+2026-10-12 채팅의 사람 확인 안내와 AI 답변 상태의 코드·관련 검증을 완료했다. 질문 아래와 입력창 위의 상태, 중단 요청·실제 중단·결과 미확인의 구분, 본인 연결 관리·Mac 터미널 확인 안내를 제공한다. 검토·병합 기록은 [PR13](https://github.com/sangjun-pullim/ai-collaboration-platform/pull/13), 운영 반영 상태는 [Vercel 배포 기록](https://vercel.com/sangjuns-projects-488d9a9d/ai-collaboration-platform/deployments)의 main/Production에서 확인한다. 검사·리뷰 근거는 아래 절을 따른다.
+
 2026-10-12 [내 AI 연결 표시 계획](../impl-spec/archive/033-own-ai-connection-indicator.md)의 운영 코드와 관련 검증을 완료했다. 입장 후 세 화면의 초록·빨간 표시, 기기별 상세, 마지막 조회 시각과 수동 재확인을 추가했다. 실제 PC 통신과 AI 답변 준비를 구분하며 웹의 새 주기 조회는 없다. [PR11](https://github.com/sangjun-pullim/ai-collaboration-platform/pull/11)의 검토 head를 정상 main 병합하고 자동 Production 배포·공개 접속을 확인했다. 완료 계획은 archive에 보관했다.
 
 2026-10-10 개인·비상업용 Vercel Hobby + Supabase Free 배포와 실제 HTTPS 접속 검사14개·독립 운영 리뷰를 완료했다. 배포 설정과 정본 갱신은 [PR10](https://github.com/sangjun-pullim/ai-collaboration-platform/pull/10)에서 검토하며 정확한 병합 상태는 해당 PR을 따른다. 2026-10-09 모델 표시 보정·채팅/실행/저장 책임 분리와 공식 Claude의 로컬 정상·후속 답변·중단 검증을 완료하고022·030까지 보관했다. 서로 다른 두 Mac의 실제 질문·후속 답변은 동료가 참여할 때 확인하는 미완료 범위다. 공개 웹 접속 검사, 가짜 AI 공급자를 사용하는 DB·HTTP 검사, 공식 Claude의 실제 입력을 구분한다. 아래 이전 기록의 접근 차단은 당시 실행 환경의 결과다.
+
+### 채팅의 AI 답변 상태와 확인 안내
+
+2026-10-12 검토한 소스 `efa884b`의 최신 웹 단위510/510·관련 타입·production/distribution 빌드·lint·루트 format/check가 통과했다. 초기 누락18건·JSX4건, 과거 취소 복원2건·식별자 충돌1건, 마지막 방 변경 번호 충돌8건을 실제 러너에서 먼저 실패시킨 뒤 보정했다. 상태·확인 안내와 사용 절차는 [프런트엔드 구조](../FRONTEND-ARCHITECTURE.md)·[첫 사용 설정](../guides/onboarding-and-settings.md#ai-답변-상태와-확인-방법)을 따른다.
+
+실제 로컬 DB·웹의 desktop/mobile 채팅14/14를 두 번 통과했다. 대기·실행 보고·중단 요청·미확인·종결, 관찰자 공개 상태, 사람 확인 안내, 직접 질문·동일 요청 확인·연결 교체·초안·스크롤·자료 이력·접근 철회를 확인했고 두 부모 fixture 모두 종료0으로 정리했다. 직접 질문 대상의 소유자 역할은 실제 JSX로 확인했으며, 해당 역할의 직접 질문 browser 계정은 기존 fixture가 반환하지 않아 별도 로그인으로 검사하지 않았다. 기존 paired 소유자·질문자·관찰자 화면과 변경 없는 공개 조회 권한을 함께 검증했다. 실제 AI 입력은0이며 두 Mac 수용을 대신하지 않는다.
+
+독립 리뷰는3회다. 최초 과거 AI 간 질문의 취소 상태 누락과 누적 이력 반복 검색을 수용해 같은 방 잠금의 예약 대기→인접 질문으로 상태를 복원하고 요청·조사별 인덱스와 공유 계산을 적용했다. 후속 방 변경 번호 충돌 지적도 수용했다. 최종 검토는 C0/H0/M0/L0/INFO0이다. 마지막 변경은 이벤트 식별자·요약 비교의 방 변경 번호 조건3줄뿐이다. 정상 입력·화면·제어·browser 입력이 같아14/14 재사용이 타당하다는 독립 판단을 기록하고 잘못된 메타데이터 거부는 새 단위8건으로 검사했다. 2,000개 조사·8,000개 이벤트 검사는 결과 정확성 검사이며 실제 렌더 지연은 미측정이다.
+
+별도4418 검증 사본을 사용해 사용자4318 웹·개인 프로필·원래 `next-env.d.ts`와 기존6개 Docker container를 유지했다. 서버 계약·권한·SQL17개와 실행기·PC 연결 표시의 변경 없는 검사 입력을 확인해 기존 connector919/919를 재사용했다. 운영 코드 변경은 채팅의3개 파일이다. 작업자와 reviewer의 보고·session·해시·원본 실패 및 통과 기록은 `/private/tmp/ai-collab-chat-status-20261012-lp120evl/`에 비공개 보존하고 본 작업의 Orca pane과 실행 scratch를 정리했다.
 
 ### 어디서든 보이는 본인 PC 연결 표시
 
@@ -62,7 +74,7 @@
 
 ### 개인·비상업용 클라우드 배포
 
-운영 주소는 [AI 채팅방](https://ai-collaboration-platform.vercel.app)이다. Supabase 프로젝트 `tcljbegdguixopfcaycs`와 Vercel 개인 Hobby 프로젝트에 배포했다. 최초 배포 소스는 검토한 커밋 `8d6e32f`의 깨끗한 Git 사본이다. 최신 기능 배포와 검증은 위 본인 PC 연결 표시 기록을 따른다. Node.js24·Next.js 빌드와 실제 배포의 `sin1` 지역·READY를 확인했다. 사용자 로컬 웹·Docker·AI 프로필과 `next-env.d.ts`는 변경하지 않았다. 설정·재배포 절차는 [클라우드 배포 안내](../guides/cloud-deployment.md)를 따른다.
+운영 주소는 [AI 채팅방](https://ai-collaboration-platform.vercel.app)이다. Supabase 프로젝트 `tcljbegdguixopfcaycs`와 Vercel 개인 Hobby 프로젝트에 배포했다. 최초 배포 소스는 검토한 커밋 `8d6e32f`의 깨끗한 Git 사본이다. 최신 기능의 검토·병합·배포 기록은 현재 진행 상태에 연결한 PR과 운영 배포 기록을 따른다. Node.js24·Next.js 빌드와 실제 배포의 `sin1` 지역·READY를 확인했다. 사용자 로컬 웹·Docker·AI 프로필과 `next-env.d.ts`는 변경하지 않았다. 설정·재배포 절차는 [클라우드 배포 안내](../guides/cloud-deployment.md)를 따른다.
 
 공유 DB에 기존 앱 테이블·migration 이력·Auth 사용자가 없음을 확인하고 원본 SQL17개와 같은 version·바이트·SHA256의 CLI 호환 사본을 적용했다. anonymous sign-in과 Site URL만 변경했으며 나머지 Auth 설정의 해시는 유지됐다. 회사 코드 원문은 비공개 운영 파일에 보관하고 DB에는 verifier만 저장했다. 웹에는 Production 전용 `SUPABASE_URL`, public/anon `SUPABASE_PUBLISHABLE_KEY`, `APP_ORIGIN`만 등록했다. Preview·웹에 관리자 토큰·DB 비밀번호·AI 로그인 정보를 전달하지 않았다.
 
