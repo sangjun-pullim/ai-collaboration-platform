@@ -198,6 +198,7 @@ type StatusContext = {
 };
 type Status = {
   requestId: string;
+  interruptStage: "REQUESTED" | "ACKNOWLEDGED" | null;
   state: string;
   label: string;
   target: string;
@@ -315,8 +316,109 @@ test("should await actual terminal after interruption request and acknowledgemen
         runs: [{ ...page.runs[0], state: "UNKNOWN" }],
       }),
     )[0].label,
-    "실행 결과 확인 필요",
+    "중단 수신 확인 · 종료 확인 대기",
   );
+});
+test("should retain UNKNOWN while distinguishing server request and Mac acknowledgement", () => {
+  const requested = {
+    ...page.events[0],
+    eventId: "interrupt",
+    sequence: 2,
+    kind: "INTERRUPT_REQUESTED" as const,
+    questionId: null,
+  };
+  const ack = {
+    ...requested,
+    eventId: "ack",
+    sequence: 3,
+    kind: "INTERRUPT_ACKNOWLEDGED" as const,
+  };
+  for (const [events, stage, detail] of [
+    [[requested], "REQUESTED", /서버.*접수/],
+    [
+      [requested, ack, { ...requested, eventId: "repeat", sequence: 4 }],
+      "ACKNOWLEDGED",
+      /Mac.*수신/,
+    ],
+  ] as const) {
+    const status = statuses(
+      context({
+        events: [...page.events, ...events],
+        runs: [{ ...page.runs[0], state: "UNKNOWN" }],
+        pollError: "조회 실패",
+        bindings: [],
+      }),
+    )[0];
+    assert.equal(status.state, "UNKNOWN");
+    assert.equal(status.interruptStage, stage);
+    assert.match(status.label, /중단.*종료 확인 대기/);
+    assert.match(status.detail, detail);
+    assert.match(status.detail, /실제 실행 종료를 뜻하지/);
+    assert.equal(status.spinning, false);
+  }
+  for (const state of ["COMPLETED", "FAILED", "INTERRUPTED", "CANCELLED"] as const) {
+    const status = statuses(
+      context({ events: [...page.events, requested, ack], runs: [{ ...page.runs[0], state }] }),
+    )[0];
+    assert.equal(status.interruptStage, null);
+    assert.equal(status.label, stateLabels[state]);
+  }
+});
+test("should respect the historical interrupt stage cutoff", () => {
+  const requested = {
+    ...page.events[0],
+    eventId: "interrupt",
+    sequence: 2,
+    kind: "INTERRUPT_REQUESTED" as const,
+  };
+  const human = {
+    ...requested,
+    eventId: "human",
+    sequence: 3,
+    kind: "HUMAN_INPUT_REQUIRED" as const,
+    createdAt: "2026-10-01T00:00:01.000Z",
+  };
+  const ack = {
+    ...requested,
+    eventId: "ack",
+    sequence: 4,
+    kind: "INTERRUPT_ACKNOWLEDGED" as const,
+  };
+  const input = context({ events: [...page.events, requested, human, ack] });
+  assert.equal(notice(human, input).statuses[0].interruptStage, "REQUESTED");
+  assert.equal(statuses(input)[0].interruptStage, "ACKNOWLEDGED");
+});
+test("should scope immediate receipts to exact request cycle agent and epoch and exclude historical notices", () => {
+  const run = page.runs[0];
+  const receipt = {
+    requestId: run.requestId,
+    cycleId: run.cycleId,
+    agentId: run.agentId,
+    epoch: run.bindingEpoch,
+    state: "REQUESTED" as const,
+  };
+  const human = {
+    ...page.events[0],
+    eventId: "human-notice",
+    sequence: 2,
+    createdAt: "2026-10-01T00:00:01.000Z",
+    kind: "HUMAN_INPUT_REQUIRED" as const,
+  };
+  const input = { ...context({ events: [...page.events, human] }), cancelReceipts: [receipt] };
+  assert.equal(presentation.answerStatuses(input).statuses[0].interruptStage, "REQUESTED");
+  assert.equal(presentation.humanInputNotice(human, input).statuses[0].interruptStage, null);
+  for (const overrides of [
+    { requestId: "other" },
+    { cycleId: "other" },
+    { agentId: "other" },
+    { epoch: 2 },
+  ]) {
+    assert.equal(
+      presentation.answerStatuses({ ...input, cancelReceipts: [{ ...receipt, ...overrides }] })
+        .statuses[0].interruptStage,
+      null,
+    );
+  }
 });
 test("should ignore unrelated cycle epoch and request interruption evidence", () => {
   for (const overrides of [

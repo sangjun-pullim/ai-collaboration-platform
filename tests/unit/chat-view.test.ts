@@ -48,6 +48,8 @@ async function harness(t: TestContext, role: "owner" | "participant" | "observer
   let projectionCalls = 0;
   const calls: { action: contracts.HumanAction; body: contracts.Body }[] = [];
   let responseFailure = false;
+  let pollFailure = false;
+  let cancelResult: unknown = fixture.cancelResult;
   const storage = new Map<string, string>();
   const history: contracts.HistoryPage = {
     ...fixture.history,
@@ -126,10 +128,13 @@ async function harness(t: TestContext, role: "owner" | "participant" | "observer
       if (name === "./investigation-client")
         return {
           callInvestigation: async (action: contracts.HumanAction, body: contracts.Body) => {
-            if (action === "read") return currentPage;
+            if (action === "read") {
+              if (pollFailure) throw new contracts.WorkflowError("UNAVAILABLE");
+              return currentPage;
+            }
             calls.push({ action, body });
             if (responseFailure) throw new contracts.WorkflowError("UNAVAILABLE");
-            return {};
+            return action === "cancel" ? cancelResult : {};
           },
         };
       if (name === "./room-chat-controller") {
@@ -203,6 +208,14 @@ async function harness(t: TestContext, role: "owner" | "participant" | "observer
     calls,
     projectionCalls: () => projectionCalls,
     storage,
+    controller,
+    pollFail: async () => {
+      pollFailure = true;
+      await controller.poll();
+    },
+    cancelResponse: (value: unknown) => {
+      cancelResult = value;
+    },
     snapshot: async (next: contracts.HistoryPage) => {
       currentPage = next;
       await controller.poll();
@@ -348,6 +361,167 @@ function labeled(node: unknown, label: string): Node | undefined {
   if (typeof element.type === "function") return labeled(element.type(element.props), label);
   return labeled(element.props?.children, label);
 }
+function buttonText(node: unknown, text: RegExp): Node | undefined {
+  if (Array.isArray(node)) return node.map((child) => buttonText(child, text)).find(Boolean);
+  if (!node || typeof node !== "object") return;
+  const element = node as Node;
+  if (element.type === "button" && text.test(visibleText(element))) return element;
+  return buttonText(element.props?.children, text);
+}
+test("should disable an already requested UNKNOWN direct question after deadline with offline target", async (t) => {
+  const h = await harness(t);
+  const page = fixture.history as contracts.HistoryPage;
+  const requested = {
+    ...page.events[0],
+    eventId: "interrupt",
+    sequence: 2,
+    kind: "INTERRUPT_REQUESTED" as const,
+  };
+  await h.snapshot({
+    ...page,
+    events: [...page.events, requested],
+    runs: [{ ...page.runs[0], state: "UNKNOWN" }],
+    nextCursor: 2,
+    highWaterSequence: 2,
+  });
+  const region = labeled(h.render(), "AI 답변 상태")!;
+  assert.match(visibleText(region), /중단.*종료 확인 대기/);
+  assert.match(visibleText(region), /서버.*접수/);
+  assert.match(visibleText(region), /실제 실행 종료를 뜻하지/);
+  assert.match(visibleText(region), /소유자.*Mac.*기존.*터미널/);
+  assert.match(visibleText(region), /기한이 지났/);
+  assert.equal(buttonText(region, /중단 요청 접수/)?.props.disabled, true);
+  assert.equal(h.calls.length, 0);
+});
+test("should show server receipt immediately before polling and keep it on poll failure", async (t) => {
+  const h = await harness(t);
+  const page = fixture.history as contracts.HistoryPage;
+  await h.snapshot({ ...page, runs: [{ ...page.runs[0], state: "UNKNOWN" }] });
+  await (
+    buttonText(labeled(h.render(), "AI 답변 상태"), /이 직접 질문 중단 요청/)!.props
+      .onClick as () => Promise<boolean>
+  )();
+  for (let i = 0; i < 2; i++) {
+    const region = labeled(h.render(), "AI 답변 상태")!;
+    assert.match(visibleText(region), /서버.*접수/);
+    assert.match(visibleText(region), /종료 확인 대기/);
+    assert.equal(buttonText(region, /중단 요청 접수/)?.props.disabled, true);
+    assert.doesNotMatch(visibleText(region), /중단 확인되었습니다|중단 성공/);
+    await h.pollFail();
+  }
+  assert.equal(h.calls.length, 1);
+});
+test("should distinguish a sending cancel from server acceptance until the response arrives", async (t) => {
+  const h = await harness(t);
+  const page = fixture.history as contracts.HistoryPage;
+  await h.snapshot({ ...page, runs: [{ ...page.runs[0], state: "RUNNING" }] });
+  let resolve!: (value: unknown) => void;
+  h.cancelResponse(
+    new Promise((done) => {
+      resolve = done;
+    }),
+  );
+  const sending = (
+    buttonText(h.render(), /이 직접 질문 중단 요청/)!.props.onClick as () => Promise<boolean>
+  )();
+  const region = labeled(h.render(), "AI 답변 상태")!;
+  assert.equal(buttonText(region, /중단 요청 전송 중/)?.props.disabled, true);
+  assert.doesNotMatch(visibleText(region), /서버.*접수|Mac.*수신 확인/);
+  resolve(fixture.cancelResult);
+  assert.equal(await sending, true);
+  assert.match(visibleText(labeled(h.render(), "AI 답변 상태")), /서버.*접수/);
+});
+test("should keep uncertain cancel on the same operation without a fake receipt", async (t) => {
+  const h = await harness(t);
+  const page = fixture.history as contracts.HistoryPage;
+  await h.snapshot({ ...page, runs: [{ ...page.runs[0], state: "RUNNING" }] });
+  h.fail();
+  await (
+    buttonText(h.render(), /이 직접 질문 중단 요청/)!.props.onClick as () => Promise<boolean>
+  )();
+  const first = h.calls[0].body;
+  assert.match(visibleText(labeled(h.render(), "AI 답변 상태")), /전송 결과 미확정/);
+  assert.doesNotMatch(
+    visibleText(labeled(h.render(), "AI 답변 상태")),
+    /서버.*접수|Mac.*수신 확인/,
+  );
+  h.succeed();
+  await (buttonText(h.render(), /같은 요청 확인/)!.props.onClick as () => Promise<boolean>)();
+  assert.deepEqual(h.calls[1].body, first);
+  assert.match(visibleText(labeled(h.render(), "AI 답변 상태")), /서버.*접수/);
+});
+test("should show authoritative no active run receipt without inventing terminal answer state", async (t) => {
+  const h = await harness(t);
+  const page = fixture.history as contracts.HistoryPage;
+  await h.snapshot({ ...page, runs: [{ ...page.runs[0], state: "UNKNOWN" }] });
+  h.cancelResponse({ state: "NO_ACTIVE_RUN", controlId: null, requestId: null });
+  await (
+    buttonText(h.render(), /이 직접 질문 중단 요청/)!.props.onClick as () => Promise<boolean>
+  )();
+  const region = labeled(h.render(), "AI 답변 상태")!;
+  assert.match(visibleText(region), /서버.*중단할 활성 실행이 없/);
+  assert.match(visibleText(region), /실행 결과 확인 필요/);
+  assert.equal(buttonText(region, /활성 실행 없음/)?.props.disabled, true);
+});
+test("should show Mac acknowledgement as pending termination and never enable another cancel", async (t) => {
+  const h = await harness(t, "owner");
+  const page = fixture.history as contracts.HistoryPage;
+  const ack = {
+    ...page.events[0],
+    eventId: "ack",
+    sequence: 2,
+    kind: "INTERRUPT_ACKNOWLEDGED" as const,
+  };
+  await h.snapshot({
+    ...page,
+    events: [...page.events, ack],
+    runs: [{ ...page.runs[0], state: "UNKNOWN" }],
+    bindings: [{ ...page.bindings[0], owned: true }],
+    nextCursor: 2,
+    highWaterSequence: 2,
+  });
+  const region = labeled(h.render(), "AI 답변 상태")!;
+  assert.match(visibleText(region), /대상 Mac.*수신.*확인/);
+  assert.match(visibleText(region), /내 Mac.*기존.*터미널/);
+  assert.match(visibleText(region), /종료 확인 대기/);
+  assert.equal(buttonText(region, /중단 요청 수신 확인/)?.props.disabled, true);
+  assert.equal(h.calls.length, 0);
+});
+test("should ignore another historical cycle interruption when controlling the current question", async (t) => {
+  const h = await harness(t);
+  const page = fixture.history as contracts.HistoryPage;
+  const ack = {
+    ...page.events[0],
+    eventId: "ack",
+    sequence: 2,
+    kind: "INTERRUPT_ACKNOWLEDGED" as const,
+    requestId: "old-request",
+    cycleId: "old-cycle",
+  };
+  await h.snapshot({
+    ...page,
+    events: [...page.events, ack],
+    runs: [{ ...page.runs[0], state: "UNKNOWN" }],
+    nextCursor: 2,
+    highWaterSequence: 2,
+  });
+  const region = labeled(h.render(), "AI 답변 상태")!;
+  assert.equal(buttonText(region, /이 직접 질문 중단 요청/)?.props.disabled, false);
+  assert.doesNotMatch(visibleText(region), /중단 요청.*접수|Mac.*수신 확인/);
+});
+test("should clear immediate receipt on source access loss", async (t) => {
+  const h = await harness(t);
+  const page = fixture.history as contracts.HistoryPage;
+  await h.snapshot({ ...page, runs: [{ ...page.runs[0], state: "UNKNOWN" }] });
+  await (
+    buttonText(h.render(), /이 직접 질문 중단 요청/)!.props.onClick as () => Promise<boolean>
+  )();
+  (find(h.render(), "timeline")!.props.onAccessLost as () => void)();
+  const region = labeled(h.render(), "AI 답변 상태")!;
+  assert.match(visibleText(region), /현재 요청된 AI 답변이 없습니다/);
+  assert.doesNotMatch(visibleText(region), /서버.*접수/);
+  assert.equal(buttonText(region, /중단/), undefined);
+});
 for (const role of ["owner", "participant", "observer"] as const) {
   test(`should show target progress and confirmed terminal guidance to ${role}`, async (t) => {
     const h = await harness(t, role);

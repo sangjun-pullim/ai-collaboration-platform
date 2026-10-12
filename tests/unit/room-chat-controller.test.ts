@@ -61,7 +61,8 @@ function setup(t: TestContext, role: "participant" | "observer" = "participant")
   } as Storage;
   let hidden = false;
   let currentPage = page();
-  let behavior: RoomChatRequest = async (action) => (action === "read" ? currentPage : {});
+  let behavior: RoomChatRequest = async (action) =>
+    action === "read" ? currentPage : action === "cancel" ? fixture.cancelResult : {};
   const calls: {
     action: HumanAction;
     body: Body;
@@ -99,6 +100,135 @@ function setup(t: TestContext, role: "participant" | "observer" = "participant")
     },
   };
 }
+
+type Receipt = {
+  requestId: string;
+  cycleId: string;
+  agentId: string;
+  epoch: number;
+  state: "REQUESTED" | "NO_ACTIVE_RUN";
+};
+function receipts(controller: RoomChatController): Receipt[] {
+  return (controller.getSnapshot() as unknown as { cancelReceipts: Receipt[] }).cancelReceipts;
+}
+const cancelFields = {
+  requestId: fixture.cancel.requestId,
+  expectedRoomRevision: fixture.cancel.expectedRoomRevision,
+};
+test("should remember exact server cancel receipt before polling without raw result data", async (t) => {
+  const h = setup(t);
+  h.setPage(fixture.history);
+  await h.controller.poll();
+  assert.equal(await h.controller.mutate("cancel", cancelFields), true);
+  assert.deepEqual(receipts(h.controller), [
+    {
+      requestId: fixture.cancel.requestId,
+      cycleId: fixture.history.runs[0].cycleId,
+      agentId: fixture.ask.targetAgentId,
+      epoch: 1,
+      state: "REQUESTED",
+    },
+  ]);
+  assert.equal(h.controller.getSnapshot().history.snapshot!.runs[0].state, "QUEUED");
+  assert.equal(h.controller.getSnapshot().pendingDirect, null);
+  h.setBehavior(async () => {
+    throw new WorkflowError("UNAVAILABLE");
+  });
+  await h.controller.poll();
+  assert.equal(receipts(h.controller).length, 1);
+});
+test("should reject malformed and foreign cancel results retaining exact uncertain retry", async (t) => {
+  for (const result of [
+    {},
+    { ...fixture.cancelResult, requestId: fixture.ask.targetAgentId },
+    { ...fixture.cancelResult, state: "ACKNOWLEDGED" },
+  ]) {
+    t.mock.timers.reset();
+    const h = setup(t);
+    h.setPage(fixture.history);
+    await h.controller.poll();
+    h.setBehavior(async () => result);
+    assert.equal(await h.controller.mutate("cancel", cancelFields), false);
+    assert.deepEqual(receipts(h.controller), []);
+    const pending = h.controller.getSnapshot().pendingDirect!;
+    assert.ok(pending);
+    h.setBehavior(async () => fixture.cancelResult);
+    assert.equal(await h.controller.mutate("cancel", {}, pending.body), true);
+    assert.deepEqual(h.calls.at(-1)!.body, pending.body);
+    assert.equal(receipts(h.controller)[0].state, "REQUESTED");
+    h.controller.stop();
+  }
+});
+test("should retain independent receipts through other mutations new cancels and foreign terminal snapshots", async (t) => {
+  const h = setup(t);
+  const firstRun = fixture.history.runs[0];
+  const secondRun = {
+    ...firstRun,
+    requestId: fixture.ask.operationId,
+    cycleId: fixture.ask.targetAgentId,
+    bindingEpoch: 2,
+  };
+  h.setPage({ ...fixture.history, runs: [firstRun, secondRun] });
+  await h.controller.poll();
+  await h.controller.mutate("cancel", cancelFields);
+  await h.controller.mutate("speak", { publicText: "메시지" });
+  h.setBehavior(async () => ({ ...fixture.cancelResult, requestId: secondRun.requestId }));
+  await h.controller.mutate("cancel", { ...cancelFields, requestId: secondRun.requestId });
+  assert.equal(receipts(h.controller).length, 2);
+  h.setBehavior(async () => ({
+    ...fixture.history,
+    runs: [{ ...firstRun, state: "INTERRUPTED", bindingEpoch: 2 }],
+  }));
+  await h.controller.poll();
+  assert.equal(receipts(h.controller).length, 2);
+  h.setBehavior(async () => ({
+    ...fixture.history,
+    runs: [{ ...firstRun, state: "INTERRUPTED" }],
+  }));
+  await h.controller.poll();
+  assert.deepEqual(
+    receipts(h.controller).map((r) => r.requestId),
+    [secondRun.requestId],
+  );
+  h.controller.loseAccess();
+  assert.deepEqual(receipts(h.controller), []);
+});
+test("should bind NO_ACTIVE_RUN to the submitted request without changing answer state", async (t) => {
+  const h = setup(t);
+  h.setPage(fixture.history);
+  await h.controller.poll();
+  h.setBehavior(async () => ({ controlId: null, requestId: null, state: "NO_ACTIVE_RUN" }));
+  assert.equal(await h.controller.mutate("cancel", cancelFields), true);
+  assert.equal(receipts(h.controller)[0].requestId, fixture.cancel.requestId);
+  assert.equal(receipts(h.controller)[0].state, "NO_ACTIVE_RUN");
+  assert.equal(h.controller.getSnapshot().history.snapshot!.runs[0].state, "QUEUED");
+});
+test("should never fill cancel receipts after stop restart access loss or actor replacement", async (t) => {
+  for (const lose of [false, true]) {
+    t.mock.timers.reset();
+    const h = setup(t);
+    h.setPage(fixture.history);
+    await h.controller.poll();
+    const response = deferred<unknown>();
+    h.setBehavior(() => response.promise);
+    const sending = h.controller.mutate("cancel", cancelFields);
+    if (lose) h.controller.loseAccess();
+    else {
+      h.controller.stop();
+      h.controller.start();
+    }
+    response.resolve(fixture.cancelResult);
+    assert.equal(await sending, false);
+    assert.deepEqual(receipts(h.controller), []);
+    const replacement = new RoomChatController(
+      { ...actor, userId: fixture.ask.targetAgentId, role: "observer" },
+      async () => page(),
+    );
+    assert.deepEqual(receipts(replacement), []);
+    assert.ok(h.controller.getSnapshot().pendingDirect);
+    h.controller.stop();
+  }
+});
 
 test("should own one poll and preserve active hidden and failure delays", async (t) => {
   const h = setup(t);

@@ -107,6 +107,7 @@ export interface AnswerStatusContext {
   pollError?: string | null;
   gap?: boolean;
   role?: "owner" | "participant" | "observer";
+  cancelReceipts?: import("./room-chat-controller.ts").CancelReceipt[];
 }
 export interface AnswerStatus {
   requestId: string;
@@ -123,6 +124,8 @@ export interface AnswerStatus {
   guidance: string;
   detail: string;
   updatedAt: string | null;
+  interruptStage: "REQUESTED" | "ACKNOWLEDGED" | null;
+  cancelReceiptState: "REQUESTED" | "NO_ACTIVE_RUN" | null;
 }
 const answerLabels: Record<RunSummary["state"], string> = {
   QUEUED: "질문 접수 · AI 응답 대기",
@@ -153,6 +156,7 @@ type RequestEvidence = {
   epoch: number | null;
   reports: PublicEvent[];
   interrupts: PublicEvent[];
+  acknowledgements: PublicEvent[];
   sender: PublicEvent | null;
   question: PublicEvent | null;
 };
@@ -373,6 +377,7 @@ function indexEvidence(context: AnswerStatusContext) {
       interrupts: matching.filter((event) =>
         ["INTERRUPT_REQUESTED", "INTERRUPT_ACKNOWLEDGED"].includes(event.kind),
       ),
+      acknowledgements: matching.filter((event) => event.kind === "INTERRUPT_ACKNOWLEDGED"),
       sender: matching.find((event) => event.senderKind === "AGENT") ?? null,
       question,
     });
@@ -382,6 +387,9 @@ function indexEvidence(context: AnswerStatusContext) {
     requests,
     byCycle,
     humanEvents,
+    cancelReceipts: new Map(
+      (context.cancelReceipts ?? []).map((receipt) => [receipt.requestId, receipt]),
+    ),
     owned: new Set(
       context.bindings
         .filter((binding) => binding.owned)
@@ -430,12 +438,32 @@ function projectStatus(
     (context.role === "owner" || context.role === "participant") &&
     index.owned.has(bindingKey(agentId, epoch));
   const terminal = ["COMPLETED", "FAILED", "INTERRUPTED", "CANCELLED"].includes(state);
-  const interruptPending =
-    !terminal && (at ? !!reportBefore(run.interrupts, at.sequence) : run.interrupts.length > 0);
+  const savedReceipt = !at && !terminal ? index.cancelReceipts.get(requestId) : undefined;
+  const cancelReceiptState =
+    savedReceipt &&
+    savedReceipt.cycleId === cycleId &&
+    savedReceipt.agentId === agentId &&
+    savedReceipt.epoch === epoch
+      ? savedReceipt.state
+      : null;
+  // Once the target acknowledges, repeated server requests cannot downgrade that evidence.
+  const interrupt = at ? reportBefore(run.interrupts, at.sequence) : run.interrupts.at(-1);
+  const acknowledgement = at
+    ? reportBefore(run.acknowledgements, at.sequence)
+    : run.acknowledgements.at(-1);
+  const interruptStage = terminal
+    ? null
+    : acknowledgement
+      ? "ACKNOWLEDGED"
+      : interrupt || cancelReceiptState === "REQUESTED"
+        ? "REQUESTED"
+        : null;
+  const interruptPending = interruptStage !== null;
   const needsCheck =
     state === "UNKNOWN" ||
     ["FAILED", "INTERRUPTED", "CANCELLED"].includes(state) ||
-    interruptPending;
+    interruptPending ||
+    cancelReceiptState === "NO_ACTIVE_RUN";
   const check = ownConnection
     ? "내 Mac의 기존 AI 연결 터미널과 로컬 실행 기록을 확인하세요."
     : "대상 AI 소유자에게 Mac의 기존 AI 연결 터미널과 로컬 실행 기록을 확인해 달라고 요청하세요.";
@@ -472,17 +500,29 @@ function projectStatus(
     target,
     question,
     ownConnection,
+    interruptStage,
+    cancelReceiptState,
     guidance,
-    label:
-      interruptPending && state !== "UNKNOWN"
-        ? "중단 요청 중 · 종료 확인 대기"
-        : answerLabels[state],
-    detail: `${answerDetails[state]}${interruptPending ? " 중단 요청의 수신 확인은 실제 실행 종료를 뜻하지 않습니다." : ""}`,
+    label: interruptPending
+      ? state === "UNKNOWN"
+        ? interruptStage === "ACKNOWLEDGED"
+          ? "중단 수신 확인 · 종료 확인 대기"
+          : "중단 요청 접수 · 종료 확인 대기"
+        : "중단 요청 중 · 종료 확인 대기"
+      : answerLabels[state],
+    detail: `${answerDetails[state]}${
+      interruptPending
+        ? `${interruptStage === "ACKNOWLEDGED" ? " 대상 Mac이 중단 요청 수신을 확인했습니다." : " 서버가 중단 요청을 접수했습니다. 대상 Mac의 수신 확인을 기다립니다."} 중단 요청의 수신 확인은 실제 실행 종료를 뜻하지 않습니다. 연결이 끊겼거나 연결이 바뀐 대상은 소유자가 기존 AI 연결 터미널에서 실제 종료를 확인하고 종료 상태를 보고해야 합니다.`
+        : cancelReceiptState === "NO_ACTIVE_RUN"
+          ? " 서버가 중단할 활성 실행이 없다고 응답했습니다. 이 응답만으로 기존 답변 실행의 종료 상태를 확정하지 않습니다."
+          : ""
+    }`,
     spinning:
       !at &&
       fresh &&
       currentTarget &&
       !interruptPending &&
+      cancelReceiptState !== "NO_ACTIVE_RUN" &&
       ["QUEUED", "LEASED", "RUNNING"].includes(state),
     freshness: !at && fresh ? null : "상태 갱신 지연/확인 불가",
     updatedAt: useReport
