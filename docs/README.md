@@ -56,7 +56,7 @@
 - [공식 Claude 연결과 후속 질문 구현 기록](impl-spec/archive/030-native-claude-chat-and-follow-up.md): 기본 factory의 실제 설치·설정 검증과 정상·후속 답변·중단을 확인하고 종료 리뷰 뒤 보관했다. 자동 공동 조사의 방향 수정은 기본 채팅의 선행 조건이 아니다.
 - [명령 한 번으로 내 Mac 연결 구현 기록](impl-spec/archive/031-one-command-local-connection.md): 별도 앱·저장소·npm 설치 없이 운영 연결 코드를 임시 실행하고 기기 승인부터 웹 AI 설정까지 이어가는 단계. 현재 실행기를 재사용하는 배포·승인·설정 연결이다. 구현·검증 상태는 개발·검증 상태 문서에서 확인한다.
 - [모델 표시와 코드 정리 구현 기록](impl-spec/archive/032-model-display-and-maintainability.md): 공급자 표시 이름·실행 설정 호환과 실행 기록/권한/복구·채팅 데이터 책임 분리를 완료하고 검증한 계획. 현재 검증과 남은 제품 수용은 개발·검증 상태를 따른다.
-- [어디서든 보이는 내 AI 연결 표시](impl-spec/033-own-ai-connection-indicator.md): 최근 본인 PC 통신의 초록·빨간 표시와 수동 재확인. 정확한 검증·배포 상태는 개발·검증 상태를 따른다.
+- [어디서든 보이는 내 AI 연결 표시](impl-spec/archive/033-own-ai-connection-indicator.md): 최근 본인 PC 통신의 초록·빨간 표시와 수동 재확인. 정확한 검증·배포 상태는 개발·검증 상태를 따른다.
 - [질문 당시 대상·코드 이력 구현 기록](impl-spec/archive/027-shared-input-source-history.md): 중앙 채팅에 예약 당시 대상과 저장한 파일 관찰을 연결한다. 입력 전 허용 파일과 실제 도구 반환을 구분하며 메시지별 상세 조회를 제공하는 단계다.
 - [구현 계획 위치](impl-spec): 새 작업을 시작할 때 실행할 코드 수준 계획을 둔다. 현재 완료한 단계는 보관 폴더에서 찾는다.
 - [계획 보관](impl-spec/archive): 완료 계획과 대체된 구계획의 당시 결정·검증 기록. 현재 코드 상태는 구조 문서와 실행 결과로 확인한다.
