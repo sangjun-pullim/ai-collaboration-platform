@@ -16,6 +16,95 @@ import { RepositoryReader } from "../src/workspace/repository-reader.ts";
 import { runnerFixture, SyntheticAdapter } from "./runner-fixture.ts";
 import { capabilityHash } from "../src/settings/contracts.ts";
 import { uuid } from "./runtime-fixture.ts";
+import { RepositoryTools } from "../src/workflow/repository-tools.ts";
+
+test("should propagate ordinary capacity failures and cancellation after a reader timeout", async (t) => {
+  const f = await runnerFixture({}, automatic);
+  let closed = false,
+    time = 0;
+  const stopped = new RuntimeError("AUTHORITY_LOST");
+  const guard = () => {
+    if (closed) throw stopped;
+  };
+  const tools = new RepositoryTools(f.record.context!, f.record.settings!, guard);
+  const capacity = new RuntimeError("RUNTIME_CAPACITY");
+  const original = RepositoryReader.prototype.search;
+  const mocked = t.mock.method(RepositoryReader.prototype, "search", async () => {
+    throw capacity;
+  });
+  try {
+    await assert.rejects(
+      tools.execute("search_workspace", { query: "evidence" }, guard),
+      (error) => error === capacity,
+    );
+    mocked.mock.restore();
+    const reader = new RepositoryReader(
+      f.record.context!.root,
+      () => {
+        time += 500;
+      },
+      () => time,
+    );
+    t.mock.method(
+      RepositoryReader.prototype,
+      "search",
+      async (args: Parameters<typeof original>[0]) => {
+        try {
+          return await original.call(reader, args);
+        } finally {
+          closed = true;
+        }
+      },
+    );
+    await assert.rejects(
+      tools.execute("search_workspace", { query: "evidence" }, guard),
+      (error) => error === stopped,
+    );
+  } finally {
+    await f.close();
+  }
+});
+
+test("should report a repository search timeout to the provider and still publish its final answer", async (t) => {
+  const f = await runnerFixture({}, automatic),
+    adapter = new SyntheticAdapter();
+  let time = 0;
+  const limited = new RepositoryReader(
+    f.record.context!.root,
+    () => {
+      time += 500;
+    },
+    () => time,
+  );
+  const original = RepositoryReader.prototype.search;
+  t.mock.method(RepositoryReader.prototype, "search", (args: Parameters<typeof original>[0]) =>
+    original.call(limited, args),
+  );
+  try {
+    await writeFile(join(f.root, "evidence.ts"), "const evidence = 1;\n", { mode: 0o644 });
+    f.queue();
+    adapter.executeHook = async (authority) => {
+      const input = await ownedCall(f, authority, "search_workspace", { query: "evidence" });
+      const result = await authority.tool(input);
+      assert.equal(result.success, false);
+      const saved = (await f.store.read())!.attempts[0].toolCalls[0];
+      assert.deepEqual(saved.result, result);
+      assert.deepEqual(saved.repositoryObservation!.files, []);
+      assert.equal(saved.repositoryObservation!.resultHash, digest(stableJson(result)));
+      assert.deepEqual(await authority.tool(input), result);
+      const next = await authority.tool(
+        await ownedCall(f, authority, "read_workspace_file", { path: "evidence.ts" }),
+      );
+      assert.equal(next.success, true);
+    };
+    await f.runner(adapter).run({ once: true });
+    const record = (await f.store.read())!;
+    assert.equal(record.attempts[0].state, "UPLOADED");
+    assert.equal(record.attempts[0].terminal!.terminal, "COMPLETED");
+  } finally {
+    await f.close();
+  }
+});
 
 function automatic(record: import("../src/runtime-contracts.ts").RuntimeRecord) {
   record.version = 2;

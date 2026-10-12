@@ -1,5 +1,5 @@
 import { AsyncLocalStorage } from "node:async_hooks";
-import { RepositoryReader } from "../workspace/repository-reader.ts";
+import { RepositoryReader, isRepositoryTimeLimit } from "../workspace/repository-reader.ts";
 import { repositoryMode } from "../workspace/repository-access.ts";
 import { isRepositoryTool, validateToolArguments } from "../workspace/tool-contracts.ts";
 import {
@@ -79,25 +79,39 @@ export class RepositoryTools {
     const input = validateToolArguments("AUTO_CODE", [], false, tool, args);
     return this.guards.run(guard, async () => {
       guard();
-      let data: unknown, files: RepositoryExcerpt[];
-      if (tool === "list_workspace_files") {
-        data = await this.reader.list(input);
+      let data: unknown,
+        files: RepositoryExcerpt[],
+        success = true;
+      try {
+        if (tool === "list_workspace_files") {
+          data = await this.reader.list(input);
+          files = [];
+        } else if (tool === "search_workspace") {
+          const found = await this.reader.search(input as { query: string; directory?: string });
+          data = found;
+          files = found.matches.map(excerpt);
+        } else if (tool === "read_workspace_file") {
+          const found = await this.reader.read(
+            input as { path: string; offset?: number; expectedHash?: string },
+          );
+          data = found;
+          files = [excerpt(found)];
+        } else throw new RuntimeError("TOOL_REJECTED");
+      } catch (error) {
+        guard();
+        if (!isRepositoryTimeLimit(error)) throw error;
+        success = false;
         files = [];
-      } else if (tool === "search_workspace") {
-        const found = await this.reader.search(input as { query: string; directory?: string });
-        data = found;
-        files = found.matches.map(excerpt);
-      } else if (tool === "read_workspace_file") {
-        const found = await this.reader.read(
-          input as { path: string; offset?: number; expectedHash?: string },
-        );
-        data = found;
-        files = [excerpt(found)];
-      } else throw new RuntimeError("TOOL_REJECTED");
+        data = {
+          error: "REPOSITORY_TIME_LIMIT",
+          message:
+            "Repository access stopped at its time limit. Narrow the directory or use evidence already returned. If further reads are unavailable, explain the incomplete inspection.",
+        };
+      }
       guard();
       const text = JSON.stringify(data);
       if (Buffer.byteLength(text) > 8192) throw new RuntimeError("RUNTIME_CAPACITY");
-      const result: ToolResult = { success: true, contentItems: [{ type: "inputText", text }] };
+      const result: ToolResult = { success, contentItems: [{ type: "inputText", text }] };
       const body = {
         version: 1 as const,
         kind: "REPOSITORY_TOOL_OBSERVATION" as const,
