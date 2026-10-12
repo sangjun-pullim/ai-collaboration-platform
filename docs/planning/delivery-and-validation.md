@@ -33,6 +33,16 @@
 
 2026-10-10 개인·비상업용 Vercel Hobby + Supabase Free 배포와 실제 HTTPS 접속 검사14개·독립 운영 리뷰를 완료했다. 배포 설정과 정본 갱신은 [PR10](https://github.com/sangjun-pullim/ai-collaboration-platform/pull/10)에서 검토하며 정확한 병합 상태는 해당 PR을 따른다. 2026-10-09 모델 표시 보정·채팅/실행/저장 책임 분리와 공식 Claude의 로컬 정상·후속 답변·중단 검증을 완료하고022·030까지 보관했다. 서로 다른 두 Mac의 실제 질문·후속 답변은 동료가 참여할 때 확인하는 미완료 범위다. 공개 웹 접속 검사, 가짜 AI 공급자를 사용하는 DB·HTTP 검사, 공식 Claude의 실제 입력을 구분한다. 아래 이전 기록의 접근 차단은 당시 실행 환경의 결과다.
 
+### Claude 기록을 보존한 새 대화 복구
+
+사용자가 선택한 복구 기준을 코드 d9df6e7에 적용했다. APPLIED 설정의 목록 조회 예약과 실제 답변용 대화는 서로 다른 ID여도 각각 소유·세대·root·정책·정리 증거를 검증한다. 설정이 적용된 만료 연결에서 terminal·receipt 없는 UNKNOWN만 별도 `new` 확인과 본인 기기의 웹 취소·새 승인 뒤 새 대화로 분리한다. 이전 UNKNOWN·대기 도구·개인 설정·실패 실행 파일은 그대로 유지하며 질문 재실행·같은 대화 재개·revoke-local의 차단을 완화하지 않는다.
+
+정상 예약의 복구를 수정 전 실패시킨 뒤 복구44/44를 통과했다. 실제 개인 기록의 격리 사본에서 목록 조회 예약 불일치·원래 REQUESTED operation snapshot·미확인 답변1건·대기 도구를 유지한 새 승인 흐름을 mock HTTP로 확인했고 원본3파일이 바뀌지 않았다. 초기 사본 생성은 완료 기록을 초기 write API로 복사하려다 거절됐으므로 격리 사본에 원문을 배치하고 read 검증을 수행했다. 개인 원본은 수정하지 않았다.
+
+연결기 전체1002개 중1001개가 통과했고, 변경 없는 lease 경계 시간 조건1건은 관련5개 재검사에서5/5였다. 마지막 추가한 첫 질문 전 RESERVED 예약 검사는 관련44/44에 포함된다. 실패 원본과 통과 결과를 모두 보존했다. 연결기 타입·웹/distribution build·lint·root format/check와 diff가 통과했고 실제 AI 입력은0회다. 웹544/544와 동일 서버 SQL·승인·회전·권한 검사는 이전 통과 결과를 재사용했다. 기존 시간 조건 테스트의 간헐 실패는 이번 변경에 포함하지 않은 후속 항목이다.
+
+독립 Sol xhigh 구현 리뷰1회에서 PASS C0H0을 받았다. 정상 RESERVED·MATERIALIZED, 원래 request snapshot, 새 대화 확인 거절, 살아 있는 native 잠금, 진행 중 실행·서버 작업·미게시 종결·원본 바이트 보존을 검토했다. 완료 워커와 reviewer 보고를 기록한 뒤 해당 Orca 터미널을 닫았다. main 병합·Production 배포 결과는 [PR17](https://github.com/sangjun-pullim/ai-collaboration-platform/pull/17)의 merge·deployment 상태에서 확인한다. 개인 기록의 RUNTIME_CAPACITY 발생 지점은 저장된 증거만으로 확정하지 못했으며 이번 변경은 이전 입력을 재실행해 확인하지 않는다.
+
 ### 기기 인증 갱신과 만료 후 재승인
 
 웹 단위544/544, 연결기 전체982/982와 마지막 guard 보정42/42, 실제 PostgreSQL·HTTP 기간/보존3개·idle 연결 명령 갱신/35초 통신/정상 종료1개·등록 한도/새 승인/합성 AI 실행 준비/기존 바이트 보존/정리1개, desktop/mobile 기기 browser10/10을 통과했다. 타입·lint·Production/distribution 빌드·root format/check와 diff도 통과했다. 마지막 guard 한 파일 이외의 같은 운영13파일과 영향을 받지 않은 검사/리뷰를 재사용했다. 실제 공급자 입력은0회다.
