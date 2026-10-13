@@ -1,5 +1,5 @@
 ---
-verified-against: 1227eae3dd071f3b592dc7d5cf3b523a69ccb887
+verified-against: 9f32dc02829d808fbdac558835e129b500e9b5a7
 sources:
   - src/app/api/**
   - src/features/room-access/contracts.ts
@@ -76,7 +76,7 @@ Git 기준과 작업트리의 사람 cookie Auth·기기 bearer·내구 조사·
 
 ## 내구 조사와 실행 조정
 
-사람의 `/api/investigations/<action>`은 `read`, `speak`, `start`, `interrupt`, `pause`, `resume`, `ask`, `cancel`, `input-state`, `input-control`만 허용한다. 현재 cookie 사용자·방 역할로 권한을 계산한다. 공동 발언은 실행을 만들지 않는다. `start`는 자기 origin과 다른 참가자의 peer binding·현재 epoch/revision·준비 보고·공유 확인을 요구한다. `resume`의 room mode는 intake만 재개하고 cycle mode는 원래 origin 소유자의 명시적 새 generation을 만든다. observer는 공동 이력 읽기만 가능하며 다른 사람의 새 답변 상태를 제어하지 않는다.
+사람의 `/api/investigations/<action>`은 `read`, `read-recovery`, `retire`, `speak`, `start`, `interrupt`, `pause`, `resume`, `ask`, `cancel`, `input-state`, `input-control`만 허용한다. 현재 cookie 사용자·방 역할로 권한을 계산한다. 공동 발언은 실행을 만들지 않는다. `start`는 자기 origin과 다른 참가자의 peer binding·현재 epoch/revision·준비 보고·공유 확인을 요구한다. `resume`의 room mode는 intake만 재개하고 cycle mode는 원래 origin 소유자의 명시적 새 generation을 만든다. observer는 공동 이력 읽기만 가능하며 다른 사람의 새 답변 상태를 제어하지 않는다.
 
 `ask`는 질문자 AI·기기·경로 없이 다른 소유자의 준비된 대상 하나에 질문한다. 본문은 `protocol:1`, `roomId`, `operationId`, `expectedUserId`, `targetAgentId`, `targetEpoch`, `expectedRoomRevision`, `publicText`, `confirmed:true`다. `cancel`의 본문은 `protocol:1`, `roomId`, `operationId`, `expectedUserId`, `requestId`, `expectedRoomRevision`이며 질문자나 대상 소유자가 해당 직접 질문 하나만 취소·중단할 수 있다. UUID `expectedUserId`는 화면을 연 뒤 로그인 주체가 바뀌지 않았다는 사전 조건이다. 서버는 현재 Auth가 없으면 `UNAUTHENTICATED`, 식별자가 다르면 `FORBIDDEN`을 반환한다. 이 필드로 다른 사용자의 권한을 얻을 수 없다. 원본 본문의 크기·필드를 검사한 뒤 사전 조건을 제거하고 실제 Auth를 기준으로 기존 권한·receipt를 처리한다. 동일 사람·operation·정규화 본문의 재전달은 저장된 결과를 반환한다.
 
@@ -84,9 +84,17 @@ Git 기준과 작업트리의 사람 cookie Auth·기기 bearer·내구 조사·
 
 기기의 `/api/workflow/<action>`은 `ready`, `poll`, `claim`, `start-intent`, `lease`, `question`, `complete`, `interrupt-ack`, `observe`, `admission`, `admission-ack`만 허용한다. 현재 opaque bearer에서 자기 binding scope를 계산하고 각 attempt의 requestId·attemptId·fence·bindingEpoch를 대조한다. 중앙 API가 native session ID·명령·모델 설정을 받지 않는다.
 
-본문은 `protocol:1`의 exact schema이며 실행 mutation에는 operation UUID를 사용한다. read/poll·input-state·admission은 receipt를 만들지 않고, admission-ack는 현재 revision/epoch의 반복 보고를 별도로 처리한다. ready/lease의 재전달은 최초 효과만 반환한다. 새 갱신에는 새 operation이 필요하다. 공개 text는 UTF-8 8 KiB·4,000 codepoint, 전체 body는 16 KiB다. 고정 DTO와 상태별 nullable 필드는 [contracts](../src/features/investigation-coordinator/contracts.ts), 로컬 mirror는 [workflow-contracts](../packages/local-connector/src/workflow-contracts.ts)가 정본이다.
+본문은 `protocol:1`의 exact schema이며 실행 mutation에는 operation UUID를 사용한다. read/read-recovery/poll·input-state·admission은 receipt를 만들지 않고, admission-ack는 현재 revision/epoch의 반복 보고를 별도로 처리한다. ready/lease의 재전달은 최초 효과만 반환한다. 새 갱신에는 새 operation이 필요하다. 공개 text는 UTF-8 8 KiB·4,000 codepoint, 전체 body는 16 KiB다. 고정 DTO와 상태별 nullable 필드는 [contracts](../src/features/investigation-coordinator/contracts.ts), 로컬 mirror는 [workflow-contracts](../packages/local-connector/src/workflow-contracts.ts)가 정본이다.
 
 조회는 공개 event의 방별 sequence·cursor와 bounded snapshot을 반환한다. 질문/답변과 terminal 보고는 구분하며, 완료한 origin/continuation/resume의 공유 text도 correlated AGENT SPEECH으로 보관한다. UNKNOWN의 `observe`와 늦은 결과는 종결 사실·과거 기록만 남기고 자동 후속 실행을 만들지 않는다. `ready`와 `RUNNING`은 기기의 보고이며 실제 공급자 readiness·모델 적용의 독립 증거가 아니다.
+
+### 종료 미확인 직접 질문 정리
+
+`read-recovery`의 exact 본문은 `{protocol:1, roomId, afterSequence, afterRetirementSequence}`다. 기존 read 필드를 그대로 유지하면서 `recovery:{hasBlockingRuns,candidate,retirements,nextRetirementCursor,highWaterRetirementSequence,hasMoreRetirements}`를 추가한다. 기존 `read`에는 새 필드를 넣지 않는다. 이벤트와 정리 커서는 독립적이다. 정리 페이지는 방별 sequence 오름차순 최대32개이며 highWater보다 큰 입력 커서는 CONFLICT다. 정리 항목은 `{sequence,requestId,cycleId,agentId,bindingEpoch,retiredAt}`이고 개인 경로·native 식별자는 반환하지 않는다. observer도 읽을 수 있으나 candidate는 원래 대상 소유자에게만 제공한다.
+
+`retire`의 exact 본문은 `{protocol:1,roomId,operationId,expectedUserId,expectedRoomRevision,requestId,cycleId,attemptId,fence,agentId,bindingEpoch,confirmed:true}`다. 현재 쓰기 참가자이며 원래 대상 AI 소유자만 허용한다. 유효 기한이 지난 DIRECT/PEER의 시작된 UNKNOWN과 실제 해제된 원래 기기를 검사한다. 성공 receipt는 `state:"RETIRED_UNCONFIRMED"`와 sequence·동일 실행 식별자·retiredAt·확정 roomRevision을 반환한다. UUID·safe integer·16KiB 한도를 유지하고 같은 operation/정규화 본문은 원래 결과를 복구한다. 실제 terminal을 생성하거나 질문을 재실행하지 않는다.
+
+기존 cancel의 동일 receipt 복구는 현재 Auth/쓰기 접근과 원래 질문자 또는 대상 소유 관계를 먼저 확인한다. 이미 저장한 동일 operation/hash는 정리·현재 대상 교체·revision 변화 뒤에도 원래 결과를 반환한다. receipt가 없는 신규 cancel에는 현재 대상/epoch/cycle/revision 검사를 유지하며 정리한 본인 요청은 CONFLICT다.
 
 ## 내 AI의 새 답변 제어
 

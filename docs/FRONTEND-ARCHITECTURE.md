@@ -1,5 +1,5 @@
 ---
-verified-against: 8dee1e1ffbbd4370388ec8febe7468166b0def7c
+verified-against: 9f32dc02829d808fbdac558835e129b500e9b5a7
 sources:
   - src/app/**
   - src/features/**
@@ -22,6 +22,10 @@ sources:
 채팅의 원본 이벤트는 append-only 이력에 보존한다. 같은 방·request·question·agent·bindingEpoch의 ANSWER 상태 변경은 `chat-presentation.timelineEvents`에서 가장 큰 sequence를 선택해 한 답변으로 표시한다. 서로 다른 실행과 식별 정보가 부족한 이벤트는 합치지 않는다. 이 표시는 서버 이력·요청·실행 횟수를 바꾸지 않는다.
 
 질문 아래와 입력창 위의 **AI 답변 상태**는 같은 `chat-presentation.answerStatuses`와 `ChatTimeline`의 공통 표시 컴포넌트를 사용한다. 요청·질문·연결 세대와 저장된 별칭으로 대기·준비·생성·종료·미확인을 구분한다. 모든 참가자 역할에 공개 상태를 표시하고 기존 중단 권한은 유지한다. 현재 조사의 진행 중 요청을 우선 표시하며 이전 질문 상태는 해당 질문에 남긴다. 중단 수신 확인은 실제 종료와 다르고, 조회 실패·이력 누락·35초가 지난 관찰은 마지막 상태와 갱신 지연을 표시하며 회전 표시를 멈춘다. 시간 경과는 기존 렌더링 때 판정하고 별도 timer·조회·자동 재입력을 만들지 않는다.
+
+`RequestRetirementControls`는 대상 소유자의 **이전 요청 정리** 안내와 확인창을 담당한다. 확인은 사용자·방·request/cycle/attempt/fence·agent/epoch·revision에 고정한다. 해제되지 않은 원래 기기는 연결 관리로 안내한다. 정확한 receipt를 확인하면 현재 카드를 제외하고 질문의 과거 상세에 **답변 미확인 · 이전 기록**을 남긴다. 새 질문은 receipt revision 이상인 최신 회복 조회와 서버의 hasBlockingRuns를 확인한 뒤 허용한다. 조회 실패·늦은 snapshot·계정/방 전환이 이 조건을 우회하지 않는다.
+
+controller는 기존 순차 조회에서 read-recovery를 사용하고 이벤트·정리 커서를 각각 누적한다. 최근32개 run 밖의 정리도 독립 페이지로 수신한다. retire 의도는 사용자/방별 sessionStorage에 정확히 저장하며 응답 유실 시 **같은 요청 확인**만 제공한다. 기존 read/events·로컬 CLI와 현재 polling 주기는 유지한다.
 
 시스템의 `HUMAN_INPUT_REQUIRED` 기록은 정확한 원인 코드가 없어 이를 만들어 내지 않는다. `humanInputNotice`가 같은 조사와 해당 sequence까지의 근거로 당시 상태를 안내한다. 현재 상태나 다른 조사로 과거 원인을 덮어쓰지 않는다. 소유자가 확인할 Mac 터미널·실행 기록과 본인 연결 관리 위치를 안내하며 과거 기록을 새 질문의 현재 차단으로 표시하지 않는다. 사용 절차는 [AI 답변 상태와 확인 방법](guides/onboarding-and-settings.md#ai-답변-상태와-확인-방법)을 따른다.
 

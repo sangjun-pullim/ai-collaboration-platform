@@ -1,5 +1,5 @@
 ---
-verified-against: d9df6e7b5499cd6de6419ab10def8d83e283efb8
+verified-against: 9f32dc02829d808fbdac558835e129b500e9b5a7
 sources:
   - src/features/investigation-coordinator/**
   - src/features/runtime-settings/**
@@ -46,6 +46,14 @@ sources:
 서버는 같은 답변의 도착과 채택 확정을 별도 ANSWER 이벤트로 남긴다. 채팅 화면은 같은 실행·질문·대상의 최신 상태를 한 답변에 표시하며 원본 이벤트를 삭제하지 않는다. 상태 갱신을 추가 답변이나 새 AI 실행으로 표시하지 않는다.
 
 006의 `start`는 origin과 peer 두 binding을 요구한다. [010](impl-spec/archive/010-human-direct-questions.md)의 `ask`는 별도 DIRECT cycle과 HUMAN 질문을 만들고 대상 PEER 실행만 사용한다. 구현 검증과 후속 연동은 [진행 상태](planning/delivery-and-validation.md#현재-진행-상태)에 기록한다. 아래 AI 간 질문 봉투의 `originRunId`를 사람 질문에 가짜로 채우지 않는다.
+
+## 종료 미확인 직접 질문의 이전 기록 정리
+
+대상 AI의 원래 소유자이며 현재 쓰기 권한이 있는 참가자만 **이전 요청 정리**를 실행한다. 직접 질문의 유효 기한이 지났고 request와 시작 의도가 있는 attempt 모두 UNKNOWN이며, 원래 기기가 실제로 해제된 경우만 허용한다. 방 소유자라는 이유로 다른 사람의 AI를 정리할 수 없으며 기기 만료·단절·삭제는 해제를 대신하지 않는다.
+
+서버는 정확한 request·cycle·attempt/fence·agent/epoch의 정리 기록을 보존하고 해당 DIRECT cycle을 현재 대화에서 분리한다. 원래 질문·UNKNOWN·중단 접수·실행 근거·예산은 바꾸지 않는다. 이는 실제 실행 종료의 증거가 아니며 원래 Mac의 로컬 UNKNOWN과 설정 보호는 유지한다. 정리한 요청만 대화 차단에서 제외하고 다른 미종결 작업은 계속 차단한다. 새 연결이 준비되면 참가자가 새로운 질문을 명시적으로 보내며 이전 질문을 자동 실행하지 않는다.
+
+기존 동일 cancel operation의 응답은 현재 인증·원래 질문자/대상 소유 관계를 확인한 뒤 복구한다. 정리 또는 대상 교체로 이미 접수한 중단 요청을 방 권한 상실로 바꾸지 않는다. 새 cancel은 정리된 요청에 대해 CONFLICT다. 계약은 [API](API-SPEC.md#종료-미확인-직접-질문-정리)를 따른다.
 
 ## 소유자의 로컬 AI 설정
 

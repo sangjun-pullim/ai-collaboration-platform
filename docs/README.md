@@ -59,6 +59,7 @@
 - [어디서든 보이는 내 AI 연결 표시](impl-spec/archive/033-own-ai-connection-indicator.md): 최근 본인 PC 통신의 초록·빨간 표시와 수동 재확인. 정확한 검증·배포 상태는 개발·검증 상태를 따른다.
 - [기기 인증 갱신과 만료 후 재승인](impl-spec/archive/034-local-connection-renewal-and-reapproval.md): 신규 7일 인증·자동 갱신과 이전 기록을 보존하는 새 승인 복구. 구현·검증·운영 배포를 완료한 기록이다.
 - [질문 당시 대상·코드 이력 구현 기록](impl-spec/archive/027-shared-input-source-history.md): 중앙 채팅에 예약 당시 대상과 저장한 파일 관찰을 연결한다. 입력 전 허용 파일과 실제 도구 반환을 구분하며 메시지별 상세 조회를 제공하는 단계다.
+- [종료 미확인 직접 질문 정리](impl-spec/035-unconfirmed-direct-question-retirement.md): 원래 대상 소유자가 미확인 요청을 이전 기록으로 보관하는 계획. 진행·검증·배포는 개발·검증 상태 문서를 따른다.
 - [구현 계획 위치](impl-spec): 새 작업을 시작할 때 실행할 코드 수준 계획을 둔다. 현재 완료한 단계는 보관 폴더에서 찾는다.
 - [계획 보관](impl-spec/archive): 완료 계획과 대체된 구계획의 당시 결정·검증 기록. 현재 코드 상태는 구조 문서와 실행 결과로 확인한다.
 
