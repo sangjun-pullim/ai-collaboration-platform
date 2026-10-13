@@ -32,11 +32,18 @@ import { ConnectionError } from "../src/contracts.ts";
 import { ConnectionRenewal } from "../src/connection-renewal.ts";
 import { Connector } from "../src/cli.ts";
 import { CentralClient } from "../src/central-client.ts";
+import { createHash } from "node:crypto";
+import { prepareConnection, type ConnectInput } from "../src/cli/connect-command.ts";
+import {
+  prepareSelectedConnection,
+  selectConnectionProfile,
+} from "../src/cli/connection-recovery.ts";
+import { withSettingsDeviceLock } from "../src/cli/settings-lock.ts";
 
 /** This HTTP fixture exercises the real client's projection, not an actual DB transaction. */
-async function fixture(provider: "codex" | "claude" = "codex") {
+async function fixture(provider: "codex" | "claude" = "codex", profileName = "one") {
   const f = await runtimeFixture();
-  const profile = new StateStore(f.stateDir, "one");
+  const profile = new StateStore(f.stateDir, profileName);
   const store = new SettingsStore(profile);
   const operationId = uuid();
   let response: SettingsResponse = {
@@ -317,6 +324,231 @@ async function local(f: Awaited<ReturnType<typeof fixture>>) {
   assert.equal(f.prepares, 0);
   f.applying();
 }
+
+async function reconnectFixture(kind: "plain" | "lineage", provider: "codex" | "claude" = "codex") {
+  const f = await fixture(provider, `web-${"a".repeat(32)}`);
+  assert.equal((await f.manager().run({ once: true })).state, "LOCAL_CONFIRMATION");
+  const input: ConnectInput = {
+    organizationId: f.scope.organizationId,
+    roomId: f.scope.roomId,
+    deviceAlias: "Device",
+  };
+  let target = f.profile;
+  if (kind === "lineage") {
+    const recoveryId = uuid(),
+      profile = `web-${createHash("sha256")
+        .update(JSON.stringify(["connection-recovery", f.profile.profile, recoveryId]))
+        .digest("hex")
+        .slice(0, 32)}`;
+    target = new StateStore(f.stateDir, profile);
+    input.previousProfile = f.profile.profile;
+    input.recoveryId = recoveryId;
+    input.recoveryChain = JSON.stringify({
+      version: 1,
+      baseProfile: f.profile.profile,
+      chain: [{ previousProfile: f.profile.profile, recoveryId, profile }],
+    });
+  }
+  const calls: string[] = [];
+  const run = async () => {
+    const selection = await selectConnectionProfile(target, input, f.scope.server);
+    assert.equal(selection.mode, "normal");
+    const client = new CentralClient(f.scope.server, async (url) => {
+      const action = String(url).split("/").at(-1)!;
+      calls.push(action);
+      assert.equal(action, "bindings", "reconnect must not register or create a session");
+      return Response.json({ ok: true, data: { protocol: 1, bindings: [] } });
+    });
+    await prepareSelectedConnection(
+      selection,
+      () => {},
+      (verify) =>
+        prepareConnection(
+          new Connector(selection.store, client),
+          {
+            organizationId: input.organizationId,
+            roomId: input.roomId,
+            deviceAlias: input.deviceAlias,
+          },
+          {
+            interactive: true,
+            signal: new AbortController().signal,
+            write: () => {},
+            confirm: async () => true,
+            open: async () => assert.fail("reconnect must not open pairing approval"),
+            verifyPreparation: verify,
+          },
+        ),
+    );
+  };
+  return Object.assign(f, { target, input, calls, reconnect: run });
+}
+
+for (const provider of ["codex", "claude"] as const)
+  for (const kind of ["plain", "lineage"] as const)
+    test(`should resume ${provider} ${kind} reconnect through existing LOCAL_CONFIRMATION recovery without another AI session`, async () => {
+      const f = await reconnectFixture(kind, provider);
+      try {
+        const profile = await readFile(f.profile.file),
+          journal = await readFile(f.store.file),
+          start = f.requests.length;
+        f.response.operation!.state = "REQUESTED";
+        f.response.operation!.receipt = null;
+        await f.reconnect();
+        assert.deepEqual(await readFile(f.store.file), journal);
+        const status = await f
+          .manager({
+            folder: async () => assert.fail("recovery must not reopen setup"),
+            adapter: () => assert.fail("recovery must not create another AI session"),
+            runner: () => assert.fail("unfinished setup must not run AI inputs"),
+          })
+          .run({ once: true });
+        assert.equal(status.state, "LOCAL_CONFIRMATION");
+        assert.deepEqual(f.calls, ["bindings"]);
+        assert.deepEqual(
+          f.requests.slice(start).map((r) => r.action),
+          ["poll", "receipt"],
+        );
+        assert.deepEqual(f.requests.at(-1)!.body, (await f.store.read())!.journal!.receipt);
+        assert.deepEqual(await readFile(f.profile.file), profile);
+        assert.deepEqual(await readFile(f.store.file), journal);
+        assert.equal(f.prepares, 0);
+        assert.equal(f.catalogs, 1);
+        if (kind === "lineage") assert.equal(await f.target.read(), undefined);
+      } finally {
+        await f.close();
+      }
+    });
+
+for (const mismatch of [
+  "server",
+  "device",
+  "organization",
+  "room",
+  "requested-organization",
+  "requested-room",
+  "absent",
+  "disconnected",
+  "expired",
+  "missing-credential",
+  "missing-device",
+  "pending",
+  "registration",
+  "live-lock",
+] as const)
+  test(`should block unfinished settings reconnect with ${mismatch} before connection or recovery calls`, async () => {
+    const f = await reconnectFixture("plain");
+    try {
+      const owner = (await f.profile.read())!;
+      if (mismatch === "server") owner.server = "http://127.0.0.1:4320";
+      if (mismatch === "device") owner.deviceId = uuid();
+      if (mismatch === "organization") owner.scope!.organizationId = uuid();
+      if (mismatch === "room") owner.scope!.roomId = uuid();
+      if (mismatch === "requested-organization") f.input.organizationId = uuid();
+      if (mismatch === "requested-room") f.input.roomId = uuid();
+      if (mismatch === "disconnected") owner.status = "disconnected";
+      if (mismatch === "expired") owner.credentialExpiresAt = new Date(0).toISOString();
+      if (mismatch === "missing-credential") delete owner.credential;
+      if (mismatch === "missing-device") delete owner.deviceId;
+      if (mismatch === "pending")
+        owner.pending = {
+          action: "rotate",
+          body: { operationId: uuid(), credentialHash: "b".repeat(64) },
+          payloadHash: "c".repeat(64),
+          candidateCredential: "b".repeat(64),
+        };
+      if (mismatch === "registration")
+        owner.registration = {
+          mapping: { root: f.root, nativeSessionId: uuid() },
+          sessionAlias: "Session",
+        };
+      await f.profile.write(owner);
+      if (mismatch === "absent") await f.profile.remove();
+      const state = await readFile(f.store.file),
+        profile = await f.profile.read(),
+        start = f.requests.length;
+      if (mismatch === "live-lock")
+        await f.store.locked(async () => {
+          await assert.rejects(f.reconnect(), { code: "RUNTIME_BUSY" });
+        });
+      else await assert.rejects(f.reconnect());
+      assert.deepEqual(f.calls, []);
+      assert.equal(f.requests.length, start);
+      assert.deepEqual(await readFile(f.store.file), state);
+      assert.deepEqual(await f.profile.read(), profile);
+    } finally {
+      await f.close();
+    }
+  });
+
+for (const kind of ["plain", "lineage"] as const)
+  test(`should block ${kind} reconnect of a retired owner with completed settings history`, async () => {
+    const f = await reconnectFixture(kind);
+    try {
+      f.response.operation!.state = "CANCELLED";
+      assert.equal((await f.manager().run({ once: true })).state, "CANCELLED");
+      await f.profile.remove();
+      const before = await readFile(f.store.file);
+      await assert.rejects(f.reconnect(), { code: "CONTEXT_UNCONFIRMED" });
+      assert.deepEqual(f.calls, []);
+      assert.deepEqual(await readFile(f.store.file), before);
+    } finally {
+      await f.close();
+    }
+  });
+
+test("should refuse fresh recovery mode at the normal reconnect preparation boundary", async () => {
+  const f = await reconnectFixture("lineage");
+  try {
+    await f.target.write((await f.profile.read())!);
+    const selection = await selectConnectionProfile(f.target, f.input, f.scope.server);
+    assert.equal(selection.mode, "recovery");
+    const before = await readFile(f.store.file);
+    await assert.rejects(
+      prepareSelectedConnection(
+        selection,
+        () => {},
+        async () => assert.fail("fresh recovery must retain its own guards"),
+      ),
+      { code: "INVALID_BODY" },
+    );
+    assert.deepEqual(f.calls, []);
+    assert.deepEqual(await readFile(f.store.file), before);
+  } finally {
+    await f.close();
+  }
+});
+
+test("should retain standalone and legacy idle checks with a matching unfinished settings owner", async () => {
+  const f = await reconnectFixture("plain");
+  try {
+    const before = await readFile(f.store.file);
+    for (const command of [
+      "pair",
+      "exchange",
+      "connect",
+      "status",
+      "rotate",
+      "heartbeat",
+      "register",
+      "replace",
+      "runtime-capabilities",
+      "runtime-prepare",
+      "runtime-run",
+      "runtime-observe",
+      "revoke-local",
+    ])
+      await assert.rejects(
+        withSettingsDeviceLock(f.profile, command, async () =>
+          assert.fail("legacy command must remain blocked"),
+        ),
+        { code: "RUNTIME_BUSY" },
+      );
+    assert.deepEqual(await readFile(f.store.file), before);
+  } finally {
+    await f.close();
+  }
+});
 
 test("should commit the first context only after durable candidate and server receipt", async () => {
   const f = await fixture();

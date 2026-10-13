@@ -10,6 +10,8 @@ import { fileURLToPath, pathToFileURL } from "node:url";
 import { StateStore } from "../../packages/local-connector/src/state-store.ts";
 import { Connector } from "../../packages/local-connector/src/cli.ts";
 import { CentralClient } from "../../packages/local-connector/src/central-client.ts";
+import { SettingsStore } from "../../packages/local-connector/src/settings/store.ts";
+import type { Operation } from "../../packages/local-connector/src/settings/contracts.ts";
 import {
   localConnectionCommand,
   readConnectionSelection,
@@ -60,6 +62,7 @@ test(
       deviceAlias: "검증 Mac",
     };
     const calls: string[] = [];
+    let operation: Operation | null = null;
     let stop: () => void = () => {};
     const date = (seconds: number) => new Date(Date.now() + seconds * 1000).toISOString();
     const server = createServer(async (req, res) => {
@@ -80,7 +83,7 @@ test(
             deviceId,
             configRevision: 0,
             catalog: null,
-            operation: null,
+            operation,
             applied: null,
             current: false,
             currentBinding: null,
@@ -106,12 +109,19 @@ test(
     const address = server.address();
     assert.ok(address && typeof address !== "string");
     const origin = `http://127.0.0.1:${address.port}`;
-    for (const kind of ["first", "valid", "expired", "disconnected-future-intermediate"] as const) {
+    for (const kind of [
+      "unfinished-plain",
+      "unfinished-lineage",
+      "first",
+      "valid",
+      "expired",
+      "disconnected-future-intermediate",
+    ] as const) {
       const home = join(root, kind),
         work = join(home, "work");
       await mkdir(work, { recursive: true, mode: 0o700 });
       let selection = await readConnectionSelection(null, origin, userId, roomId);
-      for (let n = 0; n < 3; n++)
+      for (let n = 0; n < (kind === "unfinished-plain" ? 0 : 3); n++)
         selection = await nextConnectionSelection(selection, randomUUID());
       const original = new Connector(
         new StateStore(
@@ -127,12 +137,45 @@ test(
           version: 1,
           server: origin,
           status: kind === "disconnected-future-intermediate" ? "disconnected" : "connected",
-          deviceId: kind === "valid" ? deviceId : randomUUID(),
+          deviceId: kind === "valid" || kind.startsWith("unfinished-") ? deviceId : randomUUID(),
           credential: "a".repeat(64),
           credentialExpiresAt: date(kind === "expired" ? -3600 : 604800),
           scope,
           mappings: [],
         });
+      const settings = new SettingsStore(original);
+      operation = null;
+      if (kind.startsWith("unfinished-")) {
+        const operationId = randomUUID();
+        operation = {
+          operationId,
+          deviceId,
+          expectedConfigRevision: 0,
+          state: "LOCAL_CONFIRMATION",
+          requested: { operationId, deviceId, expectedConfigRevision: 0, runtime: "codex" },
+          receipt: null,
+        };
+        await settings.write({
+          version: 1,
+          server: origin,
+          deviceId,
+          organizationId,
+          roomId,
+          current: null,
+          retained: [],
+          journal: {
+            operation,
+            phase: "LOCAL_CONFIRMATION",
+            generation: randomUUID(),
+            localRootReference: randomUUID(),
+            root: null,
+            settings: null,
+            context: null,
+            receipt: null,
+            reason: null,
+          },
+        });
+      }
       const command = await localConnectionCommand({
         origin,
         userId,
@@ -145,6 +188,7 @@ test(
       for (let retry = 0; retry < 2; retry++) {
         const before = await original.read(),
           bytes = before ? await readFile(original.file) : undefined,
+          settingsBytes = operation ? await readFile(settings.file) : undefined,
           start = calls.length;
         const child = spawn(
           "/usr/bin/python3",
@@ -179,13 +223,22 @@ test(
           assert.ok(calls.slice(start).some((path) => path.endsWith("/begin")));
           assert.ok(calls.slice(start).some((path) => path.endsWith("/exchange")));
         }
-        if (kind === "valid" || retry)
+        if (kind === "valid" || kind.startsWith("unfinished-") || retry)
           assert.ok(
             !calls
               .slice(start)
               .some((path) => path.endsWith("/begin") || path.endsWith("/exchange")),
           );
         if (kind !== "first" && bytes) assert.deepEqual(await readFile(original.file), bytes);
+        if (settingsBytes) {
+          assert.deepEqual(await readFile(settings.file), settingsBytes);
+          assert.deepEqual(
+            calls.slice(start).filter((path) => path !== "/api/connector/heartbeat"),
+            ["/api/connector/bindings", "/api/runtime-settings/poll"],
+          );
+          assert.equal((await original.read())!.mappings.length, 0);
+          assert.equal((await settings.read())!.current, null);
+        }
         assert.deepEqual(await readdir(work), []);
       }
       const selected =
