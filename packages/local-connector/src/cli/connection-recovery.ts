@@ -18,6 +18,7 @@ import { withSettingsDeviceLock } from "./settings-lock.ts";
 import { parseCliOptions, parseRecoveryChain } from "./parse-options.ts";
 import type { ConnectInput, ConnectInteraction } from "./connect-command.ts";
 import { serviceOrigin } from "../central-client.ts";
+import { isFreshApprovalEligible } from "./recovery-eligibility.ts";
 
 type Runner = (profile: StateStore, agentId: string) => WorkflowRunner;
 
@@ -106,7 +107,7 @@ export async function selectConnectionProfile(
       Date.parse(owner!.credentialExpiresAt ?? "") > Date.now())
   )
     return { target, store: found, gaps: [...gaps, target], mode: "normal", input, origin };
-  expired(owner, origin, input);
+  recoverableOwner(owner, origin, input);
   return { target, store: target, previous: found, gaps, mode: "recovery", input, origin };
 }
 
@@ -399,7 +400,7 @@ export async function prepareSelectedConnection<T>(
   });
 }
 
-function expired(owner: ConnectorState | undefined, origin: string, input: ConnectInput) {
+function recoverableOwner(owner: ConnectorState | undefined, origin: string, input: ConnectInput) {
   if (
     !owner ||
     owner.server !== origin ||
@@ -410,9 +411,7 @@ function expired(owner: ConnectorState | undefined, origin: string, input: Conne
   )
     throw new ConnectionError("FORBIDDEN");
   if (owner.pending || owner.registration) throw new RuntimeError("RUNTIME_BUSY");
-  if (!["connected", "disconnected"].includes(owner.status)) throw new ConnectionError("CONFLICT");
-  const expiry = Date.parse(owner.credentialExpiresAt ?? "");
-  if (!Number.isFinite(expiry) || expiry > Date.now()) throw new ConnectionError("CONFLICT");
+  if (!isFreshApprovalEligible(owner)) throw new ConnectionError("CONFLICT");
   return owner;
 }
 
@@ -677,10 +676,10 @@ export async function prepareRecovery(
       check();
       const record = await previous.read();
       if (!record) throw new MissingRecoveryRecordError();
-      const owner = expired(record, connector.client.origin, input);
+      const owner = recoverableOwner(record, connector.client.origin, input);
       const inspect = async () => {
         check();
-        expired(await previous.read(), connector.client.origin, input);
+        recoverableOwner(await previous.read(), connector.client.origin, input);
         const configured = await settings.read();
         if (configured) {
           return withConfiguredProfileProtection(
@@ -690,7 +689,7 @@ export async function prepareRecovery(
               await configuredSetupEvidence(previous, settings, configured);
               return { snapshot: await evidence(previous), ...metadata };
             },
-            "expired-fresh-approval",
+            "fresh-approval",
           );
         }
         await legacyEvidence(previous, owner);
@@ -750,13 +749,13 @@ export async function prepareRecovery(
         )
           throw new ConnectionError("FORBIDDEN");
         if ((await evidence(previous)) !== snapshot) throw new RuntimeError("AUTHORITY_LOST");
-        expired(await previous.read(), connector.client.origin, input);
+        recoverableOwner(await previous.read(), connector.client.origin, input);
         const verify = async () => {
           check();
           await assertSelection(selection);
           for (const profile of selection.gaps)
             await assertUnused(profile, input, connector.client.origin);
-          expired(await previous.read(), connector.client.origin, input);
+          recoverableOwner(await previous.read(), connector.client.origin, input);
           if ((await evidence(previous)) !== snapshot) throw new RuntimeError("AUTHORITY_LOST");
         };
         await verify();

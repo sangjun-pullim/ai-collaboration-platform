@@ -238,6 +238,56 @@ test("should recover an expired actual ancestor while preserving its bytes and t
   assert.equal((await f.target.read())?.status, "connected");
   assert.deepEqual(f.calls, ["begin", "pairing-status", "exchange"]);
 });
+test("should freshly approve a disconnected future-expiry intermediate without falling back to a valid baseline", async (t) => {
+  const f = await fixture(t, "valid"),
+    intermediate = new StateStore(f.dir, f.selection.chain[0].profile),
+    baseline = await readFile(f.original.file);
+  await intermediate.write({
+    ...(await f.original.read())!,
+    status: "disconnected",
+    deviceId: randomUUID(),
+  });
+  const before = await readFile(intermediate.file);
+  let cancellations = 0;
+  const confirmPreviousRevoked = async () => {
+    assert.deepEqual(f.calls, []);
+    cancellations++;
+    return true;
+  };
+  await f.run({ confirmPreviousRevoked });
+  assert.deepEqual(f.calls, ["begin", "pairing-status", "exchange"]);
+  assert.notEqual((await f.target.read())!.deviceId, (await intermediate.read())!.deviceId);
+  f.calls.length = 0;
+  await f.run({ confirmPreviousRevoked });
+  assert.deepEqual(f.calls, ["bindings"]);
+  assert.equal(cancellations, 1);
+  assert.deepEqual(await readFile(intermediate.file), before);
+  assert.deepEqual(await readFile(f.original.file), baseline);
+});
+for (const fault of ["invalid-expiry", "pending", "wrong-scope"] as const)
+  test(`should refuse disconnected future-expiry intermediate ${fault} without unsafe baseline fallback`, async (t) => {
+    const f = await fixture(t, "valid"),
+      intermediate = new StateStore(f.dir, f.selection.chain[0].profile),
+      owner = {
+        ...(await f.original.read())!,
+        status: "disconnected" as const,
+        deviceId: randomUUID(),
+      };
+    if (fault === "invalid-expiry") owner.credentialExpiresAt = "invalid";
+    if (fault === "pending")
+      owner.pending = {
+        action: "rotate",
+        body: { operationId: randomUUID() },
+        payloadHash: "a".repeat(64),
+      };
+    if (fault === "wrong-scope") owner.scope = { ...owner.scope!, roomId: randomUUID() };
+    await intermediate.write(owner);
+    const bytes = await readFile(intermediate.file);
+    await assert.rejects(f.run());
+    assert.deepEqual(f.calls, []);
+    assert.equal(await f.target.read(), undefined);
+    assert.deepEqual(await readFile(intermediate.file), bytes);
+  });
 test("should start the baseline profile when every prepared generation is genuinely unused", async (t) => {
   const f = await fixture(t);
   await f.run();

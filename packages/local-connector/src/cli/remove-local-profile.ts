@@ -7,6 +7,7 @@ import type { StateStore } from "../state-store.ts";
 import type { WorkflowRunner } from "../workflow-runner.ts";
 import { SettingsStore, type GenerationPointer, type SettingsState } from "../settings/store.ts";
 import type { ConnectorState, Mapping } from "../state-store.ts";
+import { isFreshApprovalEligible } from "./recovery-eligibility.ts";
 
 export async function withLocalProfileProtection<T>(
   store: StateStore,
@@ -110,7 +111,7 @@ export async function withConfiguredProfileProtection<T>(
   profile: StateStore,
   settings: SettingsStore,
   mutation: (owner: ConnectorState, metadata: { unresolvedCount: number }) => Promise<T>,
-  mode: "idle" | "expired-fresh-approval" = "idle",
+  mode: "idle" | "fresh-approval" = "idle",
 ) {
   await settings.assertIdle();
   const snapshot = await settings.read();
@@ -118,16 +119,8 @@ export async function withConfiguredProfileProtection<T>(
   if (!snapshot || !owner || settings.profile !== profile || !sameOwner(snapshot, owner))
     throw new RuntimeError("AUTHORITY_LOST");
   if (owner.pending || owner.registration) throw new RuntimeError("RUNTIME_BUSY");
-  if (mode === "expired-fresh-approval") {
-    const expiry = Date.parse(owner.credentialExpiresAt ?? "");
-    if (
-      !owner.credential ||
-      !["connected", "disconnected"].includes(owner.status) ||
-      !Number.isFinite(expiry) ||
-      expiry > Date.now()
-    )
-      throw new RuntimeError("RUNTIME_BUSY");
-  }
+  if (mode === "fresh-approval" && !isFreshApprovalEligible(owner))
+    throw new RuntimeError("RUNTIME_BUSY");
   const pointers = [...snapshot.retained, ...(snapshot.current ? [snapshot.current] : [])].sort(
     (a, b) => a.generation.localeCompare(b.generation),
   );
@@ -190,10 +183,10 @@ export async function withConfiguredProfileProtection<T>(
   return guard(0);
 }
 
-function protectedUnresolvedCount(record: RuntimeRecord, mode: "idle" | "expired-fresh-approval") {
+function protectedUnresolvedCount(record: RuntimeRecord, mode: "idle" | "fresh-approval") {
   if (!unresolvedRuntime(record)) return 0;
   if (
-    mode !== "expired-fresh-approval" ||
+    mode !== "fresh-approval" ||
     record.preparation ||
     record.operations.some((operation) => !["CONFIRMED", "CLOSED"].includes(operation.state)) ||
     record.attempts.some(

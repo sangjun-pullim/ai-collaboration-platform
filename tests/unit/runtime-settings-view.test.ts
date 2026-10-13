@@ -793,8 +793,12 @@ test("should restrict setup to a live owned device in the selected room and pres
     return ui(props);
   }
   const first = render();
+  // Expand pure local cards; imported components remain mocked by this harness.
+  const renderedCards = nodes(first)
+    .filter((node) => typeof node.type === "function")
+    .map((node) => (node.type as (props: unknown) => UINode)(node.props));
   assert.deepEqual(
-    nodes(first)
+    nodes(renderedCards)
       .filter((node) => node.props["aria-label"] === "공개 연결 ID")
       .map(textContent),
     [deviceId, operationId, agentId, secondOperationId].map((id) => `연결 ID: ${id}`),

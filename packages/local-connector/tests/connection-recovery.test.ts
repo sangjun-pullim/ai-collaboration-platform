@@ -19,9 +19,16 @@ import { withSettingsDeviceLock } from "../src/cli/settings-lock.ts";
 import { claudeRecord } from "./provider-runtime-fixture.ts";
 import { digest, stableJson } from "../src/runtime-contracts.ts";
 
-async function fixture() {
+async function fixture(intermediate = false) {
   const f = await runtimeFixture();
-  const previousProfile = `web-${"a".repeat(32)}`,
+  const baseProfile = `web-${"a".repeat(32)}`,
+    intermediateId = uuid();
+  const previousProfile = intermediate
+      ? `web-${createHash("sha256")
+          .update(JSON.stringify(["connection-recovery", baseProfile, intermediateId]))
+          .digest("hex")
+          .slice(0, 32)}`
+      : baseProfile,
     recoveryId = uuid();
   const profile = `web-${createHash("sha256")
     .update(JSON.stringify(["connection-recovery", previousProfile, recoveryId]))
@@ -122,6 +129,22 @@ async function fixture() {
         deviceAlias: "New Mac",
         previousProfile,
         recoveryId,
+        ...(intermediate
+          ? {
+              recoveryChain: JSON.stringify({
+                version: 1,
+                baseProfile,
+                chain: [
+                  {
+                    previousProfile: baseProfile,
+                    recoveryId: intermediateId,
+                    profile: previousProfile,
+                  },
+                  { previousProfile, recoveryId, profile },
+                ],
+              }),
+            }
+          : {}),
       },
       interaction,
       runner,
@@ -173,7 +196,10 @@ for (const fault of [
     const f = await fixture();
     try {
       const owner = (await f.previous.read())!;
-      if (fault === "live") owner.credentialExpiresAt = new Date(Date.now() + 60000).toISOString();
+      owner.credentialExpiresAt = new Date(Date.now() + 604800000).toISOString();
+      if (fault === "live") {
+        owner.status = "connected";
+      }
       if (fault === "pending")
         owner.pending = {
           action: "rotate",
@@ -243,6 +269,9 @@ for (const lock of ["manager", "native", "runtime"] as const)
   test(`should reject a live ${lock} owner before recovery pairing`, async () => {
     const f = await fixture();
     try {
+      const owner = (await f.previous.read())!;
+      owner.credentialExpiresAt = new Date(Date.now() + 604800000).toISOString();
+      await f.previous.write(owner);
       const check = async () => {
         await assert.rejects(f.run(), { code: "RUNTIME_BUSY" });
       };
@@ -354,6 +383,52 @@ async function configured(f: Awaited<ReturnType<typeof fixture>>) {
   await f.previous.write(owner);
   return { settings, current, record };
 }
+
+for (const kind of ["legacy", "configured"] as const)
+  test(`should recover a disconnected future-expiry intermediate ancestor with ${kind} histories and repeat the same command`, async () => {
+    const f = await fixture(true);
+    try {
+      const c = kind === "configured" ? await configured(f) : undefined;
+      const history = c?.current ?? f.runtime;
+      const record = (await history.read())!;
+      appendFixtureCompletion(record);
+      // Seed a completed history directly; this is not a runtime transition under test.
+      await writeFile(history.file, JSON.stringify(record), { mode: 0o600 });
+      const owner = (await f.previous.read())!;
+      owner.credentialExpiresAt = new Date(Date.now() + 604800000).toISOString();
+      await f.previous.write(owner);
+      const files = [
+        f.previous.file,
+        f.runtime.file,
+        ...(c ? [c.settings.file, c.current.file] : []),
+      ];
+      const before = await Promise.all(files.map((file) => readFile(file)));
+      let cancellations = 0;
+      f.interaction.confirmPreviousRevoked = async () => {
+        assert.equal(f.calls.length, 0);
+        cancellations++;
+        return true;
+      };
+      await f.run();
+      assert.deepEqual(f.calls, ["begin", "pairing-status", "exchange"]);
+      assert.equal(cancellations, 1);
+      assert.equal((await f.next.read())!.status, "connected");
+      assert.deepEqual((await f.next.read())!.mappings, []);
+      assert.equal(await new SettingsStore(f.next).read(), undefined);
+      const nextBytes = await readFile(f.next.file);
+      f.calls.length = 0;
+      await f.run();
+      assert.deepEqual(f.calls, ["bindings"]);
+      assert.equal(cancellations, 1);
+      assert.deepEqual(await readFile(f.next.file), nextBytes);
+      assert.deepEqual(await Promise.all(files.map((file) => readFile(file))), before);
+      assert.equal((await history.read())!.attempts[0].state, "UPLOADED");
+      assert.equal(f.adapter.starts, 0);
+      assert.equal(f.adapter.prepares, 0);
+    } finally {
+      await f.close();
+    }
+  });
 
 async function configuredClaude(f: Awaited<ReturnType<typeof fixture>>, materialized = true) {
   const c = await configured(f);
@@ -505,6 +580,9 @@ async function unresolvedClaude(f: Awaited<ReturnType<typeof fixture>>) {
   c.record.context!.level = "L1";
   c.record.operations = c.record.operations.filter((operation) => operation.action !== "complete");
   await writeFile(c.current.file, JSON.stringify(c.record), { mode: 0o600 });
+  const owner = (await f.previous.read())!;
+  owner.credentialExpiresAt = new Date(Date.now() + 604800000).toISOString();
+  await f.previous.write(owner);
   assert.equal((await c.current.read())!.attempts[0].state, "UNKNOWN");
   return c;
 }
@@ -653,6 +731,9 @@ for (const fault of ["empty-pointers", "extra", "duplicate", "epoch", "root", "n
   test(`should reject configured mapping ${fault} without protected runtime evidence before pairing`, async () => {
     const f = await fixture();
     try {
+      const futureOwner = (await f.previous.read())!;
+      futureOwner.credentialExpiresAt = new Date(Date.now() + 604800000).toISOString();
+      await f.previous.write(futureOwner);
       if (fault === "empty-pointers") {
         await unlink(f.runtime.file);
         const settings = new SettingsStore(f.previous),
@@ -754,6 +835,9 @@ for (const kind of [
     const f = await fixture();
     try {
       const c = await configured(f);
+      const owner = (await f.previous.read())!;
+      owner.credentialExpiresAt = new Date(Date.now() + 604800000).toISOString();
+      await f.previous.write(owner);
       if (kind === "orphan")
         await mkdir(join(c.settings.dir, "generations", uuid()), { mode: 0o700 });
       if (kind === "unknown") {
