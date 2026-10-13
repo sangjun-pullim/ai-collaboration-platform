@@ -74,7 +74,7 @@ export function ChatTimeline({
         <ol aria-label="확정 공동 이력" className="mx-auto max-w-4xl space-y-5">
           {!events.some((event) => event.kind !== "RUN_STATE") && (
             <li className="py-12 text-center text-sm text-neutral-500">
-              대화를 시작하세요. 내 AI 없이도 동료 AI에게 질문할 수 있습니다.
+              대화를 시작하세요. 내 AI나 동료 AI에게 질문할 수 있습니다.
             </li>
           )}
           {timelineEvents(events).map((event) => {

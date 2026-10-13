@@ -62,7 +62,11 @@ function find(node: unknown, type: string): Node | undefined {
   if (typeof el.type === "function") return find(el.type(el.props), type);
   return find(el.props?.children, type);
 }
-async function harness(t: TestContext, role: "owner" | "participant" | "observer" = "participant") {
+async function harness(
+  t: TestContext,
+  role: "owner" | "participant" | "observer" = "participant",
+  bindings?: contracts.PublicBinding[],
+) {
   let stateIndex = 0,
     refIndex = 0,
     memoIndex = 0;
@@ -96,7 +100,9 @@ async function harness(t: TestContext, role: "owner" | "participant" | "observer
       highWaterRetirementSequence: 0,
       hasMoreRetirements: false,
     },
-    bindings: [{ ...fixture.history.bindings[0], validUntil: "2099-01-01T00:00:00.000Z" }],
+    bindings: bindings ?? [
+      { ...fixture.history.bindings[0], validUntil: "2099-01-01T00:00:00.000Z" },
+    ],
   };
   let currentPage = history;
   let controller!: RoomChatController;
@@ -330,6 +336,66 @@ async function harness(t: TestContext, role: "owner" | "participant" | "observer
     submit: (text: string) => ({ preventDefault() {}, currentTarget: { text, reset() {} } }),
   };
 }
+
+test("should offer a ready owned AI and emit a shared question for its pinned epoch", async (t) => {
+  const own = {
+    ...fixture.history.bindings[0],
+    owned: true,
+    validUntil: "2099-01-01T00:00:00.000Z",
+  };
+  const peer = { ...own, owned: false, agentId: uuid(99) };
+  const h = await harness(t, "participant", [own, peer]);
+  let composer = find(h.render(), "composer")!;
+  assert.deepEqual(Array.from(composer.props.targets as contracts.PublicBinding[]), [own, peer]);
+  assert.equal(composer.props.disabled, true);
+  (composer.props.onTarget as (id: string) => void)(own.agentId);
+  (composer.props.onDraft as (draft: string) => void)("내 AI에게 공유 질문");
+  composer = find(h.render(), "composer")!;
+  assert.equal(composer.props.disabled, false);
+  assert.equal(
+    await (composer.props.onSubmit as (event: unknown) => Promise<boolean>)(
+      h.submit("내 AI에게 공유 질문"),
+    ),
+    true,
+  );
+  assert.equal(h.calls.length, 1);
+  assert.equal(h.calls[0].action, "ask");
+  assert.equal(h.calls[0].body.roomId, fixture.ask.roomId);
+  assert.equal(h.calls[0].body.expectedUserId, fixture.ask.expectedUserId);
+  assert.equal(h.calls[0].body.targetAgentId, own.agentId);
+  assert.equal(h.calls[0].body.targetEpoch, own.bindingEpoch);
+  assert.equal(h.calls[0].body.publicText, "내 AI에게 공유 질문");
+  assert.equal(h.calls[0].body.confirmed, true);
+});
+
+test("should disable an owned target after readiness expiry or epoch replacement without sending", async (t) => {
+  const own = {
+    ...fixture.history.bindings[0],
+    owned: true,
+    validUntil: "2099-01-01T00:00:00.000Z",
+  };
+  const h = await harness(t, "participant", [own]);
+  (find(h.render(), "composer")!.props.onDraft as (draft: string) => void)("미전송 질문");
+  for (const binding of [
+    { ...own, reportedReady: false },
+    { ...own, validUntil: "2000-01-01T00:00:00.000Z" },
+    { ...own, bindingEpoch: own.bindingEpoch + 1 },
+  ]) {
+    await h.snapshot({ ...h.history, bindings: [binding] });
+    const composer = find(h.render(), "composer")!;
+    assert.equal(composer.props.stale, true);
+    assert.equal(composer.props.target, undefined);
+    assert.equal(composer.props.disabled, true);
+    assert.equal(composer.props.draft, "미전송 질문");
+    assert.equal(
+      await (composer.props.onSubmit as (event: unknown) => Promise<boolean>)(
+        h.submit("미전송 질문"),
+      ),
+      false,
+    );
+  }
+  assert.equal(h.calls.length, 0);
+});
 
 test("should pin the sole responder epoch and never replace an expired selection automatically", async (t) => {
   const h = await harness(t);

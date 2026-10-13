@@ -243,13 +243,13 @@ test("should show a direct question form without an own AI connection", async ({
       await observer.goto(`/app/rooms/${data.roomId}`);
       process.stdout.write("010_DIRECT_STAGE ROOM_LOADED\n");
       const region = page.getByRole("region", { name: "실제 공동 조사" });
-      const form = region.getByRole("form", { name: "상대 AI에 직접 질문" });
+      const form = region.getByRole("form", { name: "AI에게 질문" });
       const target = form.getByLabel("직접 질문 대상", { exact: true });
-      const send = form.getByRole("button", { name: "상대 AI에 질문 보내기", exact: true });
+      const send = form.getByRole("button", { name: "AI에 질문 보내기", exact: true });
       process.stdout.write("010_DIRECT_STAGE FORM_VISIBLE_BEFORE\n");
       await expect(form).toBeVisible();
       process.stdout.write("010_DIRECT_STAGE OBSERVER_READ_ONLY_BEFORE\n");
-      await expect(observer.getByRole("form", { name: "상대 AI에 직접 질문" })).toHaveCount(0);
+      await expect(observer.getByRole("form", { name: "AI에게 질문" })).toHaveCount(0);
       process.stdout.write("010_DIRECT_STAGE OWN_AI_DISABLED_BEFORE\n");
       await page.getByRole("button", { name: "공동 조사", exact: true }).click();
       await expect(
@@ -307,12 +307,10 @@ test("should show a direct question form without an own AI connection", async ({
         check(await scroll.evaluate((element) => element.scrollHeight > element.clientHeight));
       }
       process.stdout.write("010_DIRECT_STAGE FORM_INPUT_BEFORE\n");
-      await form
-        .getByLabel("상대에게 보낼 질문", { exact: true })
-        .fill("한국어 키보드 직접 질문 😀");
+      await form.getByLabel("AI에게 보낼 질문", { exact: true }).fill("한국어 키보드 직접 질문 😀");
       await expect(send).toBeEnabled();
       process.stdout.write("010_DIRECT_STAGE FORM_READY\n");
-      const questionInput = form.getByLabel("상대에게 보낼 질문", { exact: true });
+      const questionInput = form.getByLabel("AI에게 보낼 질문", { exact: true });
       await questionInput.dispatchEvent("compositionstart");
       await questionInput.dispatchEvent("keydown", {
         key: "Enter",
@@ -555,11 +553,9 @@ test("should isolate unresolved direct intents across authenticated users", asyn
         }
       });
       const region = page.getByRole("region", { name: "실제 공동 조사" });
-      const form = region.getByRole("form", { name: "상대 AI에 직접 질문" });
-      await form
-        .getByLabel("상대에게 보낼 질문", { exact: true })
-        .fill("계정 전환의 확정된 첫 질문");
-      await form.getByRole("button", { name: "상대 AI에 질문 보내기", exact: true }).click();
+      const form = region.getByRole("form", { name: "AI에게 질문" });
+      await form.getByLabel("AI에게 보낼 질문", { exact: true }).fill("계정 전환의 확정된 첫 질문");
+      await form.getByRole("button", { name: "AI에 질문 보내기", exact: true }).click();
       await expect(
         region.getByRole("button", { name: "같은 요청 확인", exact: true }),
       ).toBeVisible();
@@ -575,7 +571,7 @@ test("should isolate unresolved direct intents across authenticated users", asyn
         ).toBeVisible();
         await login(page, data.actorB);
         await page.goto(`/app/rooms/${data.roomId}`);
-        await expect(region.getByRole("form", { name: "상대 AI에 직접 질문" })).toBeVisible();
+        await expect(region.getByRole("form", { name: "AI에게 질문" })).toBeVisible();
         await expect(region.getByRole("region", { name: "AI 답변 상태", exact: true })).toHaveCount(
           0,
           {
@@ -610,7 +606,7 @@ test("should isolate unresolved direct intents across authenticated users", asyn
           timeout: 45_000,
         });
         check(transmissions === 2 && staleStatus === 403);
-        await expect(region.getByRole("form", { name: "상대 AI에 직접 질문" })).toHaveCount(0);
+        await expect(region.getByRole("form", { name: "AI에게 질문" })).toHaveCount(0);
       }
       const result = await broker<{ state: string; requests: number; controls: number }>(
         "direct-drive",
@@ -655,10 +651,10 @@ test("should retain saved direct identity through completed replacement and deta
     }
     await expect(list).toContainText("완료 이력의 앞선 발언 2");
     await mode.selectOption("ask");
-    const form = region.getByRole("form", { name: "상대 AI에 직접 질문" });
-    const input = form.getByLabel("상대에게 보낼 질문", { exact: true });
+    const form = region.getByRole("form", { name: "AI에게 질문" });
+    const input = form.getByLabel("AI에게 보낼 질문", { exact: true });
     const target = form.getByLabel("직접 질문 대상", { exact: true });
-    const send = form.getByRole("button", { name: "상대 AI에 질문 보내기", exact: true });
+    const send = form.getByRole("button", { name: "AI에 질문 보내기", exact: true });
     await expect(target).toHaveValue(data.targetAgentIds[0]);
     await expect(form.getByRole("checkbox")).toHaveCount(0);
     await expect(form).toContainText("질문과 답변은 채팅방 참가자에게 공유됩니다.");

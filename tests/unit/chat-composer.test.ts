@@ -4,6 +4,7 @@ import { readFileSync } from "node:fs";
 import { runInNewContext } from "node:vm";
 import ts from "typescript";
 import { shouldSendOnEnter } from "../../src/features/investigation-coordinator/chat-presentation.ts";
+import type { PublicBinding } from "../../src/features/investigation-coordinator/contracts.ts";
 
 type Node = { type: unknown; props: Record<string, unknown> };
 function nodes(node: unknown): Node[] {
@@ -65,7 +66,8 @@ function harness() {
     onMode() {},
     draft: "직접 질문",
     onDraft() {},
-    targets: [],
+    targets: [] as PublicBinding[],
+    target: undefined as PublicBinding | undefined,
     targetValue: "saved-agent",
     stale: false,
     onTarget() {},
@@ -121,6 +123,37 @@ function harness() {
     },
   };
 }
+
+test("should distinguish an owned AI while retaining owner runtime repository and session identity", () => {
+  const h = harness();
+  const fixture = JSON.parse(readFileSync("tests/fixtures/human-direct-contracts.json", "utf8"));
+  const own: PublicBinding = { ...fixture.history.bindings[0], owned: true };
+  const peer = { ...own, owned: false, agentId: "00000000-0000-4000-8000-000000000099" };
+  h.props.targets = [own, peer];
+  h.props.target = own;
+  h.props.targetValue = own.agentId;
+  const tree = h.render();
+  const optionText = (agentId: string) =>
+    (
+      nodes(tree).find((node) => node.type === "option" && node.props.value === agentId)!.props
+        .children as string[]
+    ).join("");
+  const identity = `${own.ownerAlias} · ${own.runtime} · ${own.repositoryAlias} · ${own.sessionAlias}`;
+  assert.equal(optionText(own.agentId), `내 AI · ${identity}`);
+  assert.equal(optionText(peer.agentId), identity);
+  assert.equal(tree.props["aria-label"], "AI에게 질문");
+  assert.equal(
+    nodes(tree).find((node) => node.type === "button")!.props["aria-label"],
+    "AI에 질문 보내기",
+  );
+  assert.ok(
+    nodes(tree).some(
+      (node) =>
+        typeof node.props.children === "string" &&
+        node.props.children.startsWith(`내 AI · ${identity}`),
+    ),
+  );
+});
 
 test("should include the visible submit caption in its accessible name for each sending mode", () => {
   const h = harness();

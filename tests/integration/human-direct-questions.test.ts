@@ -134,6 +134,187 @@ test("should admit a human question without a requester device or agent", option
   }),
 );
 
+test(
+  "should answer own AI questions in shared history and allow a follow-up after completion",
+  options,
+  () =>
+    workflowCase("direct-own-answer", async (workflow) => {
+      const f = await HumanDirectRuntimeFixture.open(workflow, "own-answer");
+      const own = { ...f.scene, requester: f.scene.owner };
+      try {
+        for (const text of ["내 AI 공유 질문", "내 AI 후속 질문"]) {
+          const body = { ...(await fields(workflow, own)), publicText: text };
+          const admission = accepted(await workflow.human(own.requester, "ask", body));
+          assert.deepEqual(accepted(await workflow.human(own.requester, "ask", body)), admission);
+          const before = await workflow.history(own, own.requester);
+          assert.equal(
+            before.bindings.find((binding) => binding.agentId === own.responder.agentId)?.owned,
+            true,
+          );
+          assert.equal(
+            before.runs.find((run) => run.requestId === admission.requestId)?.state,
+            "QUEUED",
+          );
+          assert.equal((await f.run()).state, "UPLOADED");
+          const ownerHistory = await workflow.history(own, own.requester);
+          const observerHistory = await workflow.history(own, own.observer);
+          const colleagueHistory = await workflow.history(own, f.scene.requester);
+          assert.deepEqual(observerHistory.events, ownerHistory.events);
+          assert.deepEqual(colleagueHistory.events, ownerHistory.events);
+          const question = ownerHistory.events.find(
+            (event) => event.kind === "QUESTION" && event.requestId === admission.requestId,
+          )!;
+          assert.equal(question.senderKind, "HUMAN");
+          assert.equal(question.publicText, text);
+          assert.equal(question.agentId, own.responder.agentId);
+          assert.equal(
+            ownerHistory.runs.find((run) => run.requestId === admission.requestId)?.state,
+            "COMPLETED",
+          );
+          assert.ok(
+            ownerHistory.events.some(
+              (event) =>
+                event.kind === "ANSWER" &&
+                event.requestId === admission.requestId &&
+                event.adoption === "ACCEPTED",
+            ),
+          );
+          const attempt = (await f.runtime.read())!.attempts.find(
+            (attempt) => attempt.requestId === admission.requestId,
+          )!;
+          assert.equal(attempt.receipt!.continuationRequestId, null);
+        }
+        assert.equal(f.adapter.starts, 2);
+        for (const action of ["poll", "claim", "start-intent", "complete"])
+          assert.ok(f.requests.some((request) => request.action === action));
+        assert.equal((await workflow.history(own, own.requester)).runs.length, 2);
+      } finally {
+        await f.close();
+      }
+    }),
+);
+
+test(
+  "should cancel queued and executing own AI questions and admit a follow-up only after terminal",
+  options,
+  () =>
+    workflowCase("direct-own-cancel", async (workflow) => {
+      const f = await HumanDirectRuntimeFixture.open(workflow, "own-cancel");
+      const own = { ...f.scene, requester: f.scene.owner };
+      try {
+        const queued = await workflow.ask(own);
+        assert.equal(accepted(await cancel(workflow, own, queued.requestId!)).state, "REQUESTED");
+        assert.equal(
+          (await workflow.read(own)).runs.find((run) => run.requestId === queued.requestId)?.state,
+          "CANCELLED",
+        );
+        assert.equal(f.adapter.starts, 0);
+        const executing = await workflow.ask(own);
+        f.adapter.hold = runtimeGate();
+        const publish = runtimeGate();
+        f.beforeFetch = async (action) => {
+          if (action === "complete") await publish.promise;
+        };
+        const running = f.run();
+        try {
+          await f.adapter.entered.promise;
+          assert.equal(
+            accepted(await cancel(workflow, own, executing.requestId!)).state,
+            "REQUESTED",
+          );
+          refused(await workflow.human(own.requester, "ask", await fields(workflow, own)), 409);
+          publish.release();
+          assert.equal((await running).state, "UPLOADED");
+        } finally {
+          publish.release();
+          f.adapter.hold.release();
+          await running;
+        }
+        assert.equal(f.adapter.interrupts, 1);
+        assert.equal(
+          (await workflow.read(own)).runs.find((run) => run.requestId === executing.requestId)
+            ?.state,
+          "INTERRUPTED",
+        );
+        f.adapter.hold = null;
+        f.beforeFetch = undefined;
+        const follow = await workflow.ask(own);
+        assert.equal((await f.run()).state, "UPLOADED");
+        assert.equal(
+          (await workflow.read(own)).runs.find((run) => run.requestId === follow.requestId)?.state,
+          "COMPLETED",
+        );
+        assert.equal(f.adapter.starts, 2);
+      } finally {
+        await f.close();
+      }
+    }),
+);
+
+test("should preserve own AI admission guards and reject pairing two same-owner AIs", options, () =>
+  workflowCase("direct-own-denials", async (f) => {
+    await requireHumanDirectMigration(f);
+    const original = await f.directScene("own-denials");
+    const s = { ...original, requester: original.owner };
+    const body = await fields(f, s);
+    const noEffect = async (run: () => Promise<void>) => {
+      const before = await directEffects(f, s);
+      await run();
+      assert.deepEqual(await directEffects(f, s), before);
+    };
+    await noEffect(async () => {
+      for (const person of [s.observer, s.outsider])
+        refused(await f.human(person, "ask", { ...body, expectedUserId: person.id }), 403);
+      refused(
+        await f.human(s.owner, "ask", { ...body, expectedUserId: original.requester.id }),
+        403,
+      );
+      refused(await f.human(s.owner, "ask", { ...body, targetAgentId: randomUUID() }), 403);
+      const other = await f.directScene("own-foreign");
+      refused(
+        await f.human(s.owner, "ask", { ...body, targetAgentId: other.responder.agentId! }),
+        403,
+      );
+      refused(await f.human(s.owner, "ask", { ...body, targetEpoch: 99 }), 409);
+      refused(await f.human(s.owner, "ask", { ...body, expectedRoomRevision: 99 }), 409);
+    });
+    for (const expired of [false, true]) {
+      await f.ready(s.responder, expired);
+      if (expired) await f.expire("readiness", s.responder.agentId!);
+      await noEffect(async () => refused(await f.human(s.owner, "ask", body), 409));
+    }
+    await f.ready(s.responder);
+    const sameOwner = await f.devices.register(
+      await f.devices.connected(s.owner, s.scope, "own-pair-peer"),
+    );
+    await f.ready(sameOwner);
+    await noEffect(async () =>
+      refused(
+        await f.human(s.owner, "start", {
+          roomId: s.scope.roomId,
+          operationId: randomUUID(),
+          originAgentId: s.responder.agentId!,
+          peerAgentId: sameOwner.agentId!,
+          originEpoch: await f.epoch(s.responder),
+          peerEpoch: await f.epoch(sameOwner),
+          expectedRoomRevision: (await f.read(s)).roomRevision,
+          publicText: "동일 소유 AI 조사 거부",
+          confirmed: true,
+        }),
+        403,
+      ),
+    );
+    accepted(
+      await f.human(s.owner, "pause", {
+        roomId: s.scope.roomId,
+        operationId: randomUUID(),
+        expectedRoomRevision: (await f.read(s)).roomRevision,
+      }),
+    );
+    await noEffect(async () => refused(await f.human(s.owner, "ask", await fields(f, s)), 409));
+  }),
+);
+
 test("should preserve paired workflow and peer wire compatibility", options, () =>
   workflowCase("direct-paired-regression", async (f) => {
     await requireHumanDirectMigration(f);
@@ -181,7 +362,7 @@ test("should reject observer forged actors and invalid direct targets", options,
     await requireHumanDirectMigration(f);
     const s = await f.directScene();
     const body = await fields(f, s);
-    for (const person of [s.observer, s.outsider, s.owner])
+    for (const person of [s.observer, s.outsider])
       refused(await f.human(person, "ask", { ...body, expectedUserId: person.id }), 403);
     const other = await f.directScene("foreign");
     refused(

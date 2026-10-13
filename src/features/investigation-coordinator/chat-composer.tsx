@@ -45,7 +45,7 @@ export function ChatComposer({
   });
   return (
     <form
-      aria-label={mode === "ask" ? "상대 AI에 직접 질문" : "방 참가자에게 메시지"}
+      aria-label={mode === "ask" ? "AI에게 질문" : "방 참가자에게 메시지"}
       onSubmit={async (event) => {
         if (await onSubmit(event)) {
           restoreFocus.current = true;
@@ -69,7 +69,7 @@ export function ChatComposer({
               disabled={busy || pending}
               onChange={(event) => onMode(event.target.value as "ask" | "speak")}
             >
-              <option value="ask">동료 AI에게 질문</option>
+              <option value="ask">AI에게 질문</option>
               <option value="speak">방 참가자에게 메시지</option>
             </select>
           </label>
@@ -91,6 +91,7 @@ export function ChatComposer({
                 )}
                 {targets.map((binding) => (
                   <option value={binding.agentId} key={binding.agentId}>
+                    {binding.owned ? "내 AI · " : ""}
                     {binding.ownerAlias} · {binding.runtime} · {binding.repositoryAlias} ·{" "}
                     {binding.sessionAlias}
                   </option>
@@ -102,14 +103,14 @@ export function ChatComposer({
         {mode === "ask" && (
           <p className="text-xs text-neutral-500">
             {target
-              ? `${target.ownerAlias} · ${target.runtime} · ${target.repositoryAlias} · ${target.sessionAlias} · 응답 준비 보고`
+              ? `${target.owned ? "내 AI · " : ""}${target.ownerAlias} · ${target.runtime} · ${target.repositoryAlias} · ${target.sessionAlias} · 응답 준비 보고`
               : targets.length
-                ? "질문받을 상대를 선택하세요."
-                : "질문 가능한 상대 AI가 없습니다. 상대가 AI 연결을 준비해야 합니다."}
+                ? "질문받을 AI를 선택하세요."
+                : "질문 가능한 AI가 없습니다. AI 연결을 준비해야 합니다."}
           </p>
         )}
         <label className="sr-only" htmlFor="chat-message">
-          {mode === "ask" ? "상대에게 보낼 질문" : "공동 발언"}
+          {mode === "ask" ? "AI에게 보낼 질문" : "공동 발언"}
         </label>
         <Textarea
           id="chat-message"
@@ -158,7 +159,7 @@ export function ChatComposer({
           <Button
             disabled={disabled || !draft.trim()}
             size="sm"
-            aria-label={mode === "ask" ? "상대 AI에 질문 보내기" : "공동 발언 저장"}
+            aria-label={mode === "ask" ? "AI에 질문 보내기" : "공동 발언 저장"}
           >
             <Send className="size-3.5" />
             {mode === "ask" ? "보내기" : "저장"}

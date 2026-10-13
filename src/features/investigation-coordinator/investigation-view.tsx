@@ -103,7 +103,7 @@ function RoomInvestigation({ userId, roomId, role }: Props) {
       : null;
   const ready = (binding: PublicBinding | undefined) =>
     !!binding?.reportedReady && !!binding.validUntil && Date.parse(binding.validUntil) > observedAt;
-  const availableTargets = bindings.filter((binding) => !binding.owned && ready(binding));
+  const availableTargets = bindings.filter(ready);
   const target = targetPin
     ? availableTargets.find(
         (binding) =>
