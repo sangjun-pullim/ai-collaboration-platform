@@ -170,20 +170,20 @@ test("should distinguish owner Claude request application and readiness and answ
     const ready = await broker<{ ready: boolean }>("drive-ready", { scene: scene.id });
     check(ready.ready);
     await requester.reload();
-    const question = requester.getByRole("form", { name: "상대 AI에 직접 질문", exact: true });
+    const question = requester.getByRole("form", { name: "AI에게 질문", exact: true });
     await expect(question.getByLabel("직접 질문 대상", { exact: true })).toHaveValue(
       applied.agentId,
     );
     await expect(question).toContainText("claude");
     await question
-      .getByLabel("상대에게 보낼 질문", { exact: true })
+      .getByLabel("AI에게 보낼 질문", { exact: true })
       .fill("설정한 한 Claude AI에게만 질문");
     const admitted = requester.waitForResponse(
       (response) =>
         response.url().endsWith("/api/investigations/ask") &&
         response.request().method() === "POST",
     );
-    await question.getByRole("button", { name: "상대 AI에 질문 보내기", exact: true }).click();
+    await question.getByRole("button", { name: "AI에 질문 보내기", exact: true }).click();
     check((await admitted).status() === 200);
     const driven = await broker<{ inputs: number; state: string }>("drive-question", {
       scene: scene.id,

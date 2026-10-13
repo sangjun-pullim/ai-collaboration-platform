@@ -119,7 +119,7 @@ test("should lazily show the same historical source for two people and clear roo
         await expect(region.getByLabel("확정 공동 이력")).not.toContainText(
           "당시 저장소의 공개 답변",
         );
-        await expect(region.getByRole("form", { name: "상대 AI에 직접 질문" })).toHaveCount(0);
+        await expect(region.getByRole("form", { name: "AI에게 질문" })).toHaveCount(0);
         await expect(region.getByRole("region", { name: "당시 저장소·자료" })).toHaveCount(0);
       }
     }
