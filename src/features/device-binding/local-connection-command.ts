@@ -186,7 +186,7 @@ status=$(ulimit -f 128; /usr/bin/curl --disable --fail --silent --show-error --p
 [ "$(/usr/bin/wc -c < "$file")" -le 131072 ]
 digest=$(/usr/bin/shasum -a 256 "$file")
 [ "\${digest%% *}" = "$3" ]
-/bin/bash --noprofile --norc -p "$file" "$1" "$4" "$5" "$6" "$7"${generation ? ' "$8" "$9"' : ""}`;
+/bin/bash --noprofile --norc -p "$file" "$1" "$4" "$5" "$6" "$7"${generation ? ' "$8" "$9" "${10}"' : ""}`;
   const args = [
     origin,
     manifest.bootstrap.path,
@@ -195,7 +195,9 @@ digest=$(/usr/bin/shasum -a 256 "$file")
     input.deviceAlias,
     input.organizationId,
     input.roomId,
-    ...(generation ? [generation.previousProfile, generation.recoveryId] : []),
+    ...(generation
+      ? [generation.previousProfile, generation.recoveryId, JSON.stringify(selection)]
+      : []),
   ];
   return `(builtin unset ${preloadVariables.join(" ")}; /bin/bash --noprofile --norc -p -c ${quote(launcher)} ai-collab ${args.map(quote).join(" ")})`;
 }

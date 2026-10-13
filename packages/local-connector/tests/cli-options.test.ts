@@ -6,6 +6,61 @@ import { createHash } from "node:crypto";
 
 const objectPrototype = Object.prototype;
 
+test("should validate the full bounded recovery chain and its final legacy relation", () => {
+  const baseProfile = `web-${"a".repeat(32)}`;
+  const chain = [];
+  let previousProfile = baseProfile;
+  for (let i = 0; i < 3; i++) {
+    const recoveryId = `12345678-1234-4123-8123-${String(i).padStart(12, "0")}`;
+    const profile = `web-${createHash("sha256")
+      .update(JSON.stringify(["connection-recovery", previousProfile, recoveryId]))
+      .digest("hex")
+      .slice(0, 32)}`;
+    chain.push({ previousProfile, recoveryId, profile });
+    previousProfile = profile;
+  }
+  const selection = { version: 1, baseProfile, chain };
+  const final = chain.at(-1)!;
+  const args = [
+    "--profile",
+    final.profile,
+    "--previous-profile",
+    final.previousProfile,
+    "--recovery-id",
+    final.recoveryId,
+  ];
+  const raw = JSON.stringify(selection);
+  assert.equal(
+    parseCliOptions([...args, "--recovery-chain", raw], "connect")["recovery-chain"],
+    raw,
+  );
+  for (const malformed of [
+    "{",
+    "null",
+    " ".repeat(16385),
+    JSON.stringify({ ...selection, version: 2 }),
+    JSON.stringify({ ...selection, extra: true }),
+    JSON.stringify({ ...selection, chain: [] }),
+    JSON.stringify({ ...selection, chain: Array(33).fill(chain[0]) }),
+    JSON.stringify({ ...selection, baseProfile: final.profile }),
+    JSON.stringify({ ...selection, chain: chain.slice(0, 2) }),
+    JSON.stringify({
+      ...selection,
+      chain: [{ ...chain[0], profile: baseProfile }, ...chain.slice(1)],
+    }),
+    JSON.stringify({ ...selection, chain: [{ ...chain[0], extra: true }, ...chain.slice(1)] }),
+  ])
+    assert.throws(() => parseCliOptions([...args, "--recovery-chain", malformed], "connect"), {
+      code: "INVALID_BODY",
+    });
+  assert.throws(() => parseCliOptions(["--recovery-chain", raw], "connect"), {
+    code: "INVALID_BODY",
+  });
+  assert.throws(() => parseCliOptions([...args, "--recovery-chain", raw], "manage"), {
+    code: "INVALID_BODY",
+  });
+});
+
 test("should accept only a complete connect recovery relation", () => {
   const previous = `web-${"a".repeat(32)}`;
   const recoveryId = "12345678-1234-4123-8123-123456789abc";

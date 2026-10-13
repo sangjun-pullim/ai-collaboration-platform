@@ -5,7 +5,7 @@ builtin unset BASH_ENV ENV NODE_OPTIONS NODE_PATH PERL5OPT PERL5DB PERL5LIB PERL
 umask 077
 
 fail() { /usr/bin/printf '%s\n' "로컬 연결을 시작하지 못했습니다: $1" >&2; exit 1; }
-[ "$#" -eq 5 ] || [ "$#" -eq 7 ] || fail INVALID_ARGUMENTS
+[ "$#" -eq 5 ] || [ "$#" -eq 7 ] || [ "$#" -eq 8 ] || fail INVALID_ARGUMENTS
 origin=$1
 profile=$2
 device_alias=$3
@@ -13,7 +13,7 @@ organization=$4
 room=$5
 [[ "$origin" =~ ^https://[^/?\#@[:space:]]+$ || "$origin" =~ ^http://(localhost|127\.0\.0\.1|\[::1\])(:[0-9]+)?$ ]] || fail UNSAFE_ORIGIN
 [[ "$profile" =~ ^web-[a-f0-9]{32}$ ]] || fail INVALID_PROFILE
-if [ "$#" -eq 7 ]; then
+if [ "$#" -ge 7 ]; then
   previous_profile=$6
   recovery_id=$7
   [[ "$previous_profile" =~ ^web-[a-f0-9]{32}$ ]] || fail INVALID_PREVIOUS_PROFILE
@@ -22,7 +22,13 @@ if [ "$#" -eq 7 ]; then
   expected=$(/usr/bin/printf '["connection-recovery","%s","%s"]' "$previous_profile" "$recovery_id" | /usr/bin/shasum -a 256)
   expected=${expected%% *}
   [ "$profile" = "web-${expected:0:32}" ] || fail INVALID_PROFILE_RELATION
-  set -- --previous-profile "$previous_profile" --recovery-id "$recovery_id"
+  if [ "$#" -eq 8 ]; then
+    recovery_chain=$8
+    [ "${#recovery_chain}" -le 16384 ] || fail INVALID_RECOVERY_CHAIN
+    set -- --previous-profile "$previous_profile" --recovery-id "$recovery_id" --recovery-chain "$recovery_chain"
+  else
+    set -- --previous-profile "$previous_profile" --recovery-id "$recovery_id"
+  fi
 else
   set --
 fi
