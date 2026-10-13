@@ -420,6 +420,255 @@ for (const provider of ["codex", "claude"] as const)
       }
     });
 
+for (const applied of [false, true])
+  test(`should ${applied ? "preserve UNKNOWN with an apply body" : "replay local confirmation after an uncertain receipt without preparing another context"} through normal connection handoff`, async (t) => {
+    const f = await reconnectFixture("lineage");
+    try {
+      if (applied) {
+        f.applying();
+        await f
+          .manager({
+            adapter: () => {
+              throw new Error("interrupted after durable apply intent");
+            },
+          })
+          .run({ once: true });
+      } else {
+        const state = (await f.store.read())!;
+        state.journal!.phase = "UNKNOWN";
+        state.journal!.reason = "UNKNOWN";
+        await f.store.write(state);
+      }
+      const pending = (await f.store.read())!;
+      assert.equal(pending.journal!.phase, "UNKNOWN");
+      assert.equal(!!pending.journal!.applyBody, applied);
+      assert.ok(pending.journal!.receipt!.catalog);
+      const bytes = await readFile(f.store.file),
+        start = f.requests.length;
+      const events: string[] = [];
+      const write = f.store.write.bind(f.store);
+      t.mock.method(f.store, "write", async (...args: Parameters<typeof write>) => {
+        events.push(`save:${args[0].journal!.phase}`);
+        return write(...args);
+      });
+      f.receiptHook = () => events.push("receipt");
+      await f.reconnect();
+      assert.deepEqual(await readFile(f.store.file), bytes);
+      assert.deepEqual(events, []);
+      const status = await f
+        .manager({
+          folder: async () => assert.fail("recovery must not reopen setup"),
+          adapter: () => assert.fail("recovery must not create a provider"),
+        })
+        .run({ once: true });
+      assert.equal(status.state, applied ? "UNKNOWN" : "LOCAL_CONFIRMATION");
+      assert.deepEqual(events, applied ? ["save:UNKNOWN"] : ["receipt", "save:LOCAL_CONFIRMATION"]);
+      assert.deepEqual(
+        f.requests.slice(start).map((r) => r.action),
+        applied ? ["poll"] : ["poll", "receipt"],
+      );
+      if (applied) assert.deepEqual(await readFile(f.store.file), bytes);
+      else assert.deepEqual(f.requests.at(-1)!.body, pending.journal!.receipt);
+      assert.deepEqual(f.calls, ["bindings"]);
+      assert.equal(f.prepares, 0);
+      assert.equal(f.catalogs, 1);
+      assert.equal(await f.target.read(), undefined);
+    } finally {
+      await f.close();
+    }
+  });
+
+for (const server of ["REQUESTED", "APPLYING"] as const)
+  for (const confirmationReceipt of [false, true])
+    test(`should keep a cancellation intent without a durable cancellation receipt unresolved for ${server} with ${confirmationReceipt ? "confirmation" : "no"} receipt`, async (t) => {
+      const f = await reconnectFixture("plain");
+      try {
+        const state = (await f.store.read())!;
+        state.journal!.phase = "CANCEL_INTENT";
+        if (!confirmationReceipt) state.journal!.receipt = null;
+        await f.store.write(state);
+        if (server === "APPLYING") f.applying();
+        else {
+          f.response.operation!.state = server;
+          f.response.operation!.receipt = null;
+        }
+        const bytes = await readFile(f.store.file),
+          start = f.requests.length;
+        let writes = 0;
+        const write = f.store.write.bind(f.store);
+        t.mock.method(f.store, "write", async (...args: Parameters<typeof write>) => {
+          writes++;
+          return write(...args);
+        });
+        await f.reconnect();
+        for (let attempt = 0; attempt < 2; attempt++) {
+          const status = await f
+            .manager({
+              folder: async () => assert.fail("cancellation must not choose again"),
+              adapter: () => assert.fail("cancellation must not prepare again"),
+            })
+            .run({ once: true });
+          assert.equal(status.state, "CANCEL_INTENT");
+          assert.deepEqual(await readFile(f.store.file), bytes);
+        }
+        assert.equal(writes, 0);
+        assert.deepEqual(
+          f.requests.slice(start).map((r) => r.action),
+          ["poll", "poll"],
+        );
+        assert.ok(
+          f.requests
+            .slice(start)
+            .every((r) => r.body.operationId === state.journal!.operation.operationId),
+        );
+        assert.deepEqual(f.calls, ["bindings"]);
+        assert.equal(f.prepares, 0);
+        assert.equal(f.catalogs, 1);
+      } finally {
+        await f.close();
+      }
+    });
+
+test("should replay only a durable cancellation receipt and save closure after server acknowledgement through normal connection handoff", async (t) => {
+  const f = await reconnectFixture("plain");
+  try {
+    const write = f.store.write.bind(f.store),
+      call = f.client.call.bind(f.client);
+    const stopWrite = t.mock.method(f.store, "write", async (...args: Parameters<typeof write>) => {
+      if (args[0].journal?.phase === "UNKNOWN")
+        throw new Error("process stopped before failure persistence");
+      return write(...args);
+    });
+    const stopCall = t.mock.method(f.client, "call", async (...args: Parameters<typeof call>) => {
+      if (args[0] === "receipt" && args[1].state === "CANCELLED")
+        throw new Error("process stopped before cancellation delivery");
+      return call(...args);
+    });
+    f.response.operation!.state = "CANCELLED";
+    await assert.rejects(f.manager().run({ once: true }), /process stopped/);
+    stopWrite.mock.restore();
+    stopCall.mock.restore();
+    const pending = (await f.store.read())!;
+    assert.equal(pending.journal!.phase, "CANCEL_INTENT");
+    assert.equal(pending.journal!.receipt!.state, "CANCELLED");
+    f.response.operation!.state = "REQUESTED";
+    f.response.operation!.receipt = null;
+    const start = f.requests.length,
+      events: string[] = [];
+    t.mock.method(f.store, "write", async (...args: Parameters<typeof write>) => {
+      events.push(`save:${args[0].journal!.phase}`);
+      return write(...args);
+    });
+    f.receiptHook = () => events.push("acknowledgement");
+    await f.reconnect();
+    const status = await f
+      .manager({ adapter: () => assert.fail("receipt replay cannot create a provider") })
+      .run({ once: true });
+    assert.equal(status.state, "CANCELLED");
+    assert.deepEqual(events, ["acknowledgement", "save:CANCELLED"]);
+    assert.deepEqual(
+      f.requests.slice(start).map((r) => r.action),
+      ["poll", "receipt"],
+    );
+    assert.deepEqual(f.requests.at(-1)!.body, pending.journal!.receipt);
+    assert.equal(f.prepares, 0);
+    assert.equal(f.catalogs, 1);
+  } finally {
+    await f.close();
+  }
+});
+
+for (const server of ["APPLYING", "CANCELLED", "COMMITTED"] as const)
+  test(`should preserve cancellation and committed recovery precedence for ${server} through normal COMMIT_INTENT handoff`, async (t) => {
+    const f = await reconnectFixture("plain");
+    try {
+      f.applying();
+      if (server === "COMMITTED") f.failCommittedResponse = true;
+      else f.failBeforeCommit = true;
+      const write = f.store.write.bind(f.store);
+      const stopped = t.mock.method(f.store, "write", async (...args: Parameters<typeof write>) => {
+        if (args[0].journal?.phase === "UNKNOWN")
+          throw new Error("process stopped before failure persistence");
+        return write(...args);
+      });
+      await assert.rejects(f.manager().run({ once: true }), /process stopped/);
+      stopped.mock.restore();
+      const pending = (await f.store.read())!;
+      assert.equal(pending.journal!.phase, "COMMIT_INTENT");
+      assert.ok(pending.journal!.commitBody);
+      if (server === "CANCELLED") f.response.operation!.state = server;
+      if (server === "COMMITTED") {
+        // A cancellation intent must still yield to the server's completed commit.
+        pending.journal!.phase = "CANCEL_INTENT";
+        await f.store.write(pending);
+      }
+      const bytes = await readFile(f.store.file),
+        start = f.requests.length;
+      await f.reconnect();
+      assert.deepEqual(await readFile(f.store.file), bytes);
+      const status = await f
+        .manager({ adapter: () => assert.fail("recovery cannot create a provider") })
+        .run({ once: true });
+      assert.equal(status.state, server === "CANCELLED" ? "CANCELLED" : "APPLIED");
+      assert.deepEqual(
+        f.requests.slice(start).map((r) => r.action),
+        server === "APPLYING" ? ["poll", "receipt", "receipt"] : ["poll", "receipt"],
+      );
+      assert.deepEqual(
+        f.requests
+          .slice(start)
+          .filter((r) => r.action === "receipt")
+          .map((r) => r.body.state),
+        server === "APPLYING"
+          ? ["COMMITTED", "APPLIED"]
+          : [server === "CANCELLED" ? "CANCELLED" : "APPLIED"],
+      );
+      if (server === "APPLYING")
+        assert.deepEqual(f.requests[start + 1].body, pending.journal!.commitBody);
+      assert.equal((await f.store.read())!.current === null, server === "CANCELLED");
+      assert.equal(f.prepares, 1);
+      assert.equal(f.catalogs, 2);
+      assert.deepEqual(f.calls, ["bindings"]);
+    } finally {
+      await f.close();
+    }
+  });
+
+test("should recover LOCAL_COMMITTED through normal connection handoff without replaying commit or preparing another context", async (t) => {
+  const f = await reconnectFixture("lineage");
+  try {
+    f.applying();
+    const call = f.client.call.bind(f.client);
+    const stopped = t.mock.method(f.client, "call", async (...args: Parameters<typeof call>) => {
+      if (args[0] === "receipt" && args[1].state === "APPLIED")
+        throw new Error("interrupted local commit acknowledgement");
+      return call(...args);
+    });
+    assert.equal((await f.manager().run({ once: true })).state, "LOCAL_COMMITTED");
+    stopped.mock.restore();
+    const pending = (await f.store.read())!,
+      bytes = await readFile(f.store.file),
+      start = f.requests.length;
+    await f.reconnect();
+    assert.deepEqual(await readFile(f.store.file), bytes);
+    const status = await f
+      .manager({ adapter: () => assert.fail("local commit cannot prepare again") })
+      .run({ once: true });
+    assert.equal(status.state, "APPLIED");
+    assert.deepEqual((await f.store.read())!.current, pending.current);
+    assert.deepEqual(
+      f.requests.slice(start).map((r) => r.action),
+      ["poll", "receipt"],
+    );
+    assert.deepEqual(f.requests.at(-1)!.body, { ...pending.journal!.receipt, state: "APPLIED" });
+    assert.equal(f.prepares, 1);
+    assert.equal(f.catalogs, 2);
+    assert.equal(await f.target.read(), undefined);
+  } finally {
+    await f.close();
+  }
+});
+
 for (const mismatch of [
   "server",
   "device",
