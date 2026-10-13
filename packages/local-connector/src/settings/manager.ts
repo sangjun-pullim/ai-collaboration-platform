@@ -72,6 +72,43 @@ export type SettingsManagerStatus = {
 const same = (a: unknown, b: unknown) => stableJson(a) === stableJson(b);
 const closed = (journal: SetupJournal) => ["APPLIED", "CANCELLED"].includes(journal.phase);
 
+/** Classify only after sameOperation has validated the server operation. */
+function recoveryAction(j: SetupJournal, serverState: Operation["state"]) {
+  const restoreConfirmation =
+    j.phase === "UNKNOWN" &&
+    !j.applyBody &&
+    j.receipt?.state === "LOCAL_CONFIRMATION" &&
+    !!j.receipt.catalog;
+  if (
+    serverState === "CANCELLED" &&
+    !["COMMITTED", "LOCAL_COMMITTED", "APPLIED"].includes(j.phase) &&
+    j.receipt?.state !== "COMMITTED"
+  ) {
+    if (
+      ["LOCAL_CONFIRMATION", "PREPARED", "FAILED"].includes(j.phase) ||
+      j.receipt?.state === "CANCELLED" ||
+      !!j.commitBody ||
+      restoreConfirmation
+    )
+      return "cancel";
+    return "preserve-unknown";
+  }
+  if (["COMMITTED", "APPLIED"].includes(serverState)) return "adopt";
+  if (j.phase === "CANCEL_INTENT")
+    return j.receipt?.state === "CANCELLED" ? "replay-cancellation" : "wait";
+  if (["COMMIT_INTENT", "PREPARED"].includes(j.phase) || (j.phase === "UNKNOWN" && !!j.commitBody))
+    return "commit";
+  if (restoreConfirmation) return "restore-confirmation";
+  if (j.phase === "LOCAL_CONFIRMATION" || j.phase === "APPLYING") {
+    if (serverState === "REQUESTED") return "replay-confirmation";
+    if (serverState === "APPLYING") return "prepare";
+    return "wait";
+  }
+  if (["CHOOSING", "CATALOG_INTENT", "PREPARE_INTENT", "UNKNOWN"].includes(j.phase))
+    return "preserve-unknown";
+  return "wait";
+}
+
 function catalog(provider: Provider, value: Capabilities): Capability {
   if (value.policy !== "CONFIRMED" || (value.runtime && value.runtime !== provider))
     throw new RuntimeError("UNSUPPORTED_SETTINGS");
@@ -969,69 +1006,42 @@ export class SettingsManager {
   private async recover(response: SettingsResponse) {
     const j = this.state.journal!,
       op = this.sameOperation(response);
-    if (
-      op.state === "CANCELLED" &&
-      !["COMMITTED", "LOCAL_COMMITTED", "APPLIED"].includes(j.phase) &&
-      j.receipt?.state !== "COMMITTED"
-    ) {
-      if (
-        ["LOCAL_CONFIRMATION", "PREPARED", "FAILED"].includes(j.phase) ||
-        j.receipt?.state === "CANCELLED" ||
-        !!j.commitBody
-      )
+    switch (recoveryAction(j, op.state)) {
+      case "cancel":
         return this.cancel(true);
-      if (
-        j.phase === "UNKNOWN" &&
-        !j.applyBody &&
-        j.receipt?.state === "LOCAL_CONFIRMATION" &&
-        j.receipt.catalog
-      )
-        return this.cancel(true);
-      await this.save((_s, journal) => {
-        journal.phase = "UNKNOWN";
-        journal.reason = "UNKNOWN";
-      });
-      return;
-    }
-    if (["COMMITTED", "APPLIED"].includes(op.state)) return this.adopt(response);
-    if (j.phase === "CANCEL_INTENT") {
-      if (j.receipt?.state === "CANCELLED") {
+      case "adopt":
+        return this.adopt(response);
+      case "replay-cancellation": {
         const result = await this.call("receipt", j.receipt as unknown as Body);
         if (this.sameOperation(result).state === "CANCELLED")
           await this.save((_s, journal) => {
             journal.phase = "CANCELLED";
           });
+        return;
       }
-      return;
+      case "commit":
+        return this.commit();
+      case "restore-confirmation":
+        await this.call("receipt", j.receipt as unknown as Body);
+        await this.save((_s, journal) => {
+          journal.phase = "LOCAL_CONFIRMATION";
+          journal.reason = null;
+        });
+        return;
+      case "replay-confirmation":
+        await this.call("receipt", j.receipt as unknown as Body);
+        return;
+      case "prepare":
+        return this.prepare(response);
+      case "preserve-unknown":
+        await this.save((_s, journal) => {
+          journal.phase = "UNKNOWN";
+          journal.reason = "UNKNOWN";
+        });
+        return;
+      case "wait":
+        return;
     }
-    if (
-      ["COMMIT_INTENT", "PREPARED"].includes(j.phase) ||
-      (j.phase === "UNKNOWN" && !!j.commitBody)
-    )
-      return this.commit();
-    if (
-      j.phase === "UNKNOWN" &&
-      !j.applyBody &&
-      j.receipt?.state === "LOCAL_CONFIRMATION" &&
-      j.receipt.catalog
-    ) {
-      await this.call("receipt", j.receipt as unknown as Body);
-      await this.save((_s, journal) => {
-        journal.phase = "LOCAL_CONFIRMATION";
-        journal.reason = null;
-      });
-      return;
-    }
-    if (j.phase === "LOCAL_CONFIRMATION" || j.phase === "APPLYING") {
-      if (op.state === "REQUESTED") await this.call("receipt", j.receipt as unknown as Body);
-      else if (op.state === "APPLYING") await this.prepare(response);
-      return;
-    }
-    if (["CHOOSING", "CATALOG_INTENT", "PREPARE_INTENT", "UNKNOWN"].includes(j.phase))
-      await this.save((_s, journal) => {
-        journal.phase = "UNKNOWN";
-        journal.reason = "UNKNOWN";
-      });
   }
   private async failure(error: unknown) {
     this.ready = false;

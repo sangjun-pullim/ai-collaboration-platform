@@ -14,7 +14,7 @@ import {
   withConfiguredProfileProtection,
   withLocalProfileProtection,
 } from "./remove-local-profile.ts";
-import { RetiredProfileError, withSettingsDeviceLock } from "./settings-lock.ts";
+import { readConnectSettingsOwner, withSettingsDeviceLock } from "./settings-lock.ts";
 import { parseCliOptions, parseRecoveryChain } from "./parse-options.ts";
 import type { ConnectInput, ConnectInteraction } from "./connect-command.ts";
 import { serviceOrigin } from "../central-client.ts";
@@ -354,29 +354,11 @@ export async function prepareSelectedConnection<T>(
   return settings.locked(async () => {
     check();
     await assertSelection(selection);
-    const original = await selection.store.read();
-    const configured = await settings.read();
-    if (configured && !original) throw new RetiredProfileError();
-    if (original) matchingScope(original, selection.origin, selection.input);
-    if (
-      configured &&
-      (original!.server !== configured.server ||
-        original!.deviceId !== configured.deviceId ||
-        original!.scope?.organizationId !== configured.organizationId ||
-        original!.scope?.roomId !== configured.roomId)
-    )
-      throw new ConnectionError("FORBIDDEN");
-    // Only the same registered owner may hand its durable journal to SettingsManager.
-    // The device lock still excludes live owners; enrollment and other commands remain idle-only.
-    const resumeSettings =
-      configured &&
-      original?.status === "connected" &&
-      isId(original.deviceId) &&
-      isHash(original.credential) &&
-      Date.parse(original.credentialExpiresAt ?? "") > Date.now() &&
-      !original.pending &&
-      !original.registration;
-    if (!resumeSettings) await settings.assertIdle();
+    const original = await readConnectSettingsOwner(settings, {
+      server: selection.origin,
+      organizationId: selection.input.organizationId,
+      roomId: selection.input.roomId,
+    });
     check();
     // The existing pairing restart probe creates this empty private runtime scaffold.
     // Capture it before the transition so its legitimate creation is not an authority change.
