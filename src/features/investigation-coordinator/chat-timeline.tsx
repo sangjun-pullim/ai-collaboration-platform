@@ -68,10 +68,10 @@ export function ChatTimeline({
         ref={scrollRef}
         onScroll={onScroll}
         aria-label="대화 기록 스크롤"
-        className="min-h-0 flex-1 overflow-y-auto overscroll-contain px-4 py-6 md:px-8"
+        className="min-h-0 flex-1 overflow-y-auto overscroll-contain px-4 py-4 md:px-6"
         style={{ overflowAnchor: "none" }}
       >
-        <ol aria-label="확정 공동 이력" className="mx-auto max-w-3xl space-y-6">
+        <ol aria-label="확정 공동 이력" className="mx-auto max-w-4xl space-y-5">
           {!events.some((event) => event.kind !== "RUN_STATE") && (
             <li className="py-12 text-center text-sm text-neutral-500">
               대화를 시작하세요. 내 AI 없이도 동료 AI에게 질문할 수 있습니다.
@@ -168,6 +168,24 @@ export function ChatTimeline({
               </li>
             );
           })}
+          {projected.statuses
+            .filter(
+              (status) =>
+                !status.question &&
+                ["COMPLETED", "FAILED", "INTERRUPTED", "CANCELLED"].includes(status.state),
+            )
+            .map((status) => (
+              <li key={`result:${status.requestId}`}>
+                <details className="mx-auto max-w-3xl text-xs text-neutral-600">
+                  <summary className="cursor-pointer">
+                    {status.target} · {status.label} · 실행 기록
+                  </summary>
+                  <div className="mt-2">
+                    <ChatAnswerStatus status={status} />
+                  </div>
+                </details>
+              </li>
+            ))}
         </ol>
       </div>
       {unread && (
@@ -187,9 +205,11 @@ export function ChatTimeline({
 export function ChatAnswerStatus({
   status,
   historical = false,
+  compact = false,
 }: {
   status: AnswerStatus;
   historical?: boolean;
+  compact?: boolean;
 }) {
   if (status.retiredAt)
     return (
@@ -222,28 +242,12 @@ export function ChatAnswerStatus({
         </div>
       </details>
     );
-  return (
-    <div className="min-w-0 space-y-1 text-xs [overflow-wrap:anywhere]">
-      <p className="flex flex-wrap items-center gap-2 font-medium text-neutral-800">
-        {status.spinning && (
-          <span
-            aria-hidden="true"
-            className="size-3 shrink-0 animate-spin rounded-full border-2 border-neutral-300 border-t-neutral-700 motion-reduce:animate-none"
-          />
-        )}
-        <span>{status.target}</span>
-        <span>
-          {historical ? "당시 상태: " : ""}
-          {status.label}
-        </span>
-      </p>
-      {status.question && (
-        <p className="line-clamp-2 text-neutral-600">
+  const details = (
+    <>
+      {compact && status.question && (
+        <p className="whitespace-pre-wrap text-neutral-600">
           질문 #{status.question.sequence}: {status.question.publicText}
         </p>
-      )}
-      {!historical && status.freshness && (
-        <p className="text-amber-800">{status.freshness} · 마지막 확인 상태를 표시합니다.</p>
       )}
       {status.updatedAt ? (
         <p className="text-neutral-500">
@@ -261,6 +265,40 @@ export function ChatAnswerStatus({
         <a href="/app/connections" className="inline-block underline underline-offset-2">
           내 AI 연결 관리
         </a>
+      )}
+    </>
+  );
+  return (
+    <div className="min-w-0 space-y-1 text-xs [overflow-wrap:anywhere]">
+      <p className="flex flex-wrap items-center gap-2 font-medium text-neutral-800">
+        {status.spinning && (
+          <span
+            aria-hidden="true"
+            className="size-3 shrink-0 animate-spin rounded-full border-2 border-neutral-300 border-t-neutral-700 motion-reduce:animate-none"
+          />
+        )}
+        <span>{status.target}</span>
+        <span>
+          {historical ? "당시 상태: " : ""}
+          {status.label}
+        </span>
+      </p>
+      {status.question && (
+        <p className="line-clamp-2 text-neutral-600">
+          질문 #{status.question.sequence}
+          {!compact && `: ${status.question.publicText}`}
+        </p>
+      )}
+      {!historical && status.freshness && (
+        <p className="text-amber-800">{status.freshness} · 마지막 확인 상태를 표시합니다.</p>
+      )}
+      {compact ? (
+        <details>
+          <summary className="w-fit cursor-pointer text-neutral-500">상태 상세</summary>
+          <div className="mt-2 space-y-1">{details}</div>
+        </details>
+      ) : (
+        details
       )}
     </div>
   );

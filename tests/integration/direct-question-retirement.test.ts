@@ -705,18 +705,14 @@ test(
           mobilePage.getByRole("button", { name: "이전 요청 정리", exact: true }),
         ).toHaveCount(0);
         await expect(
-          mobilePage
-            .getByRole("region", { name: "AI 답변 상태", exact: true })
-            .getByText("현재 요청된 AI 답변이 없습니다."),
-        ).toBeVisible();
+          mobilePage.getByRole("region", { name: "AI 답변 상태", exact: true }),
+        ).toHaveCount(0);
         await expect(
           mobilePage.locator("summary").filter({ hasText: "답변 미확인 · 이전 기록" }),
         ).toHaveCount(2);
         await expect(
-          observerPage
-            .getByRole("region", { name: "AI 답변 상태", exact: true })
-            .getByText("현재 요청된 AI 답변이 없습니다."),
-        ).toBeVisible({ timeout: 15000 });
+          observerPage.getByRole("region", { name: "AI 답변 상태", exact: true }),
+        ).toHaveCount(0, { timeout: 15000 });
         assert.equal((await recovery(f, s)).recovery.retirements.length, 2);
         await mobile.close();
         await observer.close();

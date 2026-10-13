@@ -178,9 +178,13 @@ test("should distinguish reported execution unknown and confirmed pause in the b
       "일시정지 확인",
       { timeout: 45000 },
     );
-    await expect(answerStatus).toContainText("중단 확인", { timeout: 45000 });
-    await expect(answerStatus).toContainText("새 질문");
-    await expect(answerStatus.locator(".animate-spin")).toHaveCount(0);
+    await expect(answerStatus).toHaveCount(0, { timeout: 45000 });
+    await expect(region.getByLabel("확정 공동 이력")).toContainText("중단 확인", {
+      timeout: 45000,
+    });
+    const terminalHistory = region.getByLabel("확정 공동 이력");
+    await expect(terminalHistory).toContainText("새 질문");
+    await expect(terminalHistory.locator(".animate-spin")).toHaveCount(0);
     await region.getByRole("button", { name: "공동 조사", exact: true }).click();
     await expect(resume).toBeEnabled();
     await resume.focus();
@@ -433,9 +437,11 @@ test("should show a direct question form without an own AI connection", async ({
         );
         await page.reload();
         process.stdout.write("010_DIRECT_STAGE ANSWER_RELOAD_BEFORE\n");
-        await expect(
-          region.getByRole("region", { name: "AI 답변 상태", exact: true }),
-        ).toContainText("답변 완료", pollingWait);
+        await expect(region.getByRole("region", { name: "AI 답변 상태", exact: true })).toHaveCount(
+          0,
+          pollingWait,
+        );
+        await expect(region.getByLabel("확정 공동 이력")).toContainText("답변 완료", pollingWait);
         await expect(
           region.getByRole("button", { name: "이 직접 질문 중단 요청", exact: true }),
         ).toHaveCount(0);
@@ -481,10 +487,13 @@ test("should show a direct question form without an own AI connection", async ({
         await expect(send).toBeDisabled(pollingWait);
         process.stdout.write("010_DIRECT_STAGE CANCEL_TERMINAL_BEFORE\n");
         await broker("direct-drive", { scene, step: "terminal" });
-        await expect(
-          region.getByRole("region", { name: "AI 답변 상태", exact: true }),
-        ).toContainText("중단 확인", pollingWait);
-        for (const status of [visibleStatus, observedStatus]) {
+        await expect(region.getByRole("region", { name: "AI 답변 상태", exact: true })).toHaveCount(
+          0,
+          pollingWait,
+        );
+        await expect(observedStatus).toHaveCount(0, pollingWait);
+        for (const history of [region, observer]) {
+          const status = history.getByLabel("확정 공동 이력");
           await expect(status).toContainText("중단 확인", pollingWait);
           await expect(status).toContainText("대상 AI 소유자에게 Mac의 기존 AI 연결 터미널");
           await expect(status).toContainText("새 질문");
@@ -549,12 +558,9 @@ test("should isolate unresolved direct intents across authenticated users", asyn
         region.getByRole("button", { name: "같은 요청 확인", exact: true }),
       ).toBeVisible();
       await broker("direct-drive", { scene, step: "answer" });
-      await expect(region.getByRole("region", { name: "AI 답변 상태", exact: true })).toContainText(
-        "답변 완료",
-        {
-          timeout: 45_000,
-        },
-      );
+      await expect(region.getByLabel("확정 공동 이력")).toContainText("답변 완료", {
+        timeout: 45_000,
+      });
       if (mode === "actor") {
         await page.getByRole("button", { name: "로그아웃", exact: true }).click();
         await expect(
@@ -563,11 +569,13 @@ test("should isolate unresolved direct intents across authenticated users", asyn
         await login(page, data.actorB);
         await page.goto(`/app/rooms/${data.roomId}`);
         await expect(region.getByRole("form", { name: "상대 AI에 직접 질문" })).toBeVisible();
-        await expect(
-          region.getByRole("region", { name: "AI 답변 상태", exact: true }),
-        ).toContainText("답변 완료", {
-          timeout: 45_000,
-        });
+        await expect(region.getByRole("region", { name: "AI 답변 상태", exact: true })).toHaveCount(
+          0,
+          {
+            timeout: 45_000,
+          },
+        );
+        await expect(region.getByLabel("확정 공동 이력")).toContainText("답변 완료");
         await expect(
           region.getByRole("button", { name: "같은 요청 확인", exact: true }),
         ).toHaveCount(0);

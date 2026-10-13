@@ -122,6 +122,19 @@ function harness() {
   };
 }
 
+test("should include the visible submit caption in its accessible name for each sending mode", () => {
+  const h = harness();
+  for (const mode of ["ask", "speak"]) {
+    h.props.mode = mode;
+    const button = nodes(h.render()).find((node) => node.type === "button")!;
+    const caption = (button.props.children as unknown[])
+      .filter((child): child is string => typeof child === "string")
+      .join("");
+    assert.ok(caption.length > 0);
+    assert.ok((button.props["aria-label"] as string).includes(caption));
+  }
+});
+
 test("should submit a named AI question on Enter without a per-question checkbox", async () => {
   const h = harness(),
     tree = h.render();

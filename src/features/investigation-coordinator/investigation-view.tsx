@@ -137,10 +137,11 @@ function RoomInvestigation({ userId, roomId, role }: Props) {
   const cycleStatuses = cycle
     ? presentation.statuses.filter((status) => status.cycleId === cycle.cycleId)
     : [];
-  const pendingStatuses = cycleStatuses.filter((status) =>
+  const currentStatuses = cycleStatuses.filter((status) =>
     ["QUEUED", "LEASED", "RUNNING", "UNKNOWN"].includes(status.state),
   );
-  const currentStatuses = pendingStatuses.length ? pendingStatuses : cycleStatuses;
+  const showAnswerStatus =
+    currentStatuses.length > 0 || (writable && (!!retirementCandidate || !!pendingDirect));
   const directStatus = directRun
     ? cycleStatuses.find(
         (status) =>
@@ -395,90 +396,83 @@ function RoomInvestigation({ userId, roomId, role }: Props) {
           }
         }}
       />
-      <section
-        aria-label="AI 답변 상태"
-        className="max-h-52 shrink-0 space-y-3 overflow-y-auto border-t bg-neutral-50 px-5 py-3"
-        aria-live="polite"
-      >
-        <h2 className="text-sm font-semibold">AI 답변 상태</h2>
-        {currentStatuses.length ? (
-          currentStatuses.map((status) => (
-            <ChatAnswerStatus key={status.requestId} status={status} />
-          ))
-        ) : (
-          <p className="text-xs text-neutral-500">현재 요청된 AI 답변이 없습니다.</p>
-        )}
-        {history.retirements.length > 0 && (
-          <p role="status">
-            답변 미확인 요청을 이전 기록에 보관했습니다. 질문 기록에서 상세를 확인할 수 있습니다.
-          </p>
-        )}
-        {writable && (
-          <>
-            <RequestRetirementControls
-              userId={userId}
-              roomId={roomId}
-              candidate={retirementCandidate}
-              disabled={busy || !!pendingDirect || !!pollError}
-              mutate={mutate}
-            />{" "}
-            {pendingDirect && (
-              <p role="status">
-                전송 결과 미확정 · 새 질문으로 재전송하지 않습니다.
-                <Button
-                  variant="outline"
-                  size="sm"
-                  disabled={busy || !snapshot}
-                  onClick={() => mutate(pendingDirect.action, {}, pendingDirect.body)}
-                >
-                  같은 요청 확인
-                </Button>
-              </p>
-            )}
-            {directCycle && currentStatuses.length > 0 && (
-              <div>
-                {Date.parse(directCycle.deadline) <= observedAt && (
-                  <p>직접 질문 기한이 지났습니다. 늦은 답변은 현재 결과로 채택하지 않습니다.</p>
-                )}
-                {directRun &&
-                  ["QUEUED", "LEASED", "RUNNING", "UNKNOWN"].includes(directRun.state) &&
-                  !ready(
-                    bindings.find(
-                      (binding) =>
-                        binding.agentId === directCycle.targetAgentId &&
-                        binding.bindingEpoch === directCycle.targetEpoch,
-                    ),
-                  ) && <p>대상 준비 보고 만료 또는 연결 변경 · 실제 종결을 기다립니다.</p>}
-                {directCycle.canInterrupt && directRun && (
+      {showAnswerStatus && (
+        <section
+          aria-label="AI 답변 상태"
+          className="max-h-[min(10rem,30dvh)] shrink-0 space-y-2 overflow-y-auto border-t bg-neutral-50 px-4 py-2 md:px-6"
+          aria-live="polite"
+        >
+          <h2 className="sr-only">AI 답변 상태</h2>
+          {currentStatuses.map((status) => (
+            <ChatAnswerStatus key={status.requestId} status={status} compact />
+          ))}
+          {writable && (
+            <>
+              <RequestRetirementControls
+                userId={userId}
+                roomId={roomId}
+                candidate={retirementCandidate}
+                disabled={busy || !!pendingDirect || !!pollError}
+                mutate={mutate}
+              />{" "}
+              {pendingDirect && (
+                <p role="status">
+                  전송 결과 미확정 · 새 질문으로 재전송하지 않습니다.
                   <Button
                     variant="outline"
                     size="sm"
-                    disabled={busy || !!pendingDirect || cancelConfirmed}
-                    onClick={() =>
-                      mutate("cancel", {
-                        requestId: directRun.requestId,
-                        expectedRoomRevision: snapshot!.roomRevision,
-                      })
-                    }
+                    disabled={busy || !snapshot}
+                    onClick={() => mutate(pendingDirect.action, {}, pendingDirect.body)}
                   >
-                    {cancelUncertain
-                      ? busy
-                        ? "중단 요청 전송 중"
-                        : "중단 요청 결과 미확정"
-                      : directStatus?.interruptStage === "ACKNOWLEDGED"
-                        ? "중단 요청 수신 확인"
-                        : directStatus?.cancelReceiptState === "NO_ACTIVE_RUN"
-                          ? "중단할 활성 실행 없음"
-                          : cancelConfirmed
-                            ? "중단 요청 접수"
-                            : "이 직접 질문 중단 요청"}
+                    같은 요청 확인
                   </Button>
-                )}
-              </div>
-            )}
-          </>
-        )}
-      </section>
+                </p>
+              )}
+              {directCycle && currentStatuses.length > 0 && (
+                <div>
+                  {Date.parse(directCycle.deadline) <= observedAt && (
+                    <p>직접 질문 기한이 지났습니다. 늦은 답변은 현재 결과로 채택하지 않습니다.</p>
+                  )}
+                  {directRun &&
+                    ["QUEUED", "LEASED", "RUNNING", "UNKNOWN"].includes(directRun.state) &&
+                    !ready(
+                      bindings.find(
+                        (binding) =>
+                          binding.agentId === directCycle.targetAgentId &&
+                          binding.bindingEpoch === directCycle.targetEpoch,
+                      ),
+                    ) && <p>대상 준비 보고 만료 또는 연결 변경 · 실제 종결을 기다립니다.</p>}
+                  {directCycle.canInterrupt && directRun && (
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      disabled={busy || !!pendingDirect || cancelConfirmed}
+                      onClick={() =>
+                        mutate("cancel", {
+                          requestId: directRun.requestId,
+                          expectedRoomRevision: snapshot!.roomRevision,
+                        })
+                      }
+                    >
+                      {cancelUncertain
+                        ? busy
+                          ? "중단 요청 전송 중"
+                          : "중단 요청 결과 미확정"
+                        : directStatus?.interruptStage === "ACKNOWLEDGED"
+                          ? "중단 요청 수신 확인"
+                          : directStatus?.cancelReceiptState === "NO_ACTIVE_RUN"
+                            ? "중단할 활성 실행 없음"
+                            : cancelConfirmed
+                              ? "중단 요청 접수"
+                              : "이 직접 질문 중단 요청"}
+                    </Button>
+                  )}
+                </div>
+              )}
+            </>
+          )}
+        </section>
+      )}
       {writable ? (
         <ChatComposer
           mode={mode}

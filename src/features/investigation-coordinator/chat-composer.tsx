@@ -56,12 +56,12 @@ export function ChatComposer({
           }
         }
       }}
-      className="shrink-0 space-y-3 border-t bg-white px-4 py-4 md:px-8"
+      className="shrink-0 border-t bg-white px-4 py-3 md:px-6"
     >
-      <div className="mx-auto max-w-3xl space-y-3">
-        <div className="flex flex-wrap items-center gap-3">
-          <label className="flex items-center gap-2 text-xs text-neutral-500">
-            보낼 곳
+      <div className="mx-auto max-w-4xl space-y-2">
+        <div className="grid grid-cols-[auto_minmax(0,1fr)] items-center gap-2">
+          <label className="min-w-0 text-xs text-neutral-500">
+            <span className="sr-only">보낼 곳</span>
             <select
               className="max-w-full rounded-md border px-2 py-1.5 text-sm text-neutral-800"
               aria-label="보낼 곳"
@@ -74,8 +74,8 @@ export function ChatComposer({
             </select>
           </label>
           {mode === "ask" && (
-            <label className="grid min-w-0 flex-1 gap-1 text-xs text-neutral-500">
-              직접 질문 대상
+            <label className="min-w-0 text-xs text-neutral-500">
+              <span className="sr-only">직접 질문 대상</span>
               <select
                 aria-label="직접 질문 대상"
                 className="w-full min-w-0 rounded-md border px-2 py-1.5 text-sm text-neutral-800"
@@ -105,8 +105,7 @@ export function ChatComposer({
               ? `${target.ownerAlias} · ${target.runtime} · ${target.repositoryAlias} · ${target.sessionAlias} · 응답 준비 보고`
               : targets.length
                 ? "질문받을 상대를 선택하세요."
-                : "준비 보고가 유효한 상대가 없습니다. 상대가 연결 상태를 확인해야 합니다."}{" "}
-            내 AI 연결 없이 선택한 상대만 한 번 답합니다.
+                : "질문 가능한 상대 AI가 없습니다. 상대가 AI 연결을 준비해야 합니다."}
           </p>
         )}
         <label className="sr-only" htmlFor="chat-message">
@@ -120,12 +119,13 @@ export function ChatComposer({
           onChange={(event) => onDraft(event.target.value)}
           required
           maxLength={4000}
-          rows={3}
+          rows={2}
           disabled={pending || busy}
           placeholder={
             mode === "ask" ? "선택한 AI에게 질문하세요…" : "방 참가자에게 메시지를 남기세요…"
           }
-          className="max-h-40 min-h-20 resize-y"
+          className="max-h-32 min-h-14 resize-y"
+          aria-describedby="chat-input-help"
           onCompositionStart={() => {
             composing.current = true;
           }}
@@ -147,21 +147,23 @@ export function ChatComposer({
           }}
         />
         <div className="flex flex-wrap items-center justify-between gap-2">
-          {mode === "ask" ? (
-            <p className="text-xs text-neutral-500">질문과 답변은 채팅방 참가자에게 공유됩니다.</p>
-          ) : (
-            <p className="text-xs text-neutral-500">
-              참가자 모두에게 공유합니다. AI 답변을 시작하지 않습니다.
-            </p>
-          )}
-          <Button disabled={disabled || !draft.trim()} size="sm">
+          <p id="chat-input-help" className="min-w-0 flex-1 text-[11px] text-neutral-500">
+            {mode === "ask"
+              ? "질문과 답변은 참가자에게 공유됩니다."
+              : "참가자에게 공유하며 AI 답변을 시작하지 않습니다."}{" "}
+            <span className="sr-only md:not-sr-only">
+              Enter 전송 · Shift+Enter 줄바꿈 · 한글 입력 중에는 전송하지 않습니다.
+            </span>
+          </p>
+          <Button
+            disabled={disabled || !draft.trim()}
+            size="sm"
+            aria-label={mode === "ask" ? "상대 AI에 질문 보내기" : "공동 발언 저장"}
+          >
             <Send className="size-3.5" />
-            {mode === "ask" ? "상대 AI에 질문 보내기" : "공동 발언 저장"}
+            {mode === "ask" ? "보내기" : "저장"}
           </Button>
         </div>
-        <p className="text-[11px] text-neutral-400">
-          Enter 전송 · Shift+Enter 줄바꿈 · 한글 입력 중에는 전송하지 않습니다.
-        </p>
       </div>
     </form>
   );
