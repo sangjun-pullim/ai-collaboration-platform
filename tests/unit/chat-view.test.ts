@@ -633,10 +633,8 @@ test("should clear immediate receipt on source access loss", async (t) => {
     buttonText(h.render(), /이 직접 질문 중단 요청/)!.props.onClick as () => Promise<boolean>
   )();
   (find(h.render(), "timeline")!.props.onAccessLost as () => void)();
-  const region = labeled(h.render(), "AI 답변 상태")!;
-  assert.match(visibleText(region), /현재 요청된 AI 답변이 없습니다/);
-  assert.doesNotMatch(visibleText(region), /서버.*접수/);
-  assert.equal(buttonText(region, /중단/), undefined);
+  assert.equal(labeled(h.render(), "AI 답변 상태"), undefined);
+  assert.equal(buttonText(h.render(), /중단/), undefined);
 });
 for (const role of ["owner", "participant", "observer"] as const) {
   test(`should show target progress and confirmed terminal guidance to ${role}`, async (t) => {
@@ -658,7 +656,8 @@ for (const role of ["owner", "participant", "observer"] as const) {
       bindings: [{ ...page.bindings[0], owned: role === "owner" }],
       cycle: { ...page.cycle!, canInterrupt: false } as contracts.DirectCycleSummary,
     });
-    const terminal = labeled(h.render(), "AI 답변 상태")!;
+    assert.equal(labeled(h.render(), "AI 답변 상태"), undefined);
+    const terminal = labeled(h.renderTimeline(), "질문 #1 답변 상태")!;
     assert.match(visibleText(terminal), /중단 확인/);
     assert.match(visibleText(terminal), /터미널/);
     assert.match(visibleText(terminal), /새 질문/);
@@ -696,10 +695,49 @@ test("should keep the current answer visible despite an older terminal cycle and
   assert.equal(h.calls[0].action, "cancel");
   assert.equal(h.calls[0].body.requestId, page.runs[0].requestId);
 });
-test("should show an empty current answer region for observers without inventing execution", async (t) => {
+test("should leave the conversation space available when observers have no current answer", async (t) => {
   const h = await harness(t, "observer");
-  assert.match(visibleText(labeled(h.render(), "AI 답변 상태")), /현재 요청된 AI 답변이 없습니다/);
+  assert.equal(labeled(h.render(), "AI 답변 상태"), undefined);
   assert.equal(find(h.render(), "composer"), undefined);
+});
+
+test("should hide idle and terminal panels while preserving every terminal in its question history", async (t) => {
+  const h = await harness(t);
+  assert.equal(labeled(h.render(), "AI 답변 상태"), undefined);
+  const page = fixture.history as contracts.HistoryPage;
+  for (const [state, label] of [
+    ["COMPLETED", "답변 완료"],
+    ["FAILED", "답변 실패"],
+    ["INTERRUPTED", "중단 확인"],
+    ["CANCELLED", "시작 전 취소"],
+  ] as const) {
+    await h.snapshot({ ...page, runs: [{ ...page.runs[0], state }] });
+    assert.equal(labeled(h.render(), "AI 답변 상태"), undefined);
+    const question = labeled(h.renderTimeline(), "질문 #1 답변 상태");
+    assert.ok(question);
+    assert.match(visibleText(question), new RegExp(label));
+  }
+  await h.snapshot({ ...page, runs: [{ ...page.runs[0], state: "QUEUED" }] });
+  assert.ok(labeled(h.render(), "AI 답변 상태"));
+});
+
+test("should keep exact request confirmation available without a current answer after a lost submission", async (t) => {
+  const h = await harness(t);
+  (find(h.render(), "composer")!.props.onDraft as (value: string) => void)("응답 유실 질문");
+  h.fail();
+  await (find(h.render(), "composer")!.props.onSubmit as (event: unknown) => Promise<boolean>)(
+    h.submit("응답 유실 질문"),
+  );
+  assert.equal(h.calls.length, 1);
+  assert.equal(h.controller.getSnapshot().pendingDirect?.action, "ask");
+  const region = labeled(h.render(), "AI 답변 상태");
+  assert.ok(region);
+  const retry = buttonText(region, /^같은 요청 확인$/);
+  assert.ok(retry);
+  h.succeed();
+  await (retry.props.onClick as () => Promise<boolean>)();
+  assert.deepEqual(h.calls[1].body, h.calls[0].body);
+  assert.equal(labeled(h.render(), "AI 답변 상태"), undefined);
 });
 
 test("should calculate status once per room render and pass the same result to the timeline", async (t) => {
@@ -769,11 +807,8 @@ test("should remove the current card on a pinned receipt and preserve archived d
   void operationId;
   assert.deepEqual(request.body, { ...expected, operationId: request.body.operationId });
   assert.equal(h.storage.size, 0);
-  assert.equal(find(h.render(), "dialog")!.props.open, false);
-  const region = labeled(h.render(), "AI 답변 상태")!;
-  assert.match(visibleText(region), /현재 요청된 AI 답변이 없습니다/);
-  assert.equal(buttonText(region, /^이전 요청 정리$/), undefined);
-  assert.equal(buttonText(region, /중단 요청/), undefined);
+  assert.equal(find(h.render(), "dialog"), undefined);
+  assert.equal(labeled(h.render(), "AI 답변 상태"), undefined);
   assert.equal(find(h.render(), "composer")!.props.disabled, true);
   const archived = find(h.renderTimeline(), "details")!;
   assert.match(visibleText(archived), /답변 미확인 · 이전 기록/);
@@ -784,7 +819,8 @@ test("should remove the current card on a pinned receipt and preserve archived d
   assert.equal(h.controller.getSnapshot().history.runs[0].terminal, null);
   await h.pollFail();
   assert.equal(find(h.render(), "composer")!.props.disabled, true);
-  assert.match(visibleText(labeled(h.render(), "AI 답변 상태")), /이전 기록에 보관했습니다/);
+  assert.equal(labeled(h.render(), "AI 답변 상태"), undefined);
+  assert.match(visibleText(find(h.renderTimeline(), "details")), /답변 미확인 · 이전 기록/);
   h.succeed();
   h.pollSucceed();
   const { state, attemptId, fence, roomRevision, ...retirement } = retirementFixture.receipt;
@@ -854,7 +890,7 @@ test("should retain access to exact retirement confirmation after an unavailable
   assert.equal(h.calls.length, 2);
   assert.deepEqual(h.calls[1].body, h.calls[0].body);
   assert.equal(h.controller.getSnapshot().permissionDenied, false);
-  assert.match(visibleText(labeled(h.render(), "AI 답변 상태")), /현재 요청된 AI 답변이 없습니다/);
+  assert.equal(labeled(h.render(), "AI 답변 상태"), undefined);
 });
 
 test("should require device revocation and expose no retirement controls to observers", async (t) => {
