@@ -248,6 +248,7 @@ async function harness(t: TestContext, role: "owner" | "participant" | "observer
       if (name === "../../components/ui/badge") return { Badge: "span" };
       if (name === "./own-input-controls") return { OwnInputControls: "own-input-controls" };
       if (name === "./advanced-controls") return { AdvancedControls: "advanced" };
+      if (name === "../room-access/chat-shell") return { ChatHeaderControls: "header-controls" };
       if (name === "../../components/ui/button") return { Button: "button" };
       throw new Error(`Unexpected UI dependency ${name}`);
     },
@@ -769,6 +770,17 @@ const retirementPage = (): contracts.RecoveryHistoryPage => ({
   ],
 });
 const click = (node: Node) => (node.props.onClick as () => unknown)();
+test("should place one room status and advanced form in the header slot", async (t) => {
+  const h = await harness(t, "owner");
+  const tree = h.render();
+  const header = find(tree, "header-controls");
+  assert.ok(header);
+  assert.ok(find(header, "advanced"));
+  assert.equal(labeled(header, "방 상태")?.props.role, "status");
+  assert.ok(!String(header.props.className).includes("border-b"));
+  await h.snapshot({ ...h.history, roomMode: "PAUSED" });
+  assert.match(visibleText(find(h.render(), "header-controls")), /일시정지 확인/);
+});
 async function settleUI() {
   for (let i = 0; i < 12; i++) await Promise.resolve();
 }
