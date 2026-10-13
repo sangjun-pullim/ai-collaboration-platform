@@ -33,6 +33,14 @@
 
 2026-10-10 개인·비상업용 Vercel Hobby + Supabase Free 배포와 실제 HTTPS 접속 검사14개·독립 운영 리뷰를 완료했다. 배포 설정과 정본 갱신은 [PR10](https://github.com/sangjun-pullim/ai-collaboration-platform/pull/10)에서 검토하며 정확한 병합 상태는 해당 PR을 따른다. 2026-10-09 모델 표시 보정·채팅/실행/저장 책임 분리와 공식 Claude의 로컬 정상·후속 답변·중단 검증을 완료하고022·030까지 보관했다. 서로 다른 두 Mac의 실제 질문·후속 답변은 동료가 참여할 때 확인하는 미완료 범위다. 공개 웹 접속 검사, 가짜 AI 공급자를 사용하는 DB·HTTP 검사, 공식 Claude의 실제 입력을 구분한다. 아래 이전 기록의 접근 차단은 당시 실행 환경의 결과다.
 
+### 저장소 시간 제한 이후 답변 계속 처리
+
+[PR19](https://github.com/sangjun-pullim/ai-collaboration-platform/pull/19)은 연결기의 저장소 시간 제한만 도구 실패로 전달한다. 모듈2개에서 전용 오류 판별과 권한 재검사를 적용하며 호출3초·전체 활성30초, 읽기 범위·호출/바이트/동시 실행 한도를 유지한다. Root 검증 실패가 시간 오류로 바뀌던 경로도 수정했다. 실패 결과와 빈 파일 관찰을 먼저 저장한 뒤 반환하고 동일 호출은 그 결과를 재사용한다. 실제 AI 입력·운영 DB 변경은0회다.
+
+수정 전 시간 제한으로 UNKNOWN이 되던 검사와 root 거부 덮임 검사를 각각 실패시킨 뒤, 관련76/76·Claude 모의 실행/이력163/163·build/distribution·타입·lint·format/check를 통과했다. 독립 Sol xhigh 리뷰 C0/H0/M0/L0이다. 기준 main의 다른 웹·SQL·권한 검사와 같은 공급자 프로토콜 검증은 재사용한다. 실제 Claude 답변 생성 완료나 질문 #9의 정확한 RUNTIME_CAPACITY 발생 지점을 이 합성 결과로 확정하지 않는다. 개인 원본과 과거 UNKNOWN은 보존한다.
+
+최신 배포의 연결 명령으로 프로그램을 재실행해야 로컬 소스 보완이 적용된다. 기존 질문을 새 입력으로 자동 재시도하거나 같은 대화의 미확인 상태를 지우지 않는다. main 병합·공개 적용은 PR19의 deployment 상태와 공개 내려받기 파일의 hash·압축 해제 내용으로 확인한다.
+
 ### 직접 질문 중단 요청의 접수 표시
 
 기한이 지난 UNKNOWN에서도 서버 접수와 Mac 수신을 구분한다. 검증한 cancel 응답을 actor·방·request/cycle/agent/epoch에 묶어 보관하고 조회 실패에도 표시한다. 접수된 버튼의 중복 클릭은 막고 결과가 유실되면 원래 operation 확인을 유지한다. 수신 ACK를 실제 종료로 바꾸거나 질문을 다시 실행하지 않는다. [PR18](https://github.com/sangjun-pullim/ai-collaboration-platform/pull/18)의 main 병합·배포 상태에서 공개 적용을 확인한다.
