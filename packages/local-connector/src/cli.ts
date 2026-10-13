@@ -427,7 +427,7 @@ export async function main(args: string[]) {
       ? ((await requestedStore.read())?.server ?? "http://127.0.0.1")
       : required("server"));
   const selection =
-    command === "connect" && options["recovery-chain"]
+    command === "connect"
       ? await selectConnectionProfile(
           requestedStore,
           {
@@ -539,11 +539,6 @@ export async function main(args: string[]) {
                     });
                   },
                 );
-              else
-                await withSettingsDeviceLock(store, command, async () => {
-                  await renewRegistered();
-                  await prepareConnection(connector, input, interaction);
-                });
               if (signal.aborted) throw new ConnectionError("CONFLICT");
               return manage(signal);
             }),

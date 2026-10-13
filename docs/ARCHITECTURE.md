@@ -102,6 +102,8 @@ Vercel은 화면과 짧은 제어 API를 제공하고 AI 실행·지속 연결�
 
 로컬 실행 모듈 안에서 공급자별 구현을 바꾼다. 중앙 API가 임의의 셸 문자열을 실행하는 인터페이스를 제공하지 않는다. API·DB·UI가 공급자의 raw event 형식에 직접 의존하지 않도록 제품 이벤트로 정규화한다.
 
+일반 연결과 이력을 통한 유효 연결 재사용은 같은 정상 연결 준비 경로를 따른다. 기기 잠금은 살아 있는 연결 프로세스를 배제한다. 미완료 AI 설정 기록은 실행 중인 프로세스의 증거로 취급하지 않으며, 서버·기기·조직·방이 일치하는 유효한 기존 연결만 `SettingsManager`의 설정 복구로 넘긴다. 신규 승인과 독립 실행·변경 명령의 설정 유휴 조건은 유지한다.
+
 ## 저장과 실시간 표시
 
 현재 `investigation-coordinator`는 사람 cookie 제어와 device bearer 실행 보고를 별도 고정 API로 제공한다. DB transaction이 질문·수신 run·공유 답변·유일 origin continuation을 연결하고 revision·양쪽 epoch·lease/fence·한도를 재검사한다. 웹은 공개 event를 cursor로 재조회한다. 007의 `WorkflowRunner`는 같은 `WorkflowClient`를 사용해 로컬 intent·ACK·typed terminal·업로드 receipt를 연결한다. 가짜 adapter의 통과와 실제 provider 수용을 구분하며 기존 중앙 DTO/SQL을 바꾸지 않는다.
