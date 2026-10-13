@@ -17,7 +17,7 @@ import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { execFile } from "node:child_process";
 import { promisify } from "node:util";
-import { RepositoryReader } from "../src/workspace/repository-reader.ts";
+import { RepositoryReader, isRepositoryTimeLimit } from "../src/workspace/repository-reader.ts";
 import { captureDirectory, readSafeFile } from "../src/workspace/safe-file-reader.ts";
 import { publicText, RuntimeFilePolicy } from "../src/runtime-file-policy.ts";
 import { digest, RuntimeError } from "../src/runtime-contracts.ts";
@@ -56,6 +56,55 @@ async function coldRead(root: string, path: string) {
   return JSON.parse(stdout) as Awaited<ReturnType<RepositoryReader["read"]>>;
 }
 const size = (value: unknown) => Buffer.byteLength(JSON.stringify(value));
+
+test("should classify only the reader time limit and preserve same-code check failures", async () => {
+  let time = 0;
+  const f = await fixture(
+    () => {
+      time += 500;
+    },
+    () => time,
+  );
+  try {
+    await assert.rejects(f.reader.list(), isRepositoryTimeLimit);
+    const failure = new RuntimeError("RUNTIME_CAPACITY");
+    assert.equal(isRepositoryTimeLimit(failure), false);
+    const reader = new RepositoryReader(
+      f.identity,
+      () => {
+        throw failure;
+      },
+      () => time,
+    );
+    await assert.rejects(
+      reader.list(),
+      (error) => error === failure && !isRepositoryTimeLimit(error),
+    );
+  } finally {
+    await f.close();
+  }
+});
+
+test("should preserve a root verification failure that coincides with the search time limit", async (t) => {
+  let time = 0;
+  const f = await fixture(
+    () => {},
+    () => time,
+  );
+  const failure = new RuntimeError("SNAPSHOT_CHANGED");
+  const mocked = t.mock.method(fsPromises, "opendir", async () => {
+    time = 3000;
+    throw failure;
+  });
+  syncBuiltinESMExports();
+  try {
+    await assert.rejects(f.reader.search({ query: "example" }), (error) => error === failure);
+  } finally {
+    mocked.mock.restore();
+    syncBuiltinESMExports();
+    await f.close();
+  }
+});
 
 test("should discover unselected source with paged lists literal search and raw-byte reads", async () => {
   const f = await fixture();

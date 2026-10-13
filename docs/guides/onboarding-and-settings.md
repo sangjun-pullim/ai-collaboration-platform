@@ -1,5 +1,5 @@
 ---
-verified-against: 8dee1e1ffbbd4370388ec8febe7468166b0def7c
+verified-against: 5e5a26b07300fc5a8426a3442abbe84d34e55d66
 sources: src/features/**, packages/local-connector/src/**, scripts/**, supabase/migrations/**, tests/helpers/local-access-stack.ts, package.json
 ---
 
@@ -320,6 +320,8 @@ private profile은 기본적으로 사용자의 `Library/Application Support/ai-
 AI를 제공하는 Mac에는 선택한 공식 CLI와 기존 로그인이 필요하다. 질문만 하는 참가자는 로컬 경로·AI 연결을 생략하고 준비된 상대 AI에 질문한다. 동료들이 각자 Supabase Docker를 실행할 필요는 없다. Supabase 컨테이너는 이 프로젝트의 로컬 서버 개발·검증에 사용한다.
 
 개인 설정 파일을 바꾸거나 로그인 토큰을 웹으로 복사하지 않는다. 경로는 PC에 보관하고 웹에는 공유 별칭과 참조 ID를 전달한다. 취소 요청 후에는 PC의 정리 확인까지 기다린다. 결과가 미확정이면 같은 요청을 복구하며 새 AI 입력으로 자동 재시도하지 않는다.
+
+자동 탐색이 시간 한도에 걸리면 AI에게 검색 실패를 전달한다. AI는 더 좁은 폴더로 검색하거나 이미 확인한 자료로 답변할 수 있다. 누적 한도가 소진되면 추가 읽기는 계속 거절하며 답변에서 확인하지 못한 범위를 설명해야 한다. 기존 호출·바이트·시간 한도와 읽기 권한은 늘리지 않는다. 최신 웹 연결 명령으로 로컬 연결 프로그램을 다시 실행해야 이 보완이 적용된다.
 
 자동 탐색 승인은 해당 폴더와 새 연결 설정에만 적용한다. 비밀·인증·에이전트 설정 자료, 폴더 밖 접근과 파일 수정은 제한한다. 옛 선택 파일 연결은 새 폴더 확인 없이 자동 탐색으로 바뀌지 않는다. 당시 승인·설정·완료 이력은 보존하며 새 설정으로 과거 읽기 권한을 넓히지 않는다.
 

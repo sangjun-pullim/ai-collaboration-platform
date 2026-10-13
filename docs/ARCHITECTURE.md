@@ -1,5 +1,5 @@
 ---
-verified-against: d9df6e7b5499cd6de6419ab10def8d83e283efb8
+verified-against: 5e5a26b07300fc5a8426a3442abbe84d34e55d66
 sources:
   - src/**
   - packages/local-connector/src/**
@@ -180,7 +180,7 @@ Claude 읽기 도구 중단은 입력·도구·control ID와 payload·취소 프
 
 실행 권한의 ACK·도구 취소·중단 증거 콜백은 내부 `workflow/attempt-authority.ts`가 구성한다. 현재 기록, 직렬화한 변경, 활성 권한, 호출 목록과 용량 예약은 `WorkflowRunner`가 계속 소유한다. 내부 모듈은 이 소유자의 검사·저장 기능만 전달받으며 별도 실행 상태를 만들지 않는다. 실행과 시작 전 복구의 비공개 헬퍼는 입력 전 증거 저장과 서버 영수증 확인을 나눈다. 호출 순서와 대기 지점, monitor 중단·대기와 `finally`의 저장·호출·예약 정리를 유지한다.
 
-파일 접근의 내부 모듈은 `workspace/safe-file-reader.ts`에서 root·조상·파일 descriptor의 식별자와 소유권·내용을 검사하고 열린 파일을 정리한다. 기존 `RuntimeFilePolicy`는 이를 사용하며 선택 파일의 승인·원문 반환·snapshot 비교를 유지한다. 새 `workspace/repository-reader.ts`의 `RepositoryReader`는 승인한 root의 목록·문자열 검색·UTF-8 바이트 발췌와 누적 탐색 예산을 담당한다. 자동 모드의 내용 검사는 `workspace/automatic-content-policy.ts`가 소유하며 quoted key·JWT를 전진 검사해 반복 문자열의 비용을 제한한다. 기존 선택 파일과 공개 문자열의 비밀 검사 패턴은 유지한다. 반환 코드에는 전체 파일 hash·읽은 시각·바이트 범위·발췌 hash를 연결하고 전체 줄 수는 검증한 원문에서 계산한다. 일반 인증·설정 구현 코드와 비밀 설정 자료를 구분한다. 자동 탐색 권한은 `workspace/repository-access.ts`가 새 설정 세대·등록 root·해당 Mac의 명시적 승인에 묶어 검증한다. `workspace/tool-contracts.ts`는 모드별 도구 정의·인자와 origin 역할 판별을 양 공급자에 제공한다. `workflow/repository-tools.ts`는 실행 한 번의 reader·호출 및 동시성 예산·반환 관찰·상대 질문의 사전 근거 검증을 맡는다. `WorkflowRunner`는 실행 권한·용량 예약·내구 저장·서버 발송 순서를 계속 소유한다. 기존 빈 선택 목록을 자동 탐색 승인으로 해석하지 않으며 입력 전 `SourceObservation v1`과 실제 읽기 자료는 서로 다른 관찰이다. 운영 연결과 중앙 코드 이력의 남은 범위는 [개발·검증 상태](planning/delivery-and-validation.md#다음-작업-순서)를 따른다.
+파일 접근의 내부 모듈은 `workspace/safe-file-reader.ts`에서 root·조상·파일 descriptor의 식별자와 소유권·내용을 검사하고 열린 파일을 정리한다. 기존 `RuntimeFilePolicy`는 이를 사용하며 선택 파일의 승인·원문 반환·snapshot 비교를 유지한다. 새 `workspace/repository-reader.ts`의 `RepositoryReader`는 승인한 root의 목록·문자열 검색·UTF-8 바이트 발췌와 누적 탐색 예산을 담당한다. 호출3초·누적 활성30초에 해당하는 전용 시간 오류만 저장소 도구의 실패 결과로 반환한다. 반환 관찰은 빈 파일 목록과 실패 결과 hash를 보존하며, AI는 범위를 좁히거나 기존 근거로 답변할 수 있다. 권한·root·취소·일반 용량 오류를 시간 오류로 덮지 않으며 peer 근거 검증은 계속 실패를 전파한다. 자동 모드의 내용 검사는 `workspace/automatic-content-policy.ts`가 소유하며 quoted key·JWT를 전진 검사해 반복 문자열의 비용을 제한한다. 기존 선택 파일과 공개 문자열의 비밀 검사 패턴은 유지한다. 반환 코드에는 전체 파일 hash·읽은 시각·바이트 범위·발췌 hash를 연결하고 전체 줄 수는 검증한 원문에서 계산한다. 일반 인증·설정 구현 코드와 비밀 설정 자료를 구분한다. 자동 탐색 권한은 `workspace/repository-access.ts`가 새 설정 세대·등록 root·해당 Mac의 명시적 승인에 묶어 검증한다. `workspace/tool-contracts.ts`는 모드별 도구 정의·인자와 origin 역할 판별을 양 공급자에 제공한다. `workflow/repository-tools.ts`는 실행 한 번의 reader·호출 및 동시성 예산·반환 관찰·상대 질문의 사전 근거 검증을 맡는다. `WorkflowRunner`는 실행 권한·용량 예약·내구 저장·서버 발송 순서를 계속 소유한다. 기존 빈 선택 목록을 자동 탐색 승인으로 해석하지 않으며 입력 전 `SourceObservation v1`과 실제 읽기 자료는 서로 다른 관찰이다. 운영 연결과 중앙 코드 이력의 남은 범위는 [개발·검증 상태](planning/delivery-and-validation.md#다음-작업-순서)를 따른다.
 
 자동 도구는 코드 I/O 전에 호출 의도를 저장하고 결과와 실제 반환 관찰을 함께 확정한 뒤 AI에 반환한다. 중단은 해당 호출의 권한을 닫고 이미 시작한 의도 저장만 기다린다. 늦은 읽기 결과와 UNKNOWN 복구는 새 읽기로 대체하지 않는다. 상대 질문의 근거 관찰은 정확한 발송 operation과 함께 먼저 저장하며 AI에 반환한 자료와 구분한다. 당시 세대의 완료 이력은 원래 승인·설정·증거 전체를 기존 보관 파일에 남긴 뒤 새 세대로 준비한다. 이 소스 동작의 독립 검토와 실제 수용 상태는 [개발·검증 정본](planning/delivery-and-validation.md#현재-진행-상태)을 따른다.
 

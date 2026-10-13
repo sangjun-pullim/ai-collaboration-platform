@@ -47,6 +47,15 @@ class TraversalCapacity extends RuntimeError {
     super("RUNTIME_CAPACITY");
   }
 }
+class ReaderTimeLimit extends RuntimeError {
+  constructor() {
+    super("RUNTIME_CAPACITY");
+  }
+}
+/** Only this reader's time budget is recoverable; equal codes from guards are not. */
+export function isRepositoryTimeLimit(error: unknown): boolean {
+  return error instanceof ReaderTimeLimit;
+}
 const jsonSize = (value: unknown) => Buffer.byteLength(JSON.stringify(value));
 const compare = (a: string, b: string) => (a < b ? -1 : a > b ? 1 : 0);
 function validDirectory(value: unknown) {
@@ -99,7 +108,7 @@ export class RepositoryReader {
   ) {
     this.root = { ...root };
   }
-  private async run<T>(operation: (check: Check) => Promise<T>): Promise<T> {
+  private async run<T>(operation: (check: Check, recheck: Check) => Promise<T>): Promise<T> {
     this.check();
     if (this.calls >= limits.calls) throw new RuntimeError("RUNTIME_CAPACITY");
     this.calls++;
@@ -109,7 +118,7 @@ export class RepositoryReader {
     this.active++;
     let checkFailed = false;
     let checkFailure: unknown;
-    const guard = () => {
+    const recheck = () => {
       if (checkFailed) throw checkFailure;
       try {
         this.check();
@@ -118,21 +127,24 @@ export class RepositoryReader {
         checkFailure = error;
         throw error;
       }
+    };
+    const guard = () => {
+      recheck();
       const now = this.now();
       if (
         now - start >= limits.callMs ||
         this.activeElapsed + now - this.activeSince >= limits.activeMs
       )
-        throw new RuntimeError("RUNTIME_CAPACITY");
+        throw new ReaderTimeLimit();
     };
     try {
       guard();
-      const result = await operation(guard);
+      const result = await operation(guard, recheck);
       guard();
       return result;
     } catch (error) {
       if (checkFailed) throw checkFailure;
-      guard();
+      recheck();
       if (error instanceof RuntimeError) throw error;
       throw new RuntimeError("TOOL_REJECTED");
     } finally {
@@ -292,7 +304,7 @@ export class RepositoryReader {
     });
   }
   search(input: { query: string; directory?: string }) {
-    return this.run(async (check) => {
+    return this.run(async (check, recheck) => {
       const directory = input.directory ?? "";
       if (
         !validDirectory(directory) ||
@@ -322,7 +334,7 @@ export class RepositoryReader {
                 this.reserveBytes,
               );
             } catch (error) {
-              check();
+              recheck();
               if (error instanceof RuntimeError && error.code === "TOOL_REJECTED") {
                 result.truncated = true;
                 return true;
@@ -395,7 +407,7 @@ export class RepositoryReader {
           });
           if (!complete) result.truncated = true;
         } catch (error) {
-          check();
+          recheck();
           if (!(error instanceof TraversalCapacity)) throw error;
           stopped = true;
         }
