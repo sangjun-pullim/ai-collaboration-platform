@@ -26,25 +26,28 @@ export function ConnectionStatusBar({ snapshot }: { snapshot: ConnectionSnapshot
         : "연결 확인 안 됨";
   return (
     <section
-      aria-label="내 AI 연결 상태"
+      aria-label="PC 연결 상태"
       className="relative min-w-0 bg-white text-xs lg:border-t lg:px-4 lg:py-3 [overflow-wrap:anywhere]"
     >
       <div className="flex min-w-0 items-center gap-2">
         <details className="peer min-w-0 flex-1">
           <summary
-            aria-label={`내 AI 연결 상태 · ${label} · 기기별 연결 상세`}
-            className="flex size-9 cursor-pointer list-none items-center justify-center rounded-md border hover:bg-neutral-50 lg:h-auto lg:w-auto lg:justify-start lg:border-0 [&::-webkit-details-marker]:hidden"
+            aria-label={`PC 연결 상태 · ${label} · AI 응답 준비는 별도 · 기기별 연결 상세`}
+            className="flex h-9 w-9 shrink-0 cursor-pointer list-none items-center justify-center rounded-md border hover:bg-neutral-50 lg:h-auto lg:w-auto lg:flex-col lg:items-start lg:gap-1 lg:border-0 [&::-webkit-details-marker]:hidden"
           >
-            <span role="status" className="flex min-w-0 items-center gap-2">
+            <span role="status" className="flex min-w-0 items-center gap-1 lg:gap-2">
               <span
                 aria-hidden="true"
                 className={`size-2 shrink-0 rounded-full ${color[snapshot.state]}`}
               />
-              <span className="sr-only lg:not-sr-only">내 AI · {label}</span>
+              <span className="sr-only lg:not-sr-only">PC 연결 · {label}</span>
+              <span className="lg:hidden">PC</span>
             </span>
+            <span className="hidden text-[10px] text-neutral-500 lg:block">AI 준비 별도</span>
           </summary>
           <div className="absolute right-0 top-11 z-30 w-[min(320px,calc(100vw-16px))] max-h-[min(28rem,75dvh)] space-y-3 overflow-y-auto rounded-md border bg-white p-4 shadow-lg lg:group-data-[placement=navigation]/connection:bottom-full lg:group-data-[placement=navigation]/connection:left-2 lg:group-data-[placement=navigation]/connection:right-auto lg:group-data-[placement=navigation]/connection:top-auto">
-            <p className="pr-20 font-medium">내 AI · {label}</p>
+            <p className="pr-20 font-medium">PC 연결 · {label}</p>
+            <p>AI 응답 준비는 별도로 확인하세요.</p>
             <p>
               마지막 조회:{" "}
               {snapshot.checkedAt ? (

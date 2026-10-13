@@ -84,11 +84,27 @@ test("should refresh only after an explicit status action and distinguish device
   }) => Node;
   t.mock.timers.enable({ apis: ["setTimeout", "setInterval", "Date"], now: Date.parse(checkedAt) });
   const initial = render({ snapshot });
-  assert.equal(initial.props["aria-label"], "내 AI 연결 상태");
+  assert.equal(initial.props["aria-label"], "PC 연결 상태");
   assert.match(text(initial), /최근 통신 확인 1\/2대/);
   const list = nodes(initial).filter((node) => node.type === "li");
   const details = nodes(initial).find((node) => node.type === "details")!;
   assert.equal(details.props.open, undefined);
+  const summary = nodes(details).find((node) => node.type === "summary")!;
+  assert.match(summary.props["aria-label"] as string, /PC 연결 상태.*AI 응답 준비는 별도/);
+  assert.match(text(summary), /PC 연결/);
+  assert.match(text(summary), /AI 준비 별도/);
+  assert.match(summary.props.className as string, /\bw-9\b/);
+  assert.match(summary.props.className as string, /\bh-9\b/);
+  const readinessHint = nodes(summary).find((node) => node.props.children === "AI 준비 별도")!;
+  assert.match(readinessHint.props.className as string, /\bhidden\b/);
+  assert.match(readinessHint.props.className as string, /\blg:block\b/);
+  assert.match(text(details), /AI 응답 준비는 별도로 확인하세요/);
+  assert.ok(
+    nodes(summary).some(
+      (node) => node.props.children === "PC" && node.props.className === "lg:hidden",
+    ),
+  );
+  assert.ok(nodes(summary).some((node) => String(node.props.className).includes("bg-green-600")));
   assert.equal(nodes(details).filter((node) => node.type === "time").length, 2);
   assert.equal(nodes(initial).filter((node) => node.type === "button").length, 1);
   assert.equal(list.length, 2);

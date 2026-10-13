@@ -612,6 +612,12 @@ test("should discover a terminal registration and show the approved room AI sett
     nodes(tree).find((node) => node.type === "settings-form")?.props.deviceId,
     operationId,
   );
+  const settingsPanel = nodes(tree).find((node) => node.props.id === "ai-settings")!;
+  assert.ok(settingsPanel);
+  assert.ok(
+    nodes(tree).indexOf(settingsPanel) <
+      nodes(tree).findIndex((node) => node.type === "connection-guide"),
+  );
   const nextCleanup = effects[1]() as () => void;
   for (const tick of timers.values()) tick();
   assert.equal(refreshed, 2);
@@ -809,6 +815,11 @@ test("should restrict setup to a live owned device in the selected room and pres
     deviceId,
   );
   const panel = nodes(first).find((node) => node.props["aria-label"] === "본인 기기 AI 설정")!;
+  assert.equal(panel.props.id, "ai-settings");
+  assert.ok(
+    nodes(first).indexOf(panel) <
+      nodes(first).findIndex((node) => node.type === "connection-guide"),
+  );
   const selects = nodes(panel).filter((node) => node.type === "select");
   assert.deepEqual(
     nodes(selects[1])
@@ -1034,7 +1045,55 @@ test("should consume a known pairing fragment once without selecting approval", 
     })),
     origin: "https://example.com",
     userId: rootId,
+    navigationRooms: [{ id: rootId }],
+    returnRoomId: rootId,
   };
+  window.location.hash = "#ai-settings";
+  window.location.search = `?room=${rootId}`;
+  const entry = ui(props);
+  const entryPanel = nodes(entry).find((node) => node.props.id === "ai-settings")!;
+  assert.ok(entryPanel);
+  let entryFocus = 0,
+    entryScroll = 0;
+  (entryPanel.props.ref as { current: unknown }).current = {
+    focus() {
+      entryFocus++;
+    },
+    scrollIntoView() {
+      entryScroll++;
+    },
+  };
+  const entryCleanup = effects[0]() as () => void;
+  assert.equal(window.location.hash, "#ai-settings");
+  assert.equal(replaced, "");
+  assert.equal(entryFocus, 1);
+  assert.equal(entryScroll, 1);
+  assert.equal(nodes(entryPanel).find((node) => node.type === "select")!.props.value, rootId);
+  entryCleanup();
+  const repeatedEntryCleanup = effects[0]() as () => void;
+  assert.equal(entryFocus, 1, "StrictMode must not take settings focus again");
+  assert.equal(entryScroll, 1, "StrictMode must not reset settings scroll again");
+  repeatedEntryCleanup();
+  props.rooms = props.rooms.map((room) => ({ ...room }));
+  cursor = 0;
+  refCursor = 0;
+  effects.length = 0;
+  ui(props);
+  const refreshedEntryCleanup = effects[0]() as () => void;
+  assert.equal(entryFocus, 1, "a rooms refresh must retain the user's input focus");
+  assert.equal(entryScroll, 1, "a rooms refresh must retain the user's scroll position");
+  window.location.hash = "";
+  for (const listener of listeners) listener();
+  window.location.hash = "#ai-settings";
+  for (const listener of listeners) listener();
+  assert.equal(entryFocus, 2, "an actual settings hash change must still move focus");
+  assert.equal(entryScroll, 2);
+  refreshedEntryCleanup();
+  window.location.hash = `#code=${code}&room=${roomId}`;
+  window.location.search = "";
+  cursor = 0;
+  refCursor = 0;
+  effects.length = 0;
   ui(props);
   refs[1].current = confirmation;
   const firstCleanup = effects[0]();
@@ -1064,6 +1123,29 @@ test("should consume a known pairing fragment once without selecting approval", 
     window.location.hash = hash;
     for (const listener of listeners) listener();
   };
+  const settingsPanel = nodes(render()).find((node) => node.props.id === "ai-settings")!;
+  assert.ok(settingsPanel);
+  assert.equal(settingsPanel.props.tabIndex, -1);
+  let focused = 0,
+    scrolled = 0;
+  (settingsPanel.props.ref as { current: unknown }).current = {
+    focus() {
+      focused++;
+    },
+    scrollIntoView() {
+      scrolled++;
+    },
+  };
+  confirmation.checked = true;
+  const beforeAnchor = replaced;
+  navigate("#ai-settings");
+  await Promise.resolve();
+  assert.equal(window.location.hash, "#ai-settings");
+  assert.equal(replaced, beforeAnchor);
+  assert.equal(focused, 1);
+  assert.equal(scrolled, 1);
+  assert.equal(codeField().props.value, code);
+  assert.equal(confirmation.checked, true);
   const nextCode = "b".repeat(64);
   confirmation.checked = true;
   navigate(`#code=${nextCode}&room=${rootId}`);

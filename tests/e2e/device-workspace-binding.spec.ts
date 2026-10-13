@@ -459,7 +459,16 @@ test("should preserve the owned status snapshot and chat draft across explicit r
     await connect(ap, owner.id, first, scope.roomId);
     await connect(ap, owner.id, second, scope.roomId);
     await connect(bp, member.id, other, scope.roomId);
-    const bar = ap.getByRole("region", { name: "내 AI 연결 상태", exact: true });
+    const bar = ap.getByRole("region", { name: "PC 연결 상태", exact: true });
+    await expect(bar.locator("summary")).toContainText("PC 연결");
+    await expect(bar.locator("summary")).toContainText("AI 준비 별도");
+    if (ap.viewportSize()!.width < 1024) {
+      const summary = bar.locator("summary");
+      const bounds = await summary.boundingBox();
+      check(bounds && bounds.width <= 36 && bounds.height <= 36);
+      await expect(summary.getByText("PC", { exact: true })).toBeVisible();
+      await expect(summary.getByText("AI 준비 별도", { exact: true })).toBeHidden();
+    }
     const checkedTime = bar.locator("time").first();
     const isoTimestamp = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z$/;
     const openDetails = async () => {
@@ -512,6 +521,27 @@ test("should preserve the owned status snapshot and chat draft across explicit r
       .last()
       .click();
     await expect(ap.getByRole("heading", { name: "기기 검사방", exact: true })).toBeVisible();
+    await expectOwnedStatus();
+    const composer = ap.getByRole("form", { name: "AI에게 질문", exact: true });
+    await expect(composer).toContainText("응답 준비된 AI가 없습니다.");
+    const settingsLink = composer.getByRole("link", { name: "이 방의 AI 설정", exact: true });
+    await expect(settingsLink).toHaveAttribute(
+      "href",
+      `/app/connections?room=${scope.roomId}#ai-settings`,
+    );
+    await expect(
+      composer.getByRole("button", { name: "AI에 질문 보내기", exact: true }),
+    ).toBeDisabled();
+    await settingsLink.click();
+    await expect(ap).toHaveURL(`/app/connections?room=${scope.roomId}#ai-settings`);
+    const settings = ap.getByRole("region", { name: "본인 기기 AI 설정", exact: true });
+    await expect(settings).toHaveAttribute("id", "ai-settings");
+    await expect(settings).toBeFocused();
+    await expect(
+      settings.getByRole("combobox", { name: "설정할 AI 채팅방", exact: true }),
+    ).toHaveValue(scope.roomId);
+    await revealRoomActions(ap);
+    await ap.getByRole("link", { name: "이전 채팅방으로", exact: true }).click();
     await expectOwnedStatus();
     // Finish an explicit refresh on the final chat screen before observing passive time.
     const beforeChatRefresh = await checkedTime.getAttribute("datetime");
@@ -589,6 +619,9 @@ test("should preserve the owned status snapshot and chat draft across explicit r
     check(await ap.locator("body").evaluate((element) => element.scrollWidth <= innerWidth + 1));
     await expect(ap.getByRole("main")).toHaveCount(1);
     const body = ap.getByRole("region", { name: "AI 연결 설정 내용", exact: true });
+    await body.evaluate((element) => {
+      element.scrollTop = element.scrollHeight;
+    });
     await expect
       .poll(() =>
         body.evaluate((element) => ({
@@ -601,7 +634,7 @@ test("should preserve the owned status snapshot and chat draft across explicit r
       .toEqual({ overflowY: "auto", hasOverflow: true, scrolled: true, atEnd: true });
     const ownSnapshot = await bar.textContent();
     check(ownSnapshot && !ownSnapshot.includes(`기기 ${other}`));
-    const memberBar = bp.getByRole("region", { name: "내 AI 연결 상태", exact: true });
+    const memberBar = bp.getByRole("region", { name: "PC 연결 상태", exact: true });
     await memberBar.locator("summary").click();
     await memberBar.getByRole("button", { name: "다시 확인", exact: true }).click();
     await expect(memberBar).toContainText(`기기 ${other}`);
@@ -617,7 +650,7 @@ test("should preserve the owned status snapshot and chat draft across explicit r
       /\bbg-red-600\b/,
     );
     await expect(checkedTime).toHaveAttribute("datetime", isoTimestamp);
-    await bar.getByText("기기별 연결 상세", { exact: true }).click();
+    await bar.locator("summary").click();
     await expect(bar).toContainText("활성 등록 기기가 없습니다");
     await expect(bar).not.toContainText(`기기 ${first}`);
     await expect(bar).not.toContainText(`기기 ${second}`);

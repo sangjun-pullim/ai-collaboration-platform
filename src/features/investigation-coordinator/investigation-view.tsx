@@ -485,6 +485,8 @@ function RoomInvestigation({ userId, roomId, role }: Props) {
       )}
       {writable ? (
         <ChatComposer
+          roomId={roomId}
+          readinessUnconfirmed={!snapshot || !!pollError}
           mode={mode}
           onMode={setMode}
           draft={draft}
