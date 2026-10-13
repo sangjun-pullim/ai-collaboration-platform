@@ -1,5 +1,5 @@
 ---
-status: active
+status: done
 date: 2026-10-13
 risk-surface: permission, db-schema, public-api
 approval: approved
@@ -100,7 +100,7 @@ approval: approved
 - 실제 React 화면의 desktop/mobile에서 현재 카드 제거·과거 기록·새 질문·역할·취소·조회 실패를 검증한다. 실제 AI 입력은0회이며 기존9회 상한을 늘리지 않는다.
 - 새로운 독립 reviewer가 SQL/권한/계약/프런트엔드와 테스트를 검토한다. 최대3회, 같은 규칙의 연속 차단 지적은 AGENTS.md의 중단/설계 재검토 규칙을 따른다. CRITICAL/HIGH를 해소하기 전 병합하지 않는다.
 
-### [ ] Step 6: 문서·PR·배포
+### [x] Step 6: 문서·PR·배포
 
 **File**: 관련 docs 정본, 이 계획의 진행 표시
 
@@ -141,3 +141,12 @@ approval: approved
 | 구현 1차: 누적 정리 기록을 실행마다 배열 탐색 | MEDIUM | ACCEPTED | requestId별 정리 Map을 추가했다. 최신583/583·위험/화면16/16을 확인한 새2차 리뷰에서 해소됐다. 변경 없는 SQL/권한/계약/controller/화면/정본 검토는 재사용했다. |
 | 2차 독립 계획 검토 | INFO | PASS | 새로운 gpt-6.1-sol xhigh reviewer가 C0/H0 및 추가 지적 없음으로 확인했다. 1차의 변경 없는 revoked/원래 소유자/UNKNOWN 보존/공통 차단/기존 read 검토를 재사용하고 독립 커서·cancel 복구·응답/확인 컴포넌트를 추가 검토했다. 2026-10-13 사용자가 이 계획대로 구현·검증·배포를 승인했다. |
 | 구현 2차 독립 검토 | INFO | PASS | 새 gpt-6.1-sol xhigh reviewer가 표시 최적화와 추가 권한/경합 fixture·검증문·통과 로그를 검토해 C0/H0/M0/L0으로 확인했다. 기존 코드/문서 검토와 독립 커서·cancel 복구 해소 판정을 재사용했다. 최신 production build·실제 브라우저·format/check도 통과했다. |
+
+## Delivery Evidence
+
+- 정상 main 병합: [PR20](https://github.com/sangjun-pullim/ai-collaboration-platform/pull/20), main `63aaccc74f1d62f18ecb41a3cefd48db7250b08a`.
+- Supabase019 적용: 기존18개 보존, 총19개. 검토 소스 SHA256 `af9af74c1fab59a4a357938bdaf723bb4bf1f3c88ce2c31788b986fd3df78283`, 기존018 실행 함수·신규 권한 확인.
+- Production `dpl_343srYg7w2x8kDnjhRzrUGMBuznD` READY와 정확한 main SHA를 공식 CLI·GitHub deployment·Vercel 조회로 확인했다. 공개 접속/배포물/인증 거절9개를 통과했다.
+- 질문 #9는 read-only 조회에서 UNKNOWN·이전 기록을 보존하며 본인 정리 조건을 확인했다. 운영자의 임의 정리는 실행하지 않았다.
+- 전체 단위583/583, 실제 통합16/16, 기존 회귀6/6, 최신 production 화면·build/distribution·타입·lint·format/check, 새 독립2차 C0/H0/M0/L0. 실제 AI 추가 입력0회.
+- 상세 진행/검증 수치는 docs/planning/delivery-and-validation.md가 정본이다. 완료 계획 보관과 정리 결과는 같은 작업의 종료 문서 커밋에 포함한다.

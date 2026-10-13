@@ -35,11 +35,11 @@
 
 ### 종료 미확인 직접 질문의 이전 기록 정리
 
-[035 계획](../impl-spec/035-unconfirmed-direct-question-retirement.md)의 구현과 검증을 진행했다. 원래 대상 소유자는 해제된 기기의 기한 지난 직접 질문을 **이전 요청 정리**로 보관한다. UNKNOWN·원래 실행/중단/예산을 보존하며 현재 카드와 대화 차단에서 해당 요청만 제외한다. 새 질문은 준비된 연결과 최신 회복 조회를 확인한 뒤 사람이 직접 보낸다. 독립 정리 커서와 기존 cancel 접수 결과 복구를 제공한다.
+[035 계획](../impl-spec/archive/035-unconfirmed-direct-question-retirement.md)의 구현·검증·독립 리뷰·운영 배포를 완료했다. 원래 대상 소유자는 해제된 기기의 기한 지난 직접 질문을 **이전 요청 정리**로 보관한다. UNKNOWN·원래 실행/중단/예산을 보존하며 현재 카드와 대화 차단에서 해당 요청만 제외한다. 새 질문은 준비된 연결과 최신 회복 조회를 확인한 뒤 사람이 직접 보낸다. 독립 정리 커서와 기존 cancel 접수 결과 복구를 제공한다.
 
 변경 전 실패 재현 뒤 전체 단위583/583, 실제 소유 DB/HTTP 통합16/16와 기존 직접 질문·AI 간 왕복 회귀6/6이 통과했다. 통합에는 실제 desktop/mobile 정리 확인·취소·관찰자 권한·현재 카드 제거·과거 기록과 35건의32/3페이지가 포함된다. 구018→019 업그레이드와 설치된10개 함수의 검토 소스 일치를 확인했다. 실제 AI 추가 입력0회다. 원래 개발 스택과 개인 실행 이력은 변경하지 않고 고유 loopback 테스트 스택을 사용했다.
 
-구현 1차 독립 리뷰는 C0/H0/M1이었다. 실행마다 누적 정리 배열을 탐색하던 경로는 requestId Map으로 보완했다. 같은 리뷰의 SQL/권한/계약/controller/화면/정본 검토를 재사용한 새로운2차 리뷰는 표시·추가 위험 검사에 C0/H0/M0/L0을 확인했다. 최신 production build·타입·lint·배포 파일·format/check와 보완 후 실제 브라우저도 통과했다. 운영 DB019 적용·정상 main 병합·정확한 SHA의 Production 검사는 아직 남아 있다.
+구현 1차 독립 리뷰는 C0/H0/M1이었다. 실행마다 누적 정리 배열을 탐색하던 경로는 requestId Map으로 보완했다. 같은 리뷰의 SQL/권한/계약/controller/화면/정본 검토를 재사용한 새로운2차 리뷰는 표시·추가 위험 검사에 C0/H0/M0/L0을 확인했다. 최신 production build·타입·lint·배포 파일·format/check와 보완 후 실제 브라우저도 통과했다. 운영 DB019를 검토 소스 SHA256 `af9af74c1fab59a4a357938bdaf723bb4bf1f3c88ce2c31788b986fd3df78283`로 적용했다. 기존18개와 기기 인증 함수·권한을 보존했다. [PR20](https://github.com/sangjun-pullim/ai-collaboration-platform/pull/20)을 정상 main 병합했으며 main `63aaccc74f1d62f18ecb41a3cefd48db7250b08a`의 Production `dpl_343srYg7w2x8kDnjhRzrUGMBuznD` READY와 공개 접속/배포물/신규 API 인증 거절9개를 확인했다. 질문 #9는 read-only 조회에서 원래 UNKNOWN과 미정리 기록을 유지하며 소유자의 정리 조건을 확인했다. 완료 계획은 archive로 이동했다.
 
 ### 저장소 시간 제한 이후 답변 계속 처리
 
