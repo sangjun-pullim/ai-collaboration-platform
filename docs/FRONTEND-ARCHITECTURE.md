@@ -1,5 +1,5 @@
 ---
-verified-against: ceba35db3d53a8bc3df243a5d2d44d3e995835d4
+verified-against: 427f9a37cb45879ec9ad8ca04424fe066b89c0ff
 sources:
   - src/app/**
   - src/features/**
@@ -39,13 +39,15 @@ controller는 기존 순차 조회에서 read-recovery를 사용하고 이벤트
 
 ### 본인 PC의 연결 표시
 
-[입장 후 공통 layout](../src/app/app/layout.tsx)이 `/app`·채팅방·내 AI 연결 화면의 상단에 같은 표시를 둔다. [서버 조회](../src/features/device-binding/owned-connection-status.tsx)는 현재 세션과 기존 owner-only 기기 목록을 사용하며 다른 사람의 연결·모델 설정·workflow를 조회하지 않는다. [연결 판정](../src/features/device-binding/connection-presence.ts)은 유효한 인증·활성 기기·90초 미만 통신을 요구하고 5초를 넘는 미래 시각을 거절한다. 취소·제거 기기는 활성 집계에서 제외한다.
+[입장 후 공통 layout](../src/app/app/layout.tsx)은 서버에서 만든 연결 표시 슬롯을 공통 탐색 공급자에 전달한다. `/app`·채팅방·내 AI 연결 화면에서 연결 표시 한 인스턴스를 유지하며 데스크톱의 왼쪽 메뉴 하단과 모바일 제목 옆에 배치한다. 긴 조회 시각·기기 정보는 접힌 상세로 제공한다. [서버 조회](../src/features/device-binding/owned-connection-status.tsx)는 현재 세션과 기존 owner-only 기기 목록을 사용하며 다른 사람의 연결·모델 설정·workflow를 조회하지 않는다. [연결 판정](../src/features/device-binding/connection-presence.ts)은 유효한 인증·활성 기기·90초 미만 통신을 요구하고 5초를 넘는 미래 시각을 거절한다. 취소·제거 기기는 활성 집계에서 제외한다.
 
 [표시 컴포넌트](../src/features/device-binding/connection-status-bar.tsx)는 색과 텍스트, 전체 활성/최근 통신 기기 수, 최대 5대의 기기·방 상세와 마지막 조회 시각을 보여 준다. 클라이언트에는 별칭·표시 상태·시각만 전달하고 기기 ID·인증 정보·실제 경로·설정 원문·오류 원문은 전달하지 않는다. 초록은 PC와의 최근 통신이며 현재 AI 답변 준비의 증거가 아니다. 빨강은 연결 확인 안 됨, 회색은 조회 실패로 구분한다.
 
 표시 자체에는 polling·Realtime·마운트/경로 변경 effect가 없다. **다시 확인** 클릭에서만 `router.refresh()`를 호출한다. 공통 layout이 재사용되는 일반 이동에서는 이전 snapshot과 마지막 조회 시각을 유지할 수 있다. 기기 승인 대기와 변경 뒤의 기존 화면 refresh는 그대로 동작한다. 시간은 한국 시간대를 명시하고 마지막 조회와 마지막 PC 통신을 구분한다.
 
-공통 layout은 화면 전체 높이를 상단과 남은 본문으로 나눈다. 상단은 줄어들지 않고 본문은 남은 높이와 문서 스크롤을 소유한다. 직접 자식 `main`의 높이를 본문에 맞춰 채팅의 기존 `h-dvh`를 제한한다. 채팅은 내부 대화 스크롤과 입력을 유지하며 긴 연결 화면은 본문을 끝까지 스크롤한다. 조회 영역은 Suspense로 분리해 상태 조회를 기다리는 동안에도 본문을 렌더링한다.
+공통 layout은 본문에 화면 전체 높이를 제공한다. 정상 화면은 연결 표시 때문에 별도 상단 행을 만들지 않고, ChatShell 없는 조회 실패 화면은 연결 확인 공간을 제공한다. 직접 자식 `main`의 높이를 본문에 맞춘다. 채팅은 내부 대화 스크롤과 입력을 유지하며 긴 연결 화면은 본문을 끝까지 스크롤한다. 조회 영역은 Suspense로 분리해 상태 조회를 기다리는 동안에도 본문을 렌더링한다. 제목·내 역할·방 상태는 같은 제목 행을 사용한다.
+
+통합 제목은 56px 높이이며 모바일의 관리·로그아웃·참가자 제어는 **채팅방 기능 열기** 버튼으로 펼친다. 버튼은 펼침 상태를 알려 주고 Escape로 닫으면 버튼으로 포커스를 돌린다. Dialog나 Sheet로 이동한 이벤트는 메뉴 닫기로 처리하지 않는다. 데스크톱에서는 같은 제어를 제목에 표시하며 화면 크기 변경으로 제어의 인스턴스를 교체하지 않는다. 연결 상세는 왼쪽 메뉴에서는 위로, 상단의 대체 표시에서는 아래로 열어 화면 안에서 확인한다.
 
 ```mermaid
 flowchart TD
@@ -85,7 +87,7 @@ flowchart TD
 | [own-input-controls.tsx](../src/features/investigation-coordinator/own-input-controls.tsx) | 본인 AI의 새 답변 상태 조회·일시정지/재개·미확정 제어 intent 수명 |
 | [own-input-control-state.ts](../src/features/investigation-coordinator/own-input-control-state.ts) | 사용자·방별 intent 검증, 같은 요청의 receipt 확인, revision/epoch 상태 채택 |
 
-[ChatShell](../src/features/room-access/chat-shell.tsx)은 채팅방 탐색·모바일 Sheet·참가자 정보 배치만 맡는다. HTTP·저장·polling과 권한 상태를 복제하지 않는다. shadcn/ui의 기본 요소는 `src/components/ui/`에 둔다.
+[ChatShell](../src/features/room-access/chat-shell.tsx)은 채팅방 탐색·모바일 Sheet·참가자 정보·통합 제목 배치와 공통 연결 슬롯의 위치를 맡는다. `ChatHeaderControls`는 조사 컴포넌트가 소유하는 방 상태·공동 조사 제어를 안정적인 제목 호스트에 Portal로 렌더링한다. 화면 폭 변경으로 이 호스트를 교체하지 않는다. HTTP·저장·polling과 권한 상태를 복제하지 않는다. shadcn/ui의 기본 요소는 `src/components/ui/`에 둔다.
 
 내 AI 연결 화면도 같은 ChatShell을 사용한다. desktop의 왼쪽 메뉴와 모바일 채팅방 목록을 유지하며, 연결 설정 내용만 별도로 스크롤한다. 채팅방에서 이동한 경우 접근 가능한 단일 `room` 값을 확인해 **이전 채팅방으로** 링크를 제공한다. 확인할 수 없는 값은 **채팅방 목록으로** 이동한다. 탐색에는 관찰 가능한 방도 포함하지만 승인·AI 설정 선택에는 기존 쓰기 권한이 있는 방만 사용한다. 연결 페이지는 인증·회사 입장을 확인한 방 목록만 조회하고 조직 목록 장애와 분리한다. 실제 방 조회 실패 시 설정은 차단하면서 공통 메뉴를 유지한다.
 
