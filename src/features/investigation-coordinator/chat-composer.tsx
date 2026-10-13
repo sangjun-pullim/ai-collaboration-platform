@@ -1,4 +1,5 @@
 "use client";
+import Link from "next/link";
 import { useLayoutEffect, useRef, type FormEvent } from "react";
 import type { PublicBinding } from "./contracts";
 import { shouldSendOnEnter } from "./chat-presentation";
@@ -6,6 +7,8 @@ import { Button } from "../../components/ui/button";
 import { Textarea } from "../../components/ui/textarea";
 import { Send } from "lucide-react";
 export function ChatComposer({
+  roomId,
+  readinessUnconfirmed,
   mode,
   onMode,
   draft,
@@ -20,6 +23,8 @@ export function ChatComposer({
   pending,
   onSubmit,
 }: {
+  roomId: string;
+  readinessUnconfirmed: boolean;
   mode: "ask" | "speak";
   onMode: (mode: "ask" | "speak") => void;
   draft: string;
@@ -106,8 +111,21 @@ export function ChatComposer({
               ? `${target.owned ? "내 AI · " : ""}${target.ownerAlias} · ${target.runtime} · ${target.repositoryAlias} · ${target.sessionAlias} · 응답 준비 보고`
               : targets.length
                 ? "질문받을 AI를 선택하세요."
-                : "질문 가능한 AI가 없습니다. AI 연결을 준비해야 합니다."}
+                : readinessUnconfirmed
+                  ? "AI 응답 준비 확인 필요"
+                  : "응답 준비된 AI가 없습니다."}
           </p>
+        )}
+        {mode === "ask" && !targets.length && (
+          <div className="space-y-1 text-xs text-neutral-600">
+            <p>PC 연결 후 AI와 폴더 설정을 마치세요.</p>
+            <Link
+              href={`/app/connections?room=${encodeURIComponent(roomId)}#ai-settings`}
+              className="inline-block underline"
+            >
+              이 방의 AI 설정
+            </Link>
+          </div>
         )}
         <label className="sr-only" htmlFor="chat-message">
           {mode === "ask" ? "AI에게 보낼 질문" : "공동 발언"}

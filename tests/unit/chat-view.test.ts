@@ -337,6 +337,21 @@ async function harness(
   };
 }
 
+test("should pass the current room and uncertain readiness without relaxing no-target or observer guards", async (t) => {
+  const h = await harness(t, "participant", []);
+  let composer = find(h.render(), "composer")!;
+  assert.equal(composer.props.roomId, fixture.ask.roomId);
+  assert.equal(composer.props.readinessUnconfirmed, false);
+  assert.equal(composer.props.disabled, true);
+  await h.pollFail();
+  composer = find(h.render(), "composer")!;
+  assert.equal(composer.props.readinessUnconfirmed, true);
+  assert.equal(composer.props.disabled, true);
+  assert.equal(h.calls.length, 0);
+  const observer = await harness(t, "observer", []);
+  assert.equal(find(observer.render(), "composer"), undefined);
+});
+
 test("should offer a ready owned AI and emit a shared question for its pinned epoch", async (t) => {
   const own = {
     ...fixture.history.bindings[0],

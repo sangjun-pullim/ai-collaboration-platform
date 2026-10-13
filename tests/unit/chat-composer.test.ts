@@ -58,10 +58,13 @@ function harness() {
       if (name === "../../components/ui/button") return { Button: "button" };
       if (name === "../../components/ui/textarea") return { Textarea: "textarea" };
       if (name === "lucide-react") return { Send: "icon" };
+      if (name === "next/link") return { default: "a" };
       throw new Error(`Unexpected composer dependency ${name}`);
     },
   });
   const props = {
+    roomId: "00000000-0000-4000-8000-000000000003",
+    readinessUnconfirmed: false,
     mode: "ask",
     onMode() {},
     draft: "직접 질문",
@@ -123,6 +126,44 @@ function harness() {
     },
   };
 }
+
+test("should offer room AI settings when no responder is ready without enabling a question", () => {
+  const h = harness();
+  h.props.disabled = true;
+  const tree = h.render();
+  const link = nodes(tree).find((node) => node.type === "a")!;
+  assert.ok(link);
+  assert.equal(link.props.href, `/app/connections?room=${h.props.roomId}#ai-settings`);
+  assert.equal(link.props.children, "이 방의 AI 설정");
+  assert.ok(nodes(tree).some((node) => node.props.children === "응답 준비된 AI가 없습니다."));
+  assert.ok(
+    nodes(tree).some((node) => node.props.children === "PC 연결 후 AI와 폴더 설정을 마치세요."),
+  );
+  assert.equal(nodes(tree).find((node) => node.type === "button")!.props.disabled, true);
+  h.key(tree);
+  assert.equal(h.requests(), 0);
+});
+
+test("should avoid claiming missing settings when readiness is unconfirmed", () => {
+  const h = harness();
+  h.props.readinessUnconfirmed = true;
+  const tree = h.render();
+  assert.ok(nodes(tree).some((node) => node.props.children === "AI 응답 준비 확인 필요"));
+  assert.ok(!nodes(tree).some((node) => node.props.children === "응답 준비된 AI가 없습니다."));
+  assert.ok(nodes(tree).some((node) => node.type === "a"));
+});
+
+test("should retain the compact composer without setup links for own or peer ready targets and speech", () => {
+  const h = harness();
+  const fixture = JSON.parse(readFileSync("tests/fixtures/human-direct-contracts.json", "utf8"));
+  for (const owned of [true, false]) {
+    h.props.targets = [{ ...fixture.history.bindings[0], owned }];
+    assert.ok(!nodes(h.render()).some((node) => node.type === "a"));
+  }
+  h.props.targets = [];
+  h.props.mode = "speak";
+  assert.ok(!nodes(h.render()).some((node) => node.type === "a"));
+});
 
 test("should distinguish an owned AI while retaining owner runtime repository and session identity", () => {
   const h = harness();

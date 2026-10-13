@@ -104,6 +104,8 @@ export function ConnectionManager({
     deviceIds: Set<string>;
     deadline: number;
   } | null>(null);
+  const settingsSection = useRef<HTMLElement>(null);
+  const settingsEntryHandled = useRef(false);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<ConnectionErrorCode | null>(null);
   const [notice, setNotice] = useState("");
@@ -113,7 +115,14 @@ export function ConnectionManager({
   const removedDevices = devices.filter((device) => device.state === "removed");
   useEffect(() => {
     let active = true;
-    const consume = () => {
+    const consume = (focusSettings: boolean) => {
+      if (window.location.hash === "#ai-settings") {
+        if (focusSettings) {
+          settingsSection.current?.focus({ preventScroll: true });
+          settingsSection.current?.scrollIntoView({ block: "start" });
+        }
+        return;
+      }
       if (window.location.hash) {
         const hash = window.location.hash;
         window.history.replaceState(
@@ -136,11 +145,14 @@ export function ConnectionManager({
         setError(null);
       });
     };
-    consume();
-    window.addEventListener("hashchange", consume);
+    const focusOnEntry = !settingsEntryHandled.current;
+    settingsEntryHandled.current = true;
+    consume(focusOnEntry);
+    const onHashChange = () => consume(true);
+    window.addEventListener("hashchange", onHashChange);
     return () => {
       active = false;
-      window.removeEventListener("hashchange", consume);
+      window.removeEventListener("hashchange", onHashChange);
     };
   }, [rooms]);
   const [settingsRoomId, setSettingsRoomId] = useState(
@@ -207,7 +219,7 @@ export function ConnectionManager({
       }
       setNotice(
         action === "approve"
-          ? `기기 ${result.data.deviceAlias} 승인을 완료했습니다. 실행 중인 터미널에서 계정과 방을 확인하고 yes를 입력하세요. 등록이 끝나면 아래 AI 설정이 자동으로 나타납니다.`
+          ? `기기 ${result.data.deviceAlias} 승인을 완료했습니다. 실행 중인 터미널에서 계정과 방을 확인하고 yes를 입력하세요. 등록이 끝나면 상단 AI 설정에서 AI와 폴더 설정을 마치세요.`
           : "연결을 취소했습니다. 다시 연결하려면 새 승인이 필요합니다.",
       );
       router.refresh();
@@ -269,6 +281,72 @@ export function ConnectionManager({
           <Link href="/app" className="text-sm underline">
             질문만 하기
           </Link>
+          <section
+            id="ai-settings"
+            ref={settingsSection}
+            tabIndex={-1}
+            className={styles.panel}
+            aria-label="본인 기기 AI 설정"
+          >
+            <h2 className="font-semibold">AI 설정</h2>
+            <p className="text-sm text-neutral-600">
+              기기 등록 뒤 Claude 또는 Codex를 고르고 Mac에서 폴더를 선택하세요. 해당 PC에서 지원
+              모델을 확인하면 모델·추론 강도(effort)를 선택할 수 있습니다.
+            </p>
+            <label className={styles.field}>
+              설정할 AI 채팅방
+              <select
+                value={settingsRoomId}
+                disabled={busy}
+                onChange={(event) => {
+                  setSettingsRoomId(event.target.value);
+                  setSettingsDeviceId("");
+                }}
+              >
+                {rooms.map((room) => (
+                  <option key={room.roomId} value={room.roomId}>
+                    {room.organizationName} · {room.roomTitle}
+                  </option>
+                ))}
+              </select>
+            </label>
+            {availableDevices.length ? (
+              <>
+                <label className={styles.field}>
+                  설정할 본인 기기
+                  <select
+                    value={settingsDevice?.deviceId ?? ""}
+                    disabled={busy}
+                    onChange={(event) => setSettingsDeviceId(event.target.value)}
+                  >
+                    {availableDevices.map((device) => (
+                      <option key={device.deviceId} value={device.deviceId}>
+                        {device.deviceAlias}
+                      </option>
+                    ))}
+                  </select>
+                </label>
+                {settingsDevice && (
+                  <RuntimeSettingsForm
+                    key={settingsDevice.deviceId}
+                    deviceId={settingsDevice.deviceId}
+                    deviceAlias={settingsDevice.deviceAlias}
+                    disabled={busy}
+                  />
+                )}
+              </>
+            ) : (
+              <p className="text-sm text-neutral-600">
+                이 방에 등록된 본인 기기가 없습니다. 웹에서 기기를 승인한 뒤 실행 중인 터미널에서
+                계정·방을 확인하고 yes를 입력하세요.
+              </p>
+            )}
+            {settingsRoomId && (
+              <Link href={`/app/rooms/${settingsRoomId}`} className="text-sm underline">
+                이 AI 채팅방에서 질문만 하기
+              </Link>
+            )}
+          </section>
           <LocalConnectionGuide
             origin={origin}
             userId={userId}
@@ -373,66 +451,6 @@ export function ConnectionManager({
               </ul>
             </details>
           )}
-          <section className={styles.panel} aria-label="본인 기기 AI 설정">
-            <h2 className="font-semibold">AI 설정</h2>
-            <p className="text-sm text-neutral-600">
-              기기 등록 뒤 Claude 또는 Codex를 고르고 Mac에서 폴더를 선택하세요. 해당 PC에서 지원
-              모델을 확인하면 모델·추론 강도(effort)를 선택할 수 있습니다.
-            </p>
-            <label className={styles.field}>
-              설정할 AI 채팅방
-              <select
-                value={settingsRoomId}
-                disabled={busy}
-                onChange={(event) => {
-                  setSettingsRoomId(event.target.value);
-                  setSettingsDeviceId("");
-                }}
-              >
-                {rooms.map((room) => (
-                  <option key={room.roomId} value={room.roomId}>
-                    {room.organizationName} · {room.roomTitle}
-                  </option>
-                ))}
-              </select>
-            </label>
-            {availableDevices.length ? (
-              <>
-                <label className={styles.field}>
-                  설정할 본인 기기
-                  <select
-                    value={settingsDevice?.deviceId ?? ""}
-                    disabled={busy}
-                    onChange={(event) => setSettingsDeviceId(event.target.value)}
-                  >
-                    {availableDevices.map((device) => (
-                      <option key={device.deviceId} value={device.deviceId}>
-                        {device.deviceAlias}
-                      </option>
-                    ))}
-                  </select>
-                </label>
-                {settingsDevice && (
-                  <RuntimeSettingsForm
-                    key={settingsDevice.deviceId}
-                    deviceId={settingsDevice.deviceId}
-                    deviceAlias={settingsDevice.deviceAlias}
-                    disabled={busy}
-                  />
-                )}
-              </>
-            ) : (
-              <p className="text-sm text-neutral-600">
-                이 방에 등록된 본인 기기가 없습니다. 웹에서 기기를 승인한 뒤 실행 중인 터미널에서
-                계정·방을 확인하고 yes를 입력하세요.
-              </p>
-            )}
-            {settingsRoomId && (
-              <Link href={`/app/rooms/${settingsRoomId}`} className="text-sm underline">
-                이 AI 채팅방에서 질문만 하기
-              </Link>
-            )}
-          </section>
         </div>
       </div>
     </ChatShell>
