@@ -1,5 +1,5 @@
 ---
-status: active
+status: done
 date: 2026-10-13
 risk-surface: auth, permission
 approval: existing-034-corrective-rework
@@ -56,9 +56,11 @@ Node24로 단위·연결기·타입·lint·format/check·격리 빌드를 수행
 
 코드 `024eb7edee46adf5f5f6af7a25187e472aeacb0b`: 웹594/594, 연결기1031/1031(동시4), 보정 집중84/84를 통과했다. 수정 전 계보 전달·CLI 옵션과 중간 pairing2개·확인 대기 중 변화4개를 실패시켰다. 실제 생성 명령→bootstrap→CLI→Mac PTY→가짜 HTTP를 프로젝트 단위 검사에 보존하고 첫 승인·유효 연결·만료 복구 각각 같은 명령 재실행까지6번 자동 검증했다. 실제 Native 브라우저 열기만 가짜 실행기로 대체했고 기본 저장 경로는 자식의 합성 HOME으로 격리했다. 실제 AI 입력0회·개인 원본 수정0. root 사용자 next-env.d.ts는 원래 hash `0f70629890b72a0a82e91972cc032c04b658b26c265373cb711cf576bfbf8fcc`를 유지했다. 격리 production/distribution build·웹/E2E/통합 TypeScript·연결기 타입·lint·format/check·diff 검사도 통과했다. 첫 전체 병렬 연결기 검사의 기존 pending 준비 검사1개는15초 시간 제한으로 실패했고, 동시4로 부하를 제한한 두 번의 전체 검사에서1027/1027과1031/1031이었다. 실패 기록은 보존하고 다른 운영 동작은 변경하지 않았다.
 
-### [ ] Step4: 병합·운영 반영과 보관
+### [x] Step4: 병합·운영 반영과 보관
 
 독립 reviewer가 인증/소유권/기존 잠금/호환성과 오류 재현의 해소를 확인한다. 기존 승인으로 일반 PR 병합·배포·배포물 hash와 정확한 main 검증을 완료한다. 완료한 계획은 archive로 옮기고 소유 브랜치·worker 터미널만 정리한다.
+
+[PR25](https://github.com/sangjun-pullim/ai-collaboration-platform/pull/25)의 검토 head `f8e2ff781828d8fd9e3af956c4f97001976347af`가 Preview SUCCESS 후 일반 병합됐다. main `11bc182a983f8fd43970a56a1fbd49536d4dbe44`의 Production `dpl_3DSKQYHzsNR2TjrjqtYTbvALidKB`가 READY이고 공개 alias를 확인했다. 2026-10-13T06:43:27Z의 공개9개 검사에서 입장·인증 redirect·manifest·bootstrap·connector·미인증 API 거절을 통과했다. 배포 connector는168960bytes, bootstrap은9928bytes이다. code의 gzip OS byte19(macOS)/3(Linux)를 제외한 tar 원문이 검증한 빌드와 일치했고 bootstrap hash도 일치했다. 완료 계획을 archive에 보관한다. 후속 문서 커밋은 같은 운영 코드·배포물 검증을 재사용한다.
 
 ## Tests
 
@@ -98,6 +100,6 @@ Node24로 단위·연결기·타입·lint·format/check·격리 빌드를 수행
 | 만료 pairing의 새 archive가 누락 세대의 사후 검사와 충돌 | HIGH | ACCEPTED | 새 파일명에 profile을 포함하고 원문 bytes를 유지한다. 기존 UUID 전용은 계속 보수적으로 검사하며2차 구현 리뷰에서 해소 확인했다. |
 | 확인 대기 중 변화가 begin·exchange 뒤 차단됨 | HIGH | ACCEPTED | 등록 직전 검증을 연결하고 만료 복구의4개 실패 재현·보정 검사를 추가했다.2차 구현 리뷰에서 해소 확인했다. |
 | 유효 연결 재사용에도 기존 기기 취소 안내 | MEDIUM | ACCEPTED | 취소를 만료 연결의 새 승인에 한정했다.2차 구현 리뷰에서 해소 확인했다. |
-| 중간 pairing의 보존→새 승인 중 선택한 프로필을 잃음 | HIGH | ACCEPTED | 정확한 새 귀속 archive와 설정·runtime·catalog 증거로 잠금 아래의 자기 전환만 인정한다. 기본 프로필 없는/유효한 경우와 변경 증거 거절4개를 추가하고3차 구현 리뷰 중이다. |
+| 중간 pairing의 보존→새 승인 중 선택한 프로필을 잃음 | HIGH | ACCEPTED | 정확한 새 귀속 archive와 설정·runtime·catalog 증거로 잠금 아래의 자기 전환만 인정한다. 기본 프로필 없는/유효한 경우와 변경 증거 거절4개를 추가하고3차 구현 리뷰에서 해소 확인했다. |
 
 구현 독립 리뷰1차 C0/H2/M1(`01a133d9-b2fc-7f92-8346-dbe08f5366ef`)의 세 지적은2차에서 해소 확인했다.2차의 신규 HIGH1(`01a133e7-d8d2-75b0-bb7f-375ff24c7e52`)은 승인된 중간 pairing 전환의 선택 손실이었다.3차(`01a133f4-48e5-79b0-8e72-de0591b194bd`)가 해당 보정·테스트·제출 patch 일치를 확인해 C0/H0/M0으로 통과했다. 변경 없는1·2차의 권한·기존 UNKNOWN·잠금·갱신·CLI 검토는 재사용했다. 모든 완료 CLI 워커와 reviewer 보고를 저장한 뒤 해당 Orca 터미널만 닫았다. 기본 브랜치 병합·배포는 Step4에서 확인한다.
