@@ -48,10 +48,24 @@ const navigationRooms: access.Room[] = [writableId, observerId].map((id) => ({
 const rooms = [{ roomId: writableId, organizationId, roomTitle: "참여방", organizationName: "팀" }];
 function shellHarness() {
   const changes: boolean[] = [];
-  const shell = load("src/features/room-access/chat-shell.tsx", {
+  const effects: (() => (() => void) | void)[] = [];
+  const portals: { children: unknown; host: unknown }[] = [];
+  let context: unknown = null;
+  const components = load("src/features/room-access/chat-shell.tsx", {
     react: {
-      useState: () => [true, (open: boolean) => changes.push(open)],
+      createContext: (value: unknown) => ({ Provider: "provider", value }),
+      useContext: () => context,
+      useLayoutEffect(effect: () => (() => void) | void) {
+        effects.push(effect);
+      },
+      useState: (initial: unknown) => [initial, (open: boolean) => changes.push(open)],
       useRef: (current: unknown) => ({ current }),
+    },
+    "react-dom": {
+      createPortal: (children: unknown, host: unknown) => {
+        portals.push({ children, host });
+        return children;
+      },
     },
     "next/link": { default: "link" },
     "lucide-react": Object.fromEntries(
@@ -69,9 +83,72 @@ function shellHarness() {
         "SheetTrigger",
       ].map((name) => [name, name]),
     ),
-  }).ChatShell as (props: Record<string, unknown>) => UINode;
-  return { shell, changes };
+  });
+  const shell = components.ChatShell as (props: Record<string, unknown>) => UINode;
+  return {
+    shell,
+    changes,
+    components,
+    portals,
+    effects,
+    setContext(value: unknown) {
+      context = value;
+    },
+  };
 }
+
+test("should supply one connection slot and retain page content without a navigation host", () => {
+  const h = shellHarness();
+  const provider = h.components.ConnectionNavigationProvider as (props: unknown) => UINode;
+  const page = jsx("main", { children: "unavailable page" });
+  const slot = jsx("owned-status", {});
+  const tree = provider({ children: page, connection: slot });
+  assert.equal(nodes(tree).filter((node) => node.type === "owned-status").length, 1);
+  assert.equal(nodes(tree).filter((node) => node === page).length, 1);
+  const connection = nodes(tree).find((node) => node.props["aria-label"] === "내 AI 연결 확인")!;
+  assert.equal(connection.props["data-placement"], "fallback");
+  assert.match(String(connection.props.className), /top-2.5/);
+  const registrations: boolean[] = [];
+  h.setContext((mounted: boolean) => registrations.push(mounted));
+  h.shell({ title: "채팅방", children: null });
+  const cleanup = h.effects[0]();
+  assert.deepEqual(registrations, [true]);
+  cleanup?.();
+  assert.deepEqual(registrations, [true, false]);
+});
+
+test("should use the same header portal host and provide an independent rendering fallback", () => {
+  const h = shellHarness();
+  const render = h.components.ChatHeaderControls as (props: unknown) => UINode | null;
+  const controls = jsx("advanced-controls", {});
+  const standalone = render({ children: controls });
+  assert.equal(nodes(standalone).filter((node) => node === controls).length, 1);
+  h.setContext({ host: null });
+  assert.equal(render({ children: controls }), null);
+  assert.equal(h.portals.length, 0);
+  const host = {};
+  h.setContext({ host });
+  render({ children: controls });
+  render({ children: jsx("advanced-controls", { snapshot: "next poll" }) });
+  assert.equal(h.portals.length, 2);
+  assert.ok(h.portals.every((portal) => portal.host === host));
+});
+
+test("should keep a single set of room actions in an accessible compact menu", () => {
+  const actions = jsx("room-management", {});
+  const tree = shellHarness().shell({
+    title: "긴 채팅방 제목",
+    children: null,
+    actions,
+    details: jsx("p", { children: "참가자" }),
+  });
+  const menu = nodes(tree).find(
+    (node) => node.type === "button" && node.props["aria-label"] === "채팅방 기능 열기",
+  );
+  assert.ok(menu);
+  assert.equal(menu.props["aria-expanded"], false);
+  assert.equal(nodes(tree).filter((node) => node.type === "room-management").length, 1);
+});
 function manager(props: Record<string, unknown> = {}) {
   const component = load("src/features/device-binding/connection-manager.tsx", {
     react: {

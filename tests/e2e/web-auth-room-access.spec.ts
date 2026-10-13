@@ -16,6 +16,12 @@ import {
   type BrowserEntry,
   type BrowserPerson,
 } from "../helpers/browser-team-entry.js";
+async function revealRoomActions(page: Page) {
+  const summary = page.getByLabel("채팅방 기능 열기", { exact: true });
+  if (await summary.isVisible()) {
+    if ((await summary.getAttribute("aria-expanded")) !== "true") await summary.click();
+  }
+}
 type Stages = [
   "test.start",
   "test.contexts-ready",
@@ -254,6 +260,7 @@ async function createRoom(page: Page, diagnostic: Diagnostics) {
 async function issueInvite(page: Page, role: string, diagnostic: Diagnostics) {
   diagnostic.mark("issue-invite.start");
   try {
+    await revealRoomActions(page);
     await page.getByRole("button", { name: "채팅방 관리", exact: true }).click();
     await page.getByRole("combobox", { name: "초대 역할", exact: true }).selectOption(role);
     diagnostic.mark("issue-invite.role-selected");
@@ -346,9 +353,10 @@ test("should allow two authenticated browsers to join only the invited room", as
     diagnostic.mark("test.member-ready");
     await join(bp, code, diagnostic);
     diagnostic.mark("test.member-joined");
-    await expect(bp.getByText("내 역할:")).toContainText("참여자");
+    await expect(bp.getByLabel("내 역할", { exact: true })).toContainText("참여자");
     diagnostic.mark("test.role-checked");
     await bp.reload();
+    await revealRoomActions(bp);
     await bp.getByRole("button", { name: "채팅방 관리", exact: true }).click();
     const management = bp.getByRole("dialog", { name: "채팅방 관리", exact: true });
     await expect(
@@ -392,6 +400,7 @@ test("should allow two authenticated browsers to join only the invited room", as
     diagnostic.mark("test.cache-checked");
     diagnostic.mark("test.logout-start");
     const logoutResponse = diagnostic.wait(ap, "test.logout-response");
+    await revealRoomActions(ap);
     await ap.getByRole("button", { name: "로그아웃", exact: true }).click();
     await logoutResponse;
     await expect(ap.getByRole("heading", { name: "AI 채팅방 입장", exact: true })).toBeVisible();
@@ -400,6 +409,7 @@ test("should allow two authenticated browsers to join only the invited room", as
     await expect(ap.getByRole("heading", { name: "AI 채팅방 입장", exact: true })).toBeVisible();
     diagnostic.mark("test.logged-out-room-checked");
     await bp.reload();
+    await revealRoomActions(bp);
     await expect(bp.getByRole("heading", { name: "초대된 조사방", exact: true })).toBeVisible();
     diagnostic.mark("test.other-session-checked");
   } finally {
@@ -449,6 +459,7 @@ test("should enforce observer and owner controls after a member is removed", asy
     await join(memberPage, memberCode, diagnostic);
     diagnostic.mark("test.extra-member-joined");
     await bp.reload();
+    await revealRoomActions(bp);
     const participantButton = bp.getByRole("button", { name: "참가자 정보 열기", exact: true });
     const sheetLayout = await participantButton.isVisible();
     const details = sheetLayout
@@ -465,7 +476,8 @@ test("should enforce observer and owner controls after a member is removed", asy
       await expect(participantButton).toBeFocused();
     }
     diagnostic.mark("test.observer-details-closed");
-    await expect(bp.getByText("내 역할:")).toContainText("관찰자");
+    await expect(bp.getByLabel("내 역할", { exact: true })).toContainText("관찰자");
+    await revealRoomActions(bp);
     await bp.getByRole("button", { name: "채팅방 관리", exact: true }).click();
     const observerManagement = bp.getByRole("dialog", { name: "채팅방 관리", exact: true });
     await expect(observerManagement).toBeVisible();
@@ -499,6 +511,7 @@ test("should enforce observer and owner controls after a member is removed", asy
     diagnostic.mark("test.remove-start");
     await ap.reload();
     const removed = diagnostic.wait(ap, "test.remove-response");
+    await revealRoomActions(ap);
     await ap.getByRole("button", { name: "채팅방 관리", exact: true }).click();
     await ap.getByRole("button", { name: "관찰자B 방에서 제거", exact: true }).click();
     const removeResponse = await removed;

@@ -12,6 +12,7 @@ import { recoverySnapshot } from "./history-state";
 import { AdvancedControls } from "./advanced-controls";
 import { answerStatuses, nearTimelineBottom } from "./chat-presentation";
 import { Button } from "../../components/ui/button";
+import { ChatHeaderControls } from "../room-access/chat-shell";
 
 const labels: Record<string, string> = {
   QUEUED: "대기",
@@ -220,10 +221,19 @@ function RoomInvestigation({ userId, roomId, role }: Props) {
       aria-label="실제 공동 조사"
       className="flex min-h-0 min-w-0 flex-1 flex-col [overflow-wrap:anywhere]"
     >
-      <div className="flex shrink-0 flex-wrap items-center justify-between gap-2 border-b px-5 py-2">
-        <p role="status" aria-label="방 상태" className="text-xs text-neutral-500">
-          방: {snapshot ? labels[snapshot.roomMode] : "조회 중"}
-          {cycle ? ` · 조사: ${labels[cycle.state]}` : ""}
+      <ChatHeaderControls>
+        <p
+          role="status"
+          aria-label="방 상태"
+          className="max-w-16 truncate text-[10px] text-neutral-500 md:max-w-56 md:text-xs"
+          title={`방: ${snapshot ? labels[snapshot.roomMode] : pollError ? "확인 불가" : "조회 중"}${cycle ? ` · 조사: ${labels[cycle.state]}` : ""}${pollError && snapshot ? " · 조회 실패" : ""}`}
+        >
+          <span className="sr-only">방: </span>
+          {snapshot ? labels[snapshot.roomMode] : pollError ? "확인 불가" : "조회 중"}
+          {cycle && (
+            <span className="sr-only md:not-sr-only">{` · 조사: ${labels[cycle.state]}`}</span>
+          )}
+          {pollError && snapshot && <span className="sr-only"> · 조회 실패</span>}
         </p>
         {writable && (
           <AdvancedControls>
@@ -348,7 +358,7 @@ function RoomInvestigation({ userId, roomId, role }: Props) {
               )}
           </AdvancedControls>
         )}
-      </div>
+      </ChatHeaderControls>
       {writable && bindings.some((binding) => binding.owned) && (
         <OwnInputControls userId={userId} roomId={roomId} bindings={bindings} />
       )}

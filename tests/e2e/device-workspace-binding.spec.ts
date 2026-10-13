@@ -2,6 +2,12 @@ import { test, expect, type Browser, type TestInfo, type Page } from "@playwrigh
 import { installAuthArtifactPolicy } from "../helpers/auth-browser-artifact-policy.js";
 installAuthArtifactPolicy(test);
 import { enterTeam, type BrowserEntry, type BrowserPerson } from "../helpers/browser-team-entry.js";
+async function revealRoomActions(page: Page) {
+  const summary = page.getByLabel("채팅방 기능 열기", { exact: true });
+  if (await summary.isVisible()) {
+    if ((await summary.getAttribute("aria-expanded")) !== "true") await summary.click();
+  }
+}
 function check(value: unknown): asserts value {
   if (!value) throw new Error("Owned device browser assertion failed");
 }
@@ -46,6 +52,7 @@ async function createRoom(page: Page) {
   return result.data as { roomId: string; organizationId: string };
 }
 async function join(owner: Page, member: Page, role: string) {
+  await revealRoomActions(owner);
   await owner.getByRole("button", { name: "채팅방 관리", exact: true }).click();
   await owner.getByRole("combobox", { name: "초대 역할", exact: true }).selectOption(role);
   await owner.getByRole("button", { name: "초대 발급", exact: true }).click();
@@ -204,6 +211,7 @@ test("should approve an owned connection and display only public unverified bind
       scope.roomId,
     );
     await op.goto(`/app/rooms/${scope.roomId}`);
+    await revealRoomActions(op);
     const participantButton = op.getByRole("button", { name: "참가자 정보 열기", exact: true });
     if (await participantButton.isVisible()) await participantButton.click();
     const roster = op.getByRole("region", { name: "공개 기기 등록" });
@@ -280,12 +288,14 @@ test("should revoke a connection and require fresh approval after membership rem
     );
     await ap.goto(`/app/rooms/${scope.roomId}`);
     const participantButton = ap.getByRole("button", { name: "참가자 정보 열기", exact: true });
+    await revealRoomActions(ap);
     if (await participantButton.isVisible()) await participantButton.click();
     const roster = ap.getByRole("region", { name: "공개 기기 등록" });
     const memberBinding = roster.locator("li").filter({ hasText: `기기 ${active}` });
     await expect(memberBinding).toHaveCount(1);
     await expect(roster.getByText("공개 저장소 · 공개 세션", { exact: true })).toHaveCount(2);
     await ap.keyboard.press("Escape");
+    await revealRoomActions(ap);
     await ap.getByRole("button", { name: "채팅방 관리", exact: true }).click();
     await ap.getByRole("button", { name: "참여자 방에서 제거", exact: true }).click();
     await expect(ap.getByRole("button", { name: "참여자 방에서 제거", exact: true })).toHaveCount(
@@ -417,7 +427,12 @@ test("should preserve the owned status snapshot and chat draft across explicit r
     const bar = ap.getByRole("region", { name: "내 AI 연결 상태", exact: true });
     const checkedTime = bar.locator("time").first();
     const isoTimestamp = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z$/;
+    const openDetails = async () => {
+      if (!(await bar.locator("details").evaluate((element) => element.hasAttribute("open"))))
+        await bar.locator("summary").click();
+    };
     const expectOwnedStatus = async () => {
+      await openDetails();
       await expect(bar).toBeVisible();
       await expect(bar.getByRole("status")).toContainText("최근 통신 확인 2/2대");
       await expect(bar.getByRole("status").locator('span[aria-hidden="true"]')).toHaveClass(
@@ -426,7 +441,6 @@ test("should preserve the owned status snapshot and chat draft across explicit r
       await expect(checkedTime).toHaveAttribute("datetime", isoTimestamp);
       check(Number.isFinite(Date.parse((await checkedTime.getAttribute("datetime"))!)));
       await expect(checkedTime).toContainText("한국 시간");
-      await bar.getByText("기기별 연결 상세", { exact: true }).click();
       for (const name of [first, second]) {
         const device = bar.getByRole("listitem").filter({ hasText: `기기 ${name}` });
         await expect(device).toContainText("기기 검사방");
@@ -435,8 +449,8 @@ test("should preserve the owned status snapshot and chat draft across explicit r
       }
       await expect(bar).not.toContainText(`기기 ${other}`);
       await expect(bar).toContainText("현재 AI 답변을 보장하지 않습니다");
-      await bar.getByText("기기별 연결 상세", { exact: true }).click();
     };
+    await openDetails();
     await expect(checkedTime).toHaveAttribute("datetime", isoTimestamp);
     const beforeFirstRefresh = await checkedTime.getAttribute("datetime");
     check(beforeFirstRefresh);
@@ -525,7 +539,7 @@ test("should preserve the owned status snapshot and chat draft across explicit r
     await bar.getByRole("button", { name: "다시 확인", exact: true }).click();
     await expect(bar.getByRole("status")).toContainText("최근 통신 확인 2/2대");
     await expect(draft).toHaveValue("전송하지 않는 보존 검사 초안");
-    await bar.getByText("기기별 연결 상세", { exact: true }).click();
+    await openDetails();
     await bar.getByRole("link", { name: "연결 관리", exact: true }).click();
     await expect(
       ap.getByRole("heading", { name: "내 AI 연결", level: 1, exact: true }),
@@ -553,11 +567,12 @@ test("should preserve the owned status snapshot and chat draft across explicit r
     const ownSnapshot = await bar.textContent();
     check(ownSnapshot && !ownSnapshot.includes(`기기 ${other}`));
     const memberBar = bp.getByRole("region", { name: "내 AI 연결 상태", exact: true });
+    await memberBar.locator("summary").click();
     await memberBar.getByRole("button", { name: "다시 확인", exact: true }).click();
-    await memberBar.getByText("기기별 연결 상세", { exact: true }).click();
     await expect(memberBar).toContainText(`기기 ${other}`);
     await expect(memberBar).not.toContainText(`기기 ${first}`);
     await ap.getByRole("link", { name: "채팅방 목록으로", exact: true }).click();
+    await revealRoomActions(ap);
     await ap.getByRole("button", { name: "로그아웃", exact: true }).click();
     await expect(ap).toHaveURL(/\/login$/);
     await expect(bar).toHaveCount(0);

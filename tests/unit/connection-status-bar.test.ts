@@ -87,6 +87,10 @@ test("should refresh only after an explicit status action and distinguish device
   assert.equal(initial.props["aria-label"], "내 AI 연결 상태");
   assert.match(text(initial), /최근 통신 확인 1\/2대/);
   const list = nodes(initial).filter((node) => node.type === "li");
+  const details = nodes(initial).find((node) => node.type === "details")!;
+  assert.equal(details.props.open, undefined);
+  assert.equal(nodes(details).filter((node) => node.type === "time").length, 2);
+  assert.equal(nodes(initial).filter((node) => node.type === "button").length, 1);
   assert.equal(list.length, 2);
   assert.match(text(list[0]), /업무 Mac.*개발방.*연결 통신 확인/);
   assert.match(text(list[1]), /집 Mac.*기획방.*연결 확인 안 됨/);
@@ -211,16 +215,16 @@ test("should stream status independently while preserving the page node and avai
     },
     "../../features/device-binding/connection-status-bar": { ConnectionStatusBar: "StatusBar" },
     "../../features/device-binding/connection-presence": presence,
+    "../../features/room-access/chat-shell": { ConnectionNavigationProvider: "NavigationProvider" },
   });
   const render = exports.default as (props: { children: Node }) => Node;
   const page = jsx("main", { children: "draft-owning-page" });
   const result = render({ children: page });
-  assert.match(String(result.props.className), /h-dvh.*flex-col/);
-  const boundary = nodes(result).find((node) => node.type === "Suspense")!;
+  assert.equal(result.type, "NavigationProvider");
+  assert.equal(result.props.children, page);
+  const boundary = result.props.connection as Node;
+  assert.equal(boundary.type, "Suspense");
   assert.ok(boundary.props.fallback);
-  const body = (result.props.children as Node[])[1];
-  assert.equal(body.props.children, page);
-  assert.match(String(body.props.className), /min-h-0.*flex-1.*overflow-y-auto/);
-  assert.match(String(body.props.className), /\[&>main\]:h-full.*\[&>main\]:min-h-0/);
-  assert.equal((render({ children: page }).props.children as Node[])[1].props.children, page);
+  assert.equal(nodes(boundary).filter((node) => node.type === "OwnedStatus").length, 1);
+  assert.equal(render({ children: page }).props.children, page);
 });

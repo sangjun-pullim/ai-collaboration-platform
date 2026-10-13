@@ -1,5 +1,11 @@
 import { test, expect, type Browser, type Page, type TestInfo } from "@playwright/test";
 import { installAuthArtifactPolicy } from "../helpers/auth-browser-artifact-policy.js";
+async function revealRoomActions(page: Page) {
+  const summary = page.getByLabel("채팅방 기능 열기", { exact: true });
+  if (await summary.isVisible()) {
+    if ((await summary.getAttribute("aria-expanded")) !== "true") await summary.click();
+  }
+}
 test.afterEach(({ browserName }, info) => {
   void browserName;
   if (!info.errors.length) return;
@@ -76,7 +82,7 @@ test("should display an owned investigation and restore public history for an ob
       observed = bp.getByRole("region", { name: "실제 공동 조사" });
     await own.getByLabel("보낼 곳", { exact: true }).selectOption("speak");
     await expect(own.getByRole("button", { name: "공동 발언 저장", exact: true })).toBeVisible();
-    await own.getByRole("button", { name: "공동 조사", exact: true }).click();
+    await ap.getByRole("button", { name: "공동 조사", exact: true }).click();
     const advanced = ap.getByRole("dialog", { name: "공동 조사", exact: true });
     await expect(observed.getByRole("button", { name: "공동 발언 저장", exact: true })).toHaveCount(
       0,
@@ -142,17 +148,17 @@ test("should distinguish reported execution unknown and confirmed pause in the b
     await expect(answerStatus).toBeVisible();
     await expect(answerStatus).toContainText("공개 세션");
     await expect(answerStatus).toContainText("로컬 실행 시작");
-    await region.getByRole("button", { name: "공동 조사", exact: true }).click();
+    await page.getByRole("button", { name: "공동 조사", exact: true }).click();
     const advanced = page.getByRole("dialog", { name: "공동 조사", exact: true });
     const pause = advanced.getByRole("button", { name: "방 일시정지 요청", exact: true });
     await pause.focus();
     await page.keyboard.press("Enter");
     await page.keyboard.press("Escape");
-    await expect(region.getByRole("status", { name: "방 상태", exact: true })).toContainText(
+    await expect(page.getByRole("status", { name: "방 상태", exact: true })).toContainText(
       "중단 확인 대기",
     );
     await broker("drive", { scene, step: "ack" });
-    await expect(region.getByRole("status", { name: "방 상태", exact: true })).toContainText(
+    await expect(page.getByRole("status", { name: "방 상태", exact: true })).toContainText(
       "중단 확인 대기",
     );
     await expect(answerStatus).toContainText("중단 요청 중 · 종료 확인 대기", { timeout: 45000 });
@@ -169,12 +175,12 @@ test("should distinguish reported execution unknown and confirmed pause in the b
       "/app/connections",
     );
     await expect(answerStatus.locator(".animate-spin")).toHaveCount(0);
-    await region.getByRole("button", { name: "공동 조사", exact: true }).click();
+    await page.getByRole("button", { name: "공동 조사", exact: true }).click();
     const resume = advanced.getByRole("button", { name: "방 발언·조사 접수 재개", exact: true });
     await expect(resume).toBeDisabled();
     await page.keyboard.press("Escape");
     await broker("drive", { scene, step: "terminal" });
-    await expect(region.getByRole("status", { name: "방 상태", exact: true })).toContainText(
+    await expect(page.getByRole("status", { name: "방 상태", exact: true })).toContainText(
       "일시정지 확인",
       { timeout: 45000 },
     );
@@ -185,14 +191,12 @@ test("should distinguish reported execution unknown and confirmed pause in the b
     const terminalHistory = region.getByLabel("확정 공동 이력");
     await expect(terminalHistory).toContainText("새 질문");
     await expect(terminalHistory.locator(".animate-spin")).toHaveCount(0);
-    await region.getByRole("button", { name: "공동 조사", exact: true }).click();
+    await page.getByRole("button", { name: "공동 조사", exact: true }).click();
     await expect(resume).toBeEnabled();
     await resume.focus();
     await page.keyboard.press("Enter");
     await page.keyboard.press("Escape");
-    await expect(region.getByRole("status", { name: "방 상태", exact: true })).toContainText(
-      "활성",
-    );
+    await expect(page.getByRole("status", { name: "방 상태", exact: true })).toContainText("활성");
     await region.getByLabel("보낼 곳").selectOption("speak");
     await region.getByLabel("공동 발언", { exact: true }).fill(" ");
     await expect(
@@ -247,7 +251,7 @@ test("should show a direct question form without an own AI connection", async ({
       process.stdout.write("010_DIRECT_STAGE OBSERVER_READ_ONLY_BEFORE\n");
       await expect(observer.getByRole("form", { name: "상대 AI에 직접 질문" })).toHaveCount(0);
       process.stdout.write("010_DIRECT_STAGE OWN_AI_DISABLED_BEFORE\n");
-      await region.getByRole("button", { name: "공동 조사", exact: true }).click();
+      await page.getByRole("button", { name: "공동 조사", exact: true }).click();
       await expect(
         page
           .getByRole("dialog", { name: "공동 조사", exact: true })
@@ -332,6 +336,7 @@ test("should show a direct question form without an own AI connection", async ({
       await questionInput.press("Shift+Enter");
       await expect(questionInput).toHaveValue("한국어 키보드 직접 질문 😀\n");
       await questionInput.fill("한국어 키보드 직접 질문 😀");
+      await revealRoomActions(page);
       await page.getByRole("button", { name: "채팅방 관리", exact: true }).click();
       await expect(page.getByRole("dialog", { name: "채팅방 관리", exact: true })).toBeVisible();
       await page.keyboard.press("Escape");
@@ -343,6 +348,7 @@ test("should show a direct question form without an own AI connection", async ({
         );
         await expect(questionInput).toHaveValue("한국어 키보드 직접 질문 😀");
         if (width < 1280) {
+          await revealRoomActions(page);
           const participants = page.getByRole("button", { name: "참가자 정보 열기", exact: true });
           await participants.click();
           await expect(
@@ -467,7 +473,7 @@ test("should show a direct question form without an own AI connection", async ({
         await stop.focus();
         await page.keyboard.press("Enter");
         await expect(
-          region
+          page
             .getByRole("status", { name: "방 상태", exact: true })
             .filter({ hasText: "조사: 사람 확인 필요" }),
         ).toBeVisible(pollingWait);
@@ -562,6 +568,7 @@ test("should isolate unresolved direct intents across authenticated users", asyn
         timeout: 45_000,
       });
       if (mode === "actor") {
+        await revealRoomActions(page);
         await page.getByRole("button", { name: "로그아웃", exact: true }).click();
         await expect(
           page.getByRole("heading", { name: "AI 채팅방 입장", exact: true }),
@@ -849,13 +856,13 @@ test("should distinguish owner input request from connector application and rest
     await expect(own.getByText("일시정지 적용 보고", { exact: true })).toBeVisible({
       timeout: 45000,
     });
-    await region.getByRole("button", { name: "공동 조사", exact: true }).click();
+    await page.getByRole("button", { name: "공동 조사", exact: true }).click();
     await page
       .getByRole("dialog", { name: "공동 조사", exact: true })
       .getByRole("button", { name: "방 일시정지 요청", exact: true })
       .click();
     await page.keyboard.press("Escape");
-    await expect(region.getByRole("status", { name: "방 상태", exact: true })).toContainText(
+    await expect(page.getByRole("status", { name: "방 상태", exact: true })).toContainText(
       "일시정지 확인",
       { timeout: 45000 },
     );
@@ -868,7 +875,7 @@ test("should distinguish owner input request from connector application and rest
     await expect(own.getByText("요청됨 · 연결 프로그램 대기", { exact: true })).toBeVisible();
     await broker("input-drive", { scene, step: "ack-resume" });
     await expect(own.getByText("재개 적용 보고", { exact: true })).toBeVisible({ timeout: 45000 });
-    await expect(region.getByRole("status", { name: "방 상태", exact: true })).toContainText(
+    await expect(page.getByRole("status", { name: "방 상태", exact: true })).toContainText(
       "일시정지 확인",
     );
     await expect(

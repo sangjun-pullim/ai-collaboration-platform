@@ -638,9 +638,13 @@ test("should defer mobile room creation until the Sheet closes and retain its vi
   const returns: unknown[] = [];
   const shell = load("src/features/room-access/chat-shell.tsx", {
     react: {
+      createContext: (value: unknown) => ({ Provider: "provider", value }),
+      useContext: () => null,
+      useLayoutEffect() {},
       useState: () => [true, (open: boolean) => changes.push(open)],
       useRef: (current: unknown) => ({ current }),
     },
+    "react-dom": { createPortal: (children: unknown) => children },
     "next/link": { default: "link" },
     "lucide-react": Object.fromEntries(
       ["Menu", "Users", "MessageSquare", "Plus", "Plug"].map((name) => [name, "icon"]),

@@ -229,6 +229,17 @@ export function RoomAccessView({
       rooms={rooms}
       roomId={room.id}
       title={room.title}
+      metadata={
+        <Badge
+          aria-label="내 역할"
+          variant="secondary"
+          className="shrink-0 px-1.5 text-[10px] md:text-xs"
+        >
+          <span className="sr-only">내 역할: </span>
+          {roles[role]}
+          {role === "observer" && <span className="sr-only md:not-sr-only"> · 읽기 전용</span>}
+        </Badge>
+      }
       details={details}
       actions={
         <>
@@ -237,13 +248,6 @@ export function RoomAccessView({
         </>
       }
     >
-      <div className="flex shrink-0 items-center gap-2 border-b px-5 py-2 text-xs text-neutral-500">
-        <span>
-          내 역할: <strong>{roles[role]}</strong>
-        </span>
-        <Badge variant="secondary">{role === "observer" ? "읽기 전용" : "질문 · 대화"}</Badge>
-        <span className="ml-auto">내 AI 연결은 선택 사항</span>
-      </div>
       {investigation}
     </ChatShell>
   );
