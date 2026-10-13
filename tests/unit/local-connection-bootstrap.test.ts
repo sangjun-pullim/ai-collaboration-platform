@@ -11,6 +11,50 @@ import { localConnectionCommand } from "../../src/features/device-binding/local-
 
 const macOnly = { skip: process.platform !== "darwin" };
 test(
+  "should carry the complete recovery selection through the generated shell and verified bootstrap",
+  macOnly,
+  async (t) => {
+    const f = await connectionFixture(t);
+    const origin = f.args[0],
+      userId = "33333333-3333-4333-8333-333333333333",
+      roomId = f.args[4];
+    const { readConnectionSelection, nextConnectionSelection } =
+      await import("../../src/features/device-binding/local-connection-command.ts");
+    let selection = await readConnectionSelection(null, origin, userId, roomId);
+    for (let n = 0; n < 3; n++)
+      selection = await nextConnectionSelection(
+        selection,
+        `12345678-1234-4123-8123-${String(n).padStart(12, "0")}`,
+      );
+    const command = (
+      await localConnectionCommand({
+        origin,
+        userId,
+        roomId,
+        organizationId: f.args[3],
+        deviceAlias: "검증 Mac",
+        manifest: f.manifest,
+        selection,
+      })
+    ).replaceAll("/usr/bin/curl", `'${f.curl}'`);
+    await promisify(execFile)("/bin/zsh", ["-f", "-c", command], {
+      env: f.env,
+      timeout: 15000,
+      maxBuffer: 16384,
+    });
+    const executed = JSON.parse(await readFile(f.runFile, "utf8"));
+    assert.deepEqual(executed.args.slice(-6), [
+      "--previous-profile",
+      selection.chain.at(-1)!.previousProfile,
+      "--recovery-id",
+      selection.chain.at(-1)!.recoveryId,
+      "--recovery-chain",
+      JSON.stringify(selection),
+    ]);
+    assert.deepEqual(await readdir(join(f.root, "work")), []);
+  },
+);
+test(
   "should pass exactly seven recovery arguments through the verified bootstrap",
   macOnly,
   async (t) => {

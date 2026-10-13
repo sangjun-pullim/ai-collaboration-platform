@@ -65,6 +65,38 @@ test("should carry a verified recovery generation while leaving the default prof
   await assert.rejects(localConnectionCommand({ ...input, roomId: organizationId }));
 });
 
+test("should carry every recovery ancestor when intermediate commands were never executed", async () => {
+  const origin = "https://example.com";
+  let selection = await readConnectionSelection(null, origin, userId, roomId);
+  for (const suffix of ["abc", "abd", "abe"]) {
+    selection = await nextConnectionSelection(
+      selection,
+      `12345678-1234-4123-8123-123456789${suffix}`,
+    );
+  }
+  const command = await localConnectionCommand({
+    origin,
+    userId,
+    roomId,
+    organizationId,
+    deviceAlias: "내 Mac",
+    manifest: manifest(),
+    selection,
+  });
+  assert.ok(
+    command.includes(selection.baseProfile),
+    "the original local record must remain reachable",
+  );
+  for (const generation of selection.chain) {
+    assert.ok(command.includes(generation.profile));
+    assert.ok(command.includes(generation.recoveryId));
+  }
+  assert.ok(
+    command.includes(JSON.stringify(selection)),
+    "the complete validated lineage must cross the shell boundary",
+  );
+});
+
 test("should retain public recovery chains across refresh and reject foreign or altered selections", async () => {
   const origin = "https://example.com";
   const base = await readConnectionSelection(null, origin, userId, roomId);

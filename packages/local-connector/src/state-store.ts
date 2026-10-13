@@ -343,7 +343,7 @@ export class StateStore {
       await source.close();
     }
     const archive = await open(
-      join(this.dir, `.expired-pairing-${randomUUID()}.json`),
+      join(this.dir, `.expired-pairing-${this.profile}-${randomUUID()}.json`),
       constants.O_CREAT | constants.O_EXCL | constants.O_WRONLY | constants.O_NOFOLLOW,
       0o600,
     );

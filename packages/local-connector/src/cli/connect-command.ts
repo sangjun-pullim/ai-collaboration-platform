@@ -6,7 +6,7 @@ import type { Connector } from "../cli.ts";
 import { ConnectionError, isAlias, isHash, isId, type Scope } from "../contracts.ts";
 import { RuntimeStore } from "../runtime-store.ts";
 import { SettingsStore } from "../settings/store.ts";
-import { prepareRecovery } from "./connection-recovery.ts";
+import { prepareRecovery, MissingRecoveryRecordError } from "./connection-recovery.ts";
 import type { StateStore } from "../state-store.ts";
 import type { WorkflowRunner } from "../workflow-runner.ts";
 
@@ -16,6 +16,7 @@ export type ConnectInput = {
   deviceAlias: string;
   previousProfile?: string;
   recoveryId?: string;
+  recoveryChain?: string;
 };
 export type ConnectInteraction = {
   interactive: boolean;
@@ -28,6 +29,7 @@ export type ConnectInteraction = {
   open: (url: string) => Promise<void>;
   pause?: (signal: AbortSignal) => Promise<void>;
   now?: () => number;
+  verifyPreparation?: () => Promise<void>;
 };
 
 function checkScope(scope: Scope | undefined, input: ConnectInput): Scope {
@@ -49,7 +51,7 @@ export async function prepareConnection(
   if (!interaction.interactive) throw new ConnectionError("FORBIDDEN");
   if (input.previousProfile !== undefined || input.recoveryId !== undefined) {
     if (!recoveryRunner) throw new ConnectionError("INVALID_BODY");
-    return prepareRecovery(connector, input, interaction, recoveryRunner, async () => {
+    return prepareRecovery(connector, input, interaction, recoveryRunner, async (verify) => {
       if ((await connector.store.read())?.credential) await renewRegistered?.();
       await prepareConnection(
         connector,
@@ -58,7 +60,13 @@ export async function prepareConnection(
           roomId: input.roomId,
           deviceAlias: input.deviceAlias,
         },
-        interaction,
+        {
+          ...interaction,
+          verifyPreparation: async () => {
+            await interaction.verifyPreparation?.();
+            await verify();
+          },
+        },
       );
     });
   }
@@ -110,6 +118,8 @@ export async function prepareConnection(
       throw new ConnectionError("CONFLICT");
     check();
     const expired = state;
+    await interaction.verifyPreparation?.();
+    check();
     await transaction(async () => {
       if (
         (await new SettingsStore(connector.store).read()) ||
@@ -132,7 +142,11 @@ export async function prepareConnection(
     scope = checkScope(state.scope, input);
   } else {
     if (state?.pending && state.pending.action !== "begin") throw new ConnectionError("CONFLICT");
-    const pairing = await transaction(() => connector.pair(input.deviceAlias));
+    const pairing = await transaction(async () => {
+      await interaction.verifyPreparation?.();
+      check();
+      return connector.pair(input.deviceAlias);
+    });
     check();
     if (!isHash(pairing.code)) throw new ConnectionError("CONFLICT");
     const expires = Date.parse(pairing.expiresAt ?? "");
@@ -165,8 +179,14 @@ export async function prepareConnection(
   if (!(await interaction.confirm(scope, interaction.signal)))
     throw new ConnectionError("FORBIDDEN");
   check();
+  await interaction.verifyPreparation?.();
+  check();
   if (!state?.credential) {
-    await transaction(() => connector.exchange(input.roomId));
+    await transaction(async () => {
+      await interaction.verifyPreparation?.();
+      check();
+      return connector.exchange(input.roomId);
+    });
     check();
   }
   const connected = await connector.store.read();
@@ -178,6 +198,8 @@ export async function prepareConnection(
 }
 
 export function connectionFailureHint(error: unknown): string {
+  if (error instanceof MissingRecoveryRecordError)
+    return "이 명령의 이전 로컬 연결 기록을 찾지 못했습니다. 웹의 내 AI 연결에서 최신 명령을 다시 복사하세요. 기존 기록은 삭제하지 마세요.";
   const code = error && typeof error === "object" && "code" in error ? error.code : "UNAVAILABLE";
   if (
     [

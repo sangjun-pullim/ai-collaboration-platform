@@ -37,6 +37,7 @@ import {
 } from "./cli/connect-command.ts";
 export { connectionFailureHint } from "./cli/connect-command.ts";
 import { ConnectionRenewal } from "./connection-renewal.ts";
+import { selectConnectionProfile, prepareSelectedConnection } from "./cli/connection-recovery.ts";
 export const hash = (value: string) => createHash("sha256").update(value).digest("hex");
 export class Connector {
   constructor(
@@ -415,7 +416,7 @@ export async function main(args: string[]) {
     if (!options[key]) throw new ConnectionError("INVALID_BODY");
     return options[key];
   };
-  const store = new StateStore(
+  const requestedStore = new StateStore(
     options["state-dir"] ??
       join(homedir(), "Library", "Application Support", "ai-collab", "connector"),
     options.profile ?? "default",
@@ -423,8 +424,24 @@ export async function main(args: string[]) {
   const origin =
     options.server ??
     (["revoke-local", "manage"].includes(command)
-      ? ((await store.read())?.server ?? "http://127.0.0.1")
+      ? ((await requestedStore.read())?.server ?? "http://127.0.0.1")
       : required("server"));
+  const selection =
+    command === "connect" && options["recovery-chain"]
+      ? await selectConnectionProfile(
+          requestedStore,
+          {
+            organizationId: required("organization-id"),
+            roomId: required("room-id"),
+            deviceAlias: required("device-alias"),
+            previousProfile: options["previous-profile"],
+            recoveryId: options["recovery-id"],
+            recoveryChain: options["recovery-chain"],
+          },
+          origin,
+        )
+      : undefined;
+  const store = selection?.store ?? requestedStore;
   const client = new CentralClient(origin),
     connector = new Connector(store, client);
   const renewal = new ConnectionRenewal(connector);
@@ -495,17 +512,32 @@ export async function main(args: string[]) {
                   });
                 }
               };
-              if (options["previous-profile"])
+              if (options["previous-profile"] && (!selection || selection.mode === "recovery"))
                 await prepareConnection(
                   connector,
                   {
                     ...input,
                     previousProfile: options["previous-profile"],
                     recoveryId: options["recovery-id"],
+                    recoveryChain: options["recovery-chain"],
                   },
                   interaction,
                   (profile, agent) => legacyRunner(agent, profile),
                   renewRegistered,
+                );
+              else if (selection)
+                await prepareSelectedConnection(
+                  selection,
+                  () => {
+                    if (signal.aborted) throw new ConnectionError("CONFLICT");
+                  },
+                  async (verify) => {
+                    await renewRegistered();
+                    await prepareConnection(connector, input, {
+                      ...interaction,
+                      verifyPreparation: verify,
+                    });
+                  },
                 );
               else
                 await withSettingsDeviceLock(store, command, async () => {
