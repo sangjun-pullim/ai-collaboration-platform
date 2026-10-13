@@ -1,0 +1,126 @@
+{
+  "read": {
+    "protocol": 1,
+    "roomId": "00000000-0000-4000-8000-000000000001",
+    "afterSequence": 0,
+    "afterRetirementSequence": 0
+  },
+  "history": {
+    "roomId": "00000000-0000-4000-8000-000000000001",
+    "roomRevision": 1,
+    "roomMode": "ACTIVE",
+    "events": [
+      {
+        "eventId": "00000000-0000-4000-8000-000000000010",
+        "roomId": "00000000-0000-4000-8000-000000000001",
+        "sequence": 1,
+        "createdAt": "2026-10-01T00:00:00.000Z",
+        "kind": "QUESTION",
+        "senderKind": "HUMAN",
+        "senderAlias": "질문 참가자",
+        "publicText": "한글 직접 질문",
+        "cycleId": "00000000-0000-4000-8000-000000000004",
+        "requestId": "00000000-0000-4000-8000-000000000006",
+        "questionId": "00000000-0000-4000-8000-000000000005",
+        "replyTo": null,
+        "roomRevision": 1,
+        "bindingEpoch": 1,
+        "agentId": "00000000-0000-4000-8000-000000000002",
+        "requestKind": "PEER",
+        "runState": null,
+        "terminal": null,
+        "roomMode": null,
+        "adoption": "PENDING"
+      }
+    ],
+    "runs": [
+      {
+        "requestId": "00000000-0000-4000-8000-000000000006",
+        "cycleId": "00000000-0000-4000-8000-000000000004",
+        "agentId": "00000000-0000-4000-8000-000000000002",
+        "ownerAlias": "소유자",
+        "sessionAlias": "공개 세션",
+        "requestKind": "PEER",
+        "roomRevision": 1,
+        "bindingEpoch": 1,
+        "state": "UNKNOWN",
+        "questionId": "00000000-0000-4000-8000-000000000005",
+        "createdAt": "2026-10-01T00:00:00.000Z",
+        "updatedAt": "2026-10-01T00:00:00.000Z"
+      }
+    ],
+    "bindings": [
+      {
+        "agentId": "00000000-0000-4000-8000-000000000002",
+        "ownerAlias": "소유자",
+        "sessionAlias": "공개 세션",
+        "repositoryAlias": "공개 저장소",
+        "runtime": "codex",
+        "bindingEpoch": 1,
+        "owned": true,
+        "reportedReady": true,
+        "validUntil": "2026-10-01T00:00:00.000Z"
+      }
+    ],
+    "cycle": {
+      "cycleId": "00000000-0000-4000-8000-000000000004",
+      "mode": "DIRECT",
+      "targetAgentId": "00000000-0000-4000-8000-000000000002",
+      "targetEpoch": 1,
+      "generation": 1,
+      "roomRevision": 1,
+      "state": "ACTIVE",
+      "runsReserved": 1,
+      "peerRoundsReserved": 0,
+      "deadline": "2026-10-01T00:00:00.000Z",
+      "canInterrupt": true
+    },
+    "nextCursor": 1,
+    "highWaterSequence": 1,
+    "hasMore": false,
+    "recovery": {
+      "hasBlockingRuns": true,
+      "candidate": {
+        "requestId": "00000000-0000-4000-8000-000000000006",
+        "cycleId": "00000000-0000-4000-8000-000000000004",
+        "attemptId": "00000000-0000-4000-8000-000000000007",
+        "fence": 1,
+        "agentId": "00000000-0000-4000-8000-000000000002",
+        "bindingEpoch": 1,
+        "roomRevision": 1,
+        "canRetire": true,
+        "deviceRevoked": true
+      },
+      "retirements": [],
+      "nextRetirementCursor": 0,
+      "highWaterRetirementSequence": 0,
+      "hasMoreRetirements": false
+    }
+  },
+  "retire": {
+    "protocol": 1,
+    "roomId": "00000000-0000-4000-8000-000000000001",
+    "operationId": "00000000-0000-4000-8000-000000000008",
+    "expectedUserId": "00000000-0000-4000-8000-000000000011",
+    "expectedRoomRevision": 1,
+    "requestId": "00000000-0000-4000-8000-000000000006",
+    "cycleId": "00000000-0000-4000-8000-000000000004",
+    "attemptId": "00000000-0000-4000-8000-000000000007",
+    "fence": 1,
+    "agentId": "00000000-0000-4000-8000-000000000002",
+    "bindingEpoch": 1,
+    "confirmed": true
+  },
+  "receipt": {
+    "state": "RETIRED_UNCONFIRMED",
+    "sequence": 1,
+    "requestId": "00000000-0000-4000-8000-000000000006",
+    "cycleId": "00000000-0000-4000-8000-000000000004",
+    "attemptId": "00000000-0000-4000-8000-000000000007",
+    "fence": 1,
+    "agentId": "00000000-0000-4000-8000-000000000002",
+    "bindingEpoch": 1,
+    "retiredAt": "2026-10-13T00:00:00.000Z",
+    "roomRevision": 2
+  }
+}

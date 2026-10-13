@@ -8,10 +8,35 @@ import * as intents from "../../src/features/investigation-coordinator/direct-in
 import {
   emptyHistory,
   mergeHistory,
+  recordRetirements,
+  recoverySnapshot,
 } from "../../src/features/investigation-coordinator/history-state.ts";
 import * as presentation from "../../src/features/investigation-coordinator/chat-presentation.ts";
 import type { RoomChatController } from "../../src/features/investigation-coordinator/room-chat-controller.ts";
 const fixture = JSON.parse(readFileSync("tests/fixtures/human-direct-contracts.json", "utf8"));
+const retirementFixture = JSON.parse(
+  readFileSync("tests/fixtures/retirement-contracts.json", "utf8"),
+);
+const uuid = (index: number) => `00000000-0000-4000-8000-${String(index).padStart(12, "0")}`;
+function recoveryPage(
+  page: contracts.HistoryPage | contracts.RecoveryHistoryPage,
+): contracts.RecoveryHistoryPage {
+  return "recovery" in page
+    ? page
+    : {
+        ...page,
+        recovery: {
+          hasBlockingRuns: page.runs.some((run) =>
+            ["QUEUED", "LEASED", "RUNNING", "UNKNOWN"].includes(run.state),
+          ),
+          candidate: null,
+          retirements: [],
+          nextRetirementCursor: 0,
+          highWaterRetirementSequence: 0,
+          hasMoreRetirements: false,
+        },
+      };
+}
 const source = ts.transpileModule(
   readFileSync("src/features/investigation-coordinator/investigation-view.tsx", "utf8"),
   {
@@ -42,6 +67,9 @@ async function harness(t: TestContext, role: "owner" | "participant" | "observer
     refIndex = 0,
     memoIndex = 0;
   const states: unknown[] = [];
+  const retirementStates: unknown[] = [];
+  let retirementRendering = false;
+  let retirementStateIndex = 0;
   const refs: { current: unknown }[] = [];
   const memos: unknown[] = [];
   let effects: (() => (() => void) | void)[] = [];
@@ -50,12 +78,24 @@ async function harness(t: TestContext, role: "owner" | "participant" | "observer
   let responseFailure = false;
   let pollFailure = false;
   let cancelResult: unknown = fixture.cancelResult;
+  let retireResult: unknown = retirementFixture.receipt;
   const storage = new Map<string, string>();
-  const history: contracts.HistoryPage = {
+  const history: contracts.RecoveryHistoryPage = {
     ...fixture.history,
     events: [],
     runs: [],
     cycle: null,
+    nextCursor: 0,
+    highWaterSequence: 0,
+    hasMore: false,
+    recovery: {
+      hasBlockingRuns: false,
+      candidate: null,
+      retirements: [],
+      nextRetirementCursor: 0,
+      highWaterRetirementSequence: 0,
+      hasMoreRetirements: false,
+    },
     bindings: [{ ...fixture.history.bindings[0], validUntil: "2099-01-01T00:00:00.000Z" }],
   };
   let currentPage = history;
@@ -66,12 +106,13 @@ async function harness(t: TestContext, role: "owner" | "participant" | "observer
   const jsx = (type: unknown, props: Record<string, unknown>) => ({ type, props });
   const react = {
     useState(initial: unknown) {
-      const index = stateIndex++;
-      if (!(index in states)) states[index] = typeof initial === "function" ? initial() : initial;
+      const index = retirementRendering ? retirementStateIndex++ : stateIndex++;
+      const slots = retirementRendering ? retirementStates : states;
+      if (!(index in slots)) slots[index] = typeof initial === "function" ? initial() : initial;
       return [
-        states[index],
+        slots[index],
         (value: unknown) => {
-          states[index] = typeof value === "function" ? value(states[index]) : value;
+          slots[index] = typeof value === "function" ? value(slots[index]) : value;
         },
       ];
     },
@@ -114,7 +155,7 @@ async function harness(t: TestContext, role: "owner" | "participant" | "observer
       if (["./contracts", "./contracts.ts"].includes(name)) return contracts;
       if (["./direct-intents", "./direct-intents.ts"].includes(name)) return intents;
       if (["./history-state", "./history-state.ts"].includes(name))
-        return { emptyHistory, mergeHistory };
+        return { emptyHistory, mergeHistory, recordRetirements, recoverySnapshot };
       if (name === "./chat-presentation")
         return {
           ...presentation,
@@ -128,13 +169,32 @@ async function harness(t: TestContext, role: "owner" | "participant" | "observer
       if (name === "./investigation-client")
         return {
           callInvestigation: async (action: contracts.HumanAction, body: contracts.Body) => {
-            if (action === "read") {
+            if (action === "read-recovery") {
               if (pollFailure) throw new contracts.WorkflowError("UNAVAILABLE");
-              return currentPage;
+              const afterSequence = body.afterSequence as number;
+              const events = currentPage.events.filter((event) => event.sequence > afterSequence);
+              const nextCursor = events.at(-1)?.sequence ?? afterSequence;
+              const highWaterSequence = Math.max(currentPage.highWaterSequence, afterSequence);
+              const retirements = currentPage.recovery.retirements.filter(
+                (entry) => entry.sequence > (body.afterRetirementSequence as number),
+              );
+              return {
+                ...currentPage,
+                events,
+                nextCursor,
+                highWaterSequence,
+                hasMore: nextCursor < highWaterSequence,
+                recovery: {
+                  ...currentPage.recovery,
+                  retirements,
+                  nextRetirementCursor:
+                    retirements.at(-1)?.sequence ?? body.afterRetirementSequence,
+                },
+              };
             }
             calls.push({ action, body });
             if (responseFailure) throw new contracts.WorkflowError("UNAVAILABLE");
-            return action === "cancel" ? cancelResult : {};
+            return action === "cancel" ? cancelResult : action === "retire" ? retireResult : {};
           },
         };
       if (name === "./room-chat-controller") {
@@ -151,6 +211,32 @@ async function harness(t: TestContext, role: "owner" | "participant" | "observer
       }
       if (name === "./use-room-chat")
         return load(name, "src/features/investigation-coordinator/use-room-chat.ts");
+      if (name === "./request-retirement-controls") {
+        const loaded = load(
+          name,
+          "src/features/investigation-coordinator/request-retirement-controls.tsx",
+        );
+        const component = loaded.RequestRetirementControls as (props: unknown) => Node;
+        return {
+          RequestRetirementControls: (props: unknown) => {
+            retirementStateIndex = 0;
+            retirementRendering = true;
+            try {
+              return component(props);
+            } finally {
+              retirementRendering = false;
+            }
+          },
+        };
+      }
+      if (name === "../../components/ui/dialog")
+        return {
+          Dialog: (props: Record<string, unknown>) =>
+            jsx("dialog", { ...props, children: props.open ? props.children : null }),
+          DialogContent: "dialog-content",
+          DialogTitle: "h2",
+          DialogDescription: "p",
+        };
       if (name === "./chat-composer") return { ChatComposer: "composer" };
       if (name === "./chat-timeline")
         return {
@@ -204,11 +290,22 @@ async function harness(t: TestContext, role: "owner" | "participant" | "observer
   await controller.poll();
   return {
     render,
+    renderTimeline: () => {
+      const timeline = find(render(), "timeline")!;
+      const component = load(
+        "./chat-timeline",
+        "src/features/investigation-coordinator/chat-timeline.tsx",
+      ).ChatTimeline as (props: unknown) => Node;
+      return component(timeline.props);
+    },
     history,
     calls,
     projectionCalls: () => projectionCalls,
     storage,
     controller,
+    pollSucceed: () => {
+      pollFailure = false;
+    },
     pollFail: async () => {
       pollFailure = true;
       await controller.poll();
@@ -216,8 +313,11 @@ async function harness(t: TestContext, role: "owner" | "participant" | "observer
     cancelResponse: (value: unknown) => {
       cancelResult = value;
     },
-    snapshot: async (next: contracts.HistoryPage) => {
-      currentPage = next;
+    retireResponse: (value: unknown) => {
+      retireResult = value;
+    },
+    snapshot: async (next: contracts.HistoryPage | contracts.RecoveryHistoryPage) => {
+      currentPage = recoveryPage(next);
       await controller.poll();
     },
     fail: () => {
@@ -366,6 +466,7 @@ function buttonText(node: unknown, text: RegExp): Node | undefined {
   if (!node || typeof node !== "object") return;
   const element = node as Node;
   if (element.type === "button" && text.test(visibleText(element))) return element;
+  if (typeof element.type === "function") return buttonText(element.type(element.props), text);
   return buttonText(element.props?.children, text);
 }
 test("should disable an already requested UNKNOWN direct question after deadline with offline target", async (t) => {
@@ -373,9 +474,14 @@ test("should disable an already requested UNKNOWN direct question after deadline
   const page = fixture.history as contracts.HistoryPage;
   const requested = {
     ...page.events[0],
-    eventId: "interrupt",
+    eventId: uuid(101),
     sequence: 2,
     kind: "INTERRUPT_REQUESTED" as const,
+    senderKind: "AGENT" as const,
+    publicText: "",
+    questionId: null,
+    replyTo: null,
+    adoption: "NONE" as const,
   };
   await h.snapshot({
     ...page,
@@ -468,9 +574,14 @@ test("should show Mac acknowledgement as pending termination and never enable an
   const page = fixture.history as contracts.HistoryPage;
   const ack = {
     ...page.events[0],
-    eventId: "ack",
+    eventId: uuid(102),
     sequence: 2,
     kind: "INTERRUPT_ACKNOWLEDGED" as const,
+    senderKind: "AGENT" as const,
+    publicText: "",
+    questionId: null,
+    replyTo: null,
+    adoption: "NONE" as const,
   };
   await h.snapshot({
     ...page,
@@ -492,11 +603,16 @@ test("should ignore another historical cycle interruption when controlling the c
   const page = fixture.history as contracts.HistoryPage;
   const ack = {
     ...page.events[0],
-    eventId: "ack",
+    eventId: uuid(102),
     sequence: 2,
     kind: "INTERRUPT_ACKNOWLEDGED" as const,
-    requestId: "old-request",
-    cycleId: "old-cycle",
+    senderKind: "AGENT" as const,
+    publicText: "",
+    questionId: null,
+    replyTo: null,
+    adoption: "NONE" as const,
+    requestId: uuid(201),
+    cycleId: uuid(202),
   };
   await h.snapshot({
     ...page,
@@ -560,7 +676,7 @@ test("should keep the current answer visible despite an older terminal cycle and
   await h.snapshot({
     ...page,
     runs: [
-      { ...page.runs[0], requestId: "older-request", cycleId: "older-cycle", state: "COMPLETED" },
+      { ...page.runs[0], requestId: uuid(301), cycleId: uuid(302), state: "COMPLETED" },
       { ...page.runs[0], state: "RUNNING" },
     ],
   });
@@ -600,4 +716,165 @@ test("should calculate status once per room render and pass the same result to t
   assert.equal(shared.byQuestion.get(page.events[0].eventId)?.[0], shared.statuses[0]);
   assert.match(visibleText(labeled(tree, "AI 답변 상태")), /답변 생성 중/);
   assert.equal(h.projectionCalls(), before + 1);
+});
+
+const retirementPage = (): contracts.RecoveryHistoryPage => ({
+  ...structuredClone(retirementFixture.history),
+  bindings: [
+    ...retirementFixture.history.bindings,
+    {
+      ...retirementFixture.history.bindings[0],
+      agentId: uuid(99),
+      owned: false,
+      validUntil: "2099-01-01T00:00:00.000Z",
+    },
+  ],
+});
+const click = (node: Node) => (node.props.onClick as () => unknown)();
+async function settleUI() {
+  for (let i = 0; i < 12; i++) await Promise.resolve();
+}
+
+test("should open the actual retirement dialog and cancel without sending a request", async (t) => {
+  const h = await harness(t, "owner");
+  await h.snapshot(retirementPage());
+  const button = buttonText(h.render(), /^이전 요청 정리$/)!;
+  assert.equal(button.props.disabled, false);
+  click(button);
+  const dialog = find(h.render(), "dialog")!;
+  assert.equal(dialog.props.open, true);
+  assert.match(visibleText(dialog), /답변 미확인 상태로 이전 기록에 보관/);
+  assert.match(visibleText(dialog), /실행 종료를 확인한 것으로 처리하지/);
+  click(buttonText(dialog, /^취소$/)!);
+  assert.equal(find(h.render(), "dialog")!.props.open, false);
+  assert.equal(h.calls.length, 0);
+  assert.match(visibleText(labeled(h.render(), "AI 답변 상태")), /실행 결과 확인 필요/);
+});
+
+test("should remove the current card on a pinned receipt and preserve archived details until fresh recovery enables asking", async (t) => {
+  const h = await harness(t, "owner");
+  const page = retirementPage();
+  await h.snapshot(page);
+  assert.equal(find(h.render(), "composer")!.props.disabled, true);
+  await h.controller.mutate("cancel", {
+    requestId: retirementFixture.retire.requestId,
+    expectedRoomRevision: page.roomRevision,
+  });
+  click(buttonText(h.render(), /^이전 요청 정리$/)!);
+  click(buttonText(find(h.render(), "dialog"), /^이전 기록에 보관$/)!);
+  await settleUI();
+  const request = h.calls.find((call) => call.action === "retire")!;
+  assert.ok(request);
+  const { operationId, ...expected } = retirementFixture.retire;
+  void operationId;
+  assert.deepEqual(request.body, { ...expected, operationId: request.body.operationId });
+  assert.equal(h.storage.size, 0);
+  assert.equal(find(h.render(), "dialog")!.props.open, false);
+  const region = labeled(h.render(), "AI 답변 상태")!;
+  assert.match(visibleText(region), /현재 요청된 AI 답변이 없습니다/);
+  assert.equal(buttonText(region, /^이전 요청 정리$/), undefined);
+  assert.equal(buttonText(region, /중단 요청/), undefined);
+  assert.equal(find(h.render(), "composer")!.props.disabled, true);
+  const archived = find(h.renderTimeline(), "details")!;
+  assert.match(visibleText(archived), /답변 미확인 · 이전 기록/);
+  assert.match(visibleText(archived), /마지막 상태:\s*실행 결과 확인 필요/);
+  assert.match(visibleText(archived), /중단 요청 접수.*종료 확인 대기/);
+  assert.match(visibleText(archived), /정리 시각/);
+  assert.equal(h.controller.getSnapshot().history.runs[0].state, "UNKNOWN");
+  assert.equal(h.controller.getSnapshot().history.runs[0].terminal, null);
+  await h.pollFail();
+  assert.equal(find(h.render(), "composer")!.props.disabled, true);
+  assert.match(visibleText(labeled(h.render(), "AI 답변 상태")), /이전 기록에 보관했습니다/);
+  h.succeed();
+  h.pollSucceed();
+  const { state, attemptId, fence, roomRevision, ...retirement } = retirementFixture.receipt;
+  void state;
+  void attemptId;
+  void fence;
+  await h.snapshot({
+    ...page,
+    roomRevision,
+    cycle: null,
+    runs: [],
+    recovery: {
+      ...page.recovery,
+      candidate: null,
+      hasBlockingRuns: false,
+      retirements: [retirement],
+      nextRetirementCursor: 1,
+      highWaterRetirementSequence: 1,
+    },
+  });
+  assert.equal(find(h.render(), "composer")!.props.disabled, false);
+  assert.equal(h.calls.filter((call) => call.action === "ask").length, 0);
+});
+
+test("should require explicit reconfirmation when polling changes the pinned retirement revision", async (t) => {
+  const h = await harness(t, "owner");
+  const page = retirementPage();
+  await h.snapshot(page);
+  click(buttonText(h.render(), /^이전 요청 정리$/)!);
+  await h.snapshot({
+    ...page,
+    roomRevision: 2,
+    recovery: { ...page.recovery, candidate: { ...page.recovery.candidate!, roomRevision: 2 } },
+  });
+  let dialog = find(h.render(), "dialog")!;
+  assert.match(visibleText(dialog), /대상 또는 방 상태가 바뀌었습니다/);
+  const staleConfirmation = buttonText(dialog, /^이전 기록에 보관$/)!;
+  assert.equal(staleConfirmation.props.disabled, true);
+  click(staleConfirmation);
+  await settleUI();
+  assert.equal(h.calls.length, 0);
+  click(buttonText(dialog, /^현재 요청 다시 확인$/)!);
+  dialog = find(h.render(), "dialog")!;
+  assert.equal(buttonText(dialog, /^이전 기록에 보관$/)!.props.disabled, false);
+  h.retireResponse({ ...retirementFixture.receipt, roomRevision: 3 });
+  click(buttonText(dialog, /^이전 기록에 보관$/)!);
+  await settleUI();
+  assert.equal(h.calls.length, 1);
+  assert.equal(h.calls[0].body.expectedRoomRevision, 2);
+});
+
+test("should retain access to exact retirement confirmation after an unavailable response closes the dialog", async (t) => {
+  const h = await harness(t, "owner");
+  await h.snapshot(retirementPage());
+  click(buttonText(h.render(), /^이전 요청 정리$/)!);
+  h.fail();
+  click(buttonText(find(h.render(), "dialog"), /^이전 기록에 보관$/)!);
+  await settleUI();
+  assert.equal(find(h.render(), "dialog")!.props.open, false);
+  assert.equal(h.calls.length, 1);
+  assert.equal(h.controller.getSnapshot().pendingDirect!.action, "retire");
+  assert.match(visibleText(labeled(h.render(), "AI 답변 상태")), /실행 결과 확인 필요/);
+  const retry = buttonText(h.render(), /^같은 요청 확인$/)!;
+  assert.equal(retry.props.disabled, false);
+  h.succeed();
+  await click(retry);
+  assert.equal(h.calls.length, 2);
+  assert.deepEqual(h.calls[1].body, h.calls[0].body);
+  assert.equal(h.controller.getSnapshot().permissionDenied, false);
+  assert.match(visibleText(labeled(h.render(), "AI 답변 상태")), /현재 요청된 AI 답변이 없습니다/);
+});
+
+test("should require device revocation and expose no retirement controls to observers", async (t) => {
+  const h = await harness(t, "owner");
+  const page = retirementPage();
+  await h.snapshot({
+    ...page,
+    recovery: {
+      ...page.recovery,
+      candidate: { ...page.recovery.candidate!, deviceRevoked: false, canRetire: false },
+    },
+  });
+  const region = labeled(h.render(), "AI 답변 상태")!;
+  assert.match(visibleText(region), /내 AI 연결에서 이전 기기를 해제하세요/);
+  assert.equal(find(region, "a")!.props.href, "/app/connections");
+  assert.equal(buttonText(region, /^이전 요청 정리$/)!.props.disabled, true);
+  const observer = await harness(t, "observer");
+  await observer.snapshot({ ...page, recovery: { ...page.recovery, candidate: null } });
+  assert.equal(buttonText(observer.render(), /^이전 요청 정리$/), undefined);
+  assert.equal(find(observer.render(), "dialog"), undefined);
+  assert.equal(h.calls.length, 0);
+  assert.equal(observer.calls.length, 0);
 });

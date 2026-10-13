@@ -1,4 +1,4 @@
-import type { PublicBinding, PublicEvent, RunSummary } from "./contracts.ts";
+import type { PublicBinding, PublicEvent, RunSummary, Retirement } from "./contracts.ts";
 import type { SourceTarget } from "./source-contracts.ts";
 import type { HistoricalRun } from "./history-state.ts";
 
@@ -107,12 +107,14 @@ export interface AnswerStatusContext {
   pollError?: string | null;
   gap?: boolean;
   role?: "owner" | "participant" | "observer";
+  retirements?: Retirement[];
   cancelReceipts?: import("./room-chat-controller.ts").CancelReceipt[];
 }
 export interface AnswerStatus {
   requestId: string;
   cycleId: string;
   agentId: string;
+  retiredAt: string | null;
   epoch: number | null;
   state: RunSummary["state"];
   label: string;
@@ -337,7 +339,12 @@ function indexEvidence(context: AnswerStatusContext) {
         event.agentId === agentId &&
         (event.kind === "ANSWER" || (event.kind === "QUESTION" && event.senderKind === "HUMAN")),
     );
-    const epoch = summary?.bindingEpoch ?? report?.bindingEpoch ?? identity?.bindingEpoch ?? null;
+    const epoch =
+      summary?.bindingEpoch ??
+      saved?.bindingEpoch ??
+      report?.bindingEpoch ??
+      identity?.bindingEpoch ??
+      null;
     const matching = events.filter(
       (event) =>
         event.cycleId === cycleId && event.agentId === agentId && event.bindingEpoch === epoch,
@@ -387,6 +394,7 @@ function indexEvidence(context: AnswerStatusContext) {
     requests,
     byCycle,
     humanEvents,
+    retirements: new Map((context.retirements ?? []).map((entry) => [entry.requestId, entry])),
     cancelReceipts: new Map(
       (context.cancelReceipts ?? []).map((receipt) => [receipt.requestId, receipt]),
     ),
@@ -437,6 +445,14 @@ function projectStatus(
   const ownConnection =
     (context.role === "owner" || context.role === "participant") &&
     index.owned.has(bindingKey(agentId, epoch));
+  const savedRetirement = !at ? index.retirements.get(requestId) : undefined;
+  const retirement =
+    savedRetirement &&
+    savedRetirement.cycleId === cycleId &&
+    savedRetirement.agentId === agentId &&
+    savedRetirement.bindingEpoch === epoch
+      ? savedRetirement
+      : undefined;
   const terminal = ["COMPLETED", "FAILED", "INTERRUPTED", "CANCELLED"].includes(state);
   const savedReceipt = !at && !terminal ? index.cancelReceipts.get(requestId) : undefined;
   const cancelReceiptState =
@@ -479,9 +495,11 @@ function projectStatus(
   const sender = run.sender && (!at || run.sender.sequence <= at.sequence) ? run.sender : null;
   const target = summary
     ? `${summary.ownerAlias} · ${summary.sessionAlias}`
-    : sender
-      ? `소유자 이름 미기록 · ${sender.senderAlias}`
-      : "대상 AI 이름 미기록";
+    : historical?.ownerAlias && historical.sessionAlias
+      ? `${historical.ownerAlias} · ${historical.sessionAlias}`
+      : sender
+        ? `소유자 이름 미기록 · ${sender.senderAlias}`
+        : "대상 AI 이름 미기록";
   const question =
     run.question && (!at || run.question.sequence <= at.sequence) ? run.question : null;
   const cycle = context.cycle;
@@ -500,16 +518,21 @@ function projectStatus(
     target,
     question,
     ownConnection,
+    retiredAt: retirement?.retiredAt ?? null,
     interruptStage,
     cancelReceiptState,
-    guidance,
-    label: interruptPending
-      ? state === "UNKNOWN"
-        ? interruptStage === "ACKNOWLEDGED"
-          ? "중단 수신 확인 · 종료 확인 대기"
-          : "중단 요청 접수 · 종료 확인 대기"
-        : "중단 요청 중 · 종료 확인 대기"
-      : answerLabels[state],
+    guidance: retirement
+      ? "답변을 확인하지 못한 이전 요청입니다. 실행 종료를 확인한 것으로 처리하지 않으며 질문을 다시 보내지 않습니다."
+      : guidance,
+    label: retirement
+      ? "답변 미확인 · 이전 기록"
+      : interruptPending
+        ? state === "UNKNOWN"
+          ? interruptStage === "ACKNOWLEDGED"
+            ? "중단 수신 확인 · 종료 확인 대기"
+            : "중단 요청 접수 · 종료 확인 대기"
+          : "중단 요청 중 · 종료 확인 대기"
+        : answerLabels[state],
     detail: `${answerDetails[state]}${
       interruptPending
         ? `${interruptStage === "ACKNOWLEDGED" ? " 대상 Mac이 중단 요청 수신을 확인했습니다." : " 서버가 중단 요청을 접수했습니다. 대상 Mac의 수신 확인을 기다립니다."} 중단 요청의 수신 확인은 실제 실행 종료를 뜻하지 않습니다. 연결이 끊겼거나 연결이 바뀐 대상은 소유자가 기존 AI 연결 터미널에서 실제 종료를 확인하고 종료 상태를 보고해야 합니다.`
@@ -519,6 +542,7 @@ function projectStatus(
     }`,
     spinning:
       !at &&
+      !retirement &&
       fresh &&
       currentTarget &&
       !interruptPending &&
@@ -527,7 +551,9 @@ function projectStatus(
     freshness: !at && fresh ? null : "상태 갱신 지연/확인 불가",
     updatedAt: useReport
       ? report.createdAt
-      : (summary?.updatedAt ?? (report?.runState === state ? report.createdAt : null)),
+      : (summary?.updatedAt ??
+        historical?.updatedAt ??
+        (report?.runState === state ? report.createdAt : null)),
   };
 }
 function noticeFromIndex(event: PublicEvent, context: AnswerStatusContext, index: EvidenceIndex) {
@@ -577,7 +603,7 @@ export function answerStatuses(context: AnswerStatusContext) {
   for (const [requestId, run] of index.requests) {
     const status = projectStatus(requestId, run, context, index, fresh);
     if (!status) continue;
-    statuses.push(status);
+    if (!status.retiredAt) statuses.push(status);
     if (status.question) append(byQuestion, status.question.eventId, status);
   }
   const notices = new Map(

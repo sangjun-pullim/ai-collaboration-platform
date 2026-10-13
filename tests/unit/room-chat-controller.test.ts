@@ -5,6 +5,7 @@ import {
   WorkflowError,
   type Body,
   type HistoryPage,
+  type RecoveryHistoryPage,
   type HumanAction,
 } from "../../src/features/investigation-coordinator/contracts.ts";
 import {
@@ -19,7 +20,22 @@ const actor = {
   roomId: fixture.ask.roomId as string,
   role: "participant" as const,
 };
-const page = (): HistoryPage => ({
+const retirementFixture = JSON.parse(
+  readFileSync("tests/fixtures/retirement-contracts.json", "utf8"),
+);
+const recoveryPage = (history: HistoryPage): RecoveryHistoryPage => ({
+  ...history,
+  recovery: {
+    hasBlockingRuns: false,
+    candidate: null,
+    retirements: [],
+    nextRetirementCursor: 0,
+    highWaterRetirementSequence: 0,
+    hasMoreRetirements: false,
+  },
+});
+const page = (): RecoveryHistoryPage => ({
+  ...recoveryPage(fixture.history),
   ...fixture.history,
   events: [],
   runs: [],
@@ -62,7 +78,7 @@ function setup(t: TestContext, role: "participant" | "observer" = "participant")
   let hidden = false;
   let currentPage = page();
   let behavior: RoomChatRequest = async (action) =>
-    action === "read" ? currentPage : action === "cancel" ? fixture.cancelResult : {};
+    action === "read-recovery" ? currentPage : action === "cancel" ? fixture.cancelResult : {};
   const calls: {
     action: HumanAction;
     body: Body;
@@ -95,8 +111,8 @@ function setup(t: TestContext, role: "participant" | "observer" = "participant")
     hide: () => {
       hidden = true;
     },
-    setPage: (next: HistoryPage) => {
-      currentPage = next;
+    setPage: (next: HistoryPage | RecoveryHistoryPage) => {
+      currentPage = "recovery" in next ? (next as RecoveryHistoryPage) : recoveryPage(next);
     },
   };
 }
@@ -175,16 +191,22 @@ test("should retain independent receipts through other mutations new cancels and
   h.setBehavior(async () => ({ ...fixture.cancelResult, requestId: secondRun.requestId }));
   await h.controller.mutate("cancel", { ...cancelFields, requestId: secondRun.requestId });
   assert.equal(receipts(h.controller).length, 2);
-  h.setBehavior(async () => ({
-    ...fixture.history,
-    runs: [{ ...firstRun, state: "INTERRUPTED", bindingEpoch: 2 }],
-  }));
+  h.setBehavior(async () =>
+    recoveryPage({
+      ...fixture.history,
+      events: [],
+      runs: [{ ...firstRun, state: "INTERRUPTED", bindingEpoch: 2 }],
+    }),
+  );
   await h.controller.poll();
   assert.equal(receipts(h.controller).length, 2);
-  h.setBehavior(async () => ({
-    ...fixture.history,
-    runs: [{ ...firstRun, state: "INTERRUPTED" }],
-  }));
+  h.setBehavior(async () =>
+    recoveryPage({
+      ...fixture.history,
+      events: [],
+      runs: [{ ...firstRun, state: "INTERRUPTED" }],
+    }),
+  );
   await h.controller.poll();
   assert.deepEqual(
     receipts(h.controller).map((r) => r.requestId),
@@ -241,8 +263,8 @@ test("should own one poll and preserve active hidden and failure delays", async 
   await h.controller.poll();
   t.mock.timers.tick(60_000);
   assert.equal(h.calls.length, 1);
-  h.setBehavior(async () => ({ ...page(), hasMore: true }));
-  read.resolve({ ...page(), hasMore: true });
+  h.setBehavior(async () => ({ ...page(), hasMore: true, highWaterSequence: 1 }));
+  read.resolve({ ...page(), hasMore: true, highWaterSequence: 1 });
   await flush();
   t.mock.timers.tick(1999);
   assert.equal(h.calls.length, 1);
@@ -292,7 +314,7 @@ test("should persist a direct input before HTTP and confirm only the same uncert
   const h = setup(t);
   await h.controller.poll();
   const input = deferred<unknown>();
-  h.setBehavior(async (action) => (action === "read" ? page() : input.promise));
+  h.setBehavior(async (action) => (action === "read-recovery" ? page() : input.promise));
   const sending = h.controller.mutate("ask", fields);
   const sent = h.calls.at(-1)!;
   assert.equal(sent.action, "ask");
@@ -305,14 +327,14 @@ test("should persist a direct input before HTTP and confirm only the same uncert
   const pending = h.controller.getSnapshot().pendingDirect!;
   assert.equal(pending.body.operationId, sent.body.operationId);
   assert.equal(await h.controller.mutate("ask", fields), false);
-  h.setBehavior(async (action) => (action === "read" ? page() : {}));
+  h.setBehavior(async (action) => (action === "read-recovery" ? page() : {}));
   assert.equal(await h.controller.mutate(pending.action, {}, pending.body), true);
   assert.deepEqual(h.calls.at(-1)!.body, sent.body);
   assert.equal(h.entries.size, 0);
   assert.equal(h.controller.getSnapshot().pendingDirect, null);
   t.mock.timers.tick(0);
   await flush();
-  assert.equal(h.calls.at(-1)!.action, "read");
+  assert.equal(h.calls.at(-1)!.action, "read-recovery");
 });
 
 test("should pause a pending poll and serialize mutations until confirmation", async (t) => {
@@ -320,7 +342,7 @@ test("should pause a pending poll and serialize mutations until confirmation", a
   await h.controller.poll();
   const read = deferred<unknown>(),
     mutation = deferred<unknown>();
-  h.setBehavior((action) => (action === "read" ? read.promise : mutation.promise));
+  h.setBehavior((action) => (action === "read-recovery" ? read.promise : mutation.promise));
   const poll = h.controller.poll();
   const request = h.controller.mutate("speak", { publicText: "공동 메시지" });
   assert.equal(h.calls[1].signal.aborted, true);
@@ -340,7 +362,7 @@ test("should abort every owned request and permanently clear history on source a
   await h.controller.poll();
   const read = deferred<unknown>(),
     mutation = deferred<unknown>();
-  h.setBehavior((action) => (action === "read" ? read.promise : mutation.promise));
+  h.setBehavior((action) => (action === "read-recovery" ? read.promise : mutation.promise));
   const polling = h.controller.poll();
   const sending = h.controller.mutate("ask", fields);
   h.controller.loseAccess();
@@ -420,4 +442,253 @@ test("should clear a confirmed rejected direct intent without generating a repla
   assert.equal(h.entries.size, 0);
   assert.equal(h.controller.getSnapshot().pendingDirect, null);
   assert.equal(h.calls.filter((call) => call.action === "ask").length, 1);
+});
+
+const retireFields = () => {
+  const { protocol, roomId, operationId, expectedUserId, ...fields } = retirementFixture.retire;
+  void protocol;
+  void roomId;
+  void operationId;
+  void expectedUserId;
+  return fields;
+};
+test("should record a pinned retirement immediately and block new asks until its recovery revision", async (t) => {
+  const h = setup(t);
+  h.setPage(retirementFixture.history);
+  await h.controller.poll();
+  assert.equal(h.calls[0].action, "read-recovery");
+  assert.equal(h.calls[0].body.afterRetirementSequence, 0);
+  h.setBehavior(async () => retirementFixture.receipt);
+  assert.equal(await h.controller.mutate("retire", retireFields()), true);
+  const history = h.controller.getSnapshot().history;
+  assert.equal(history.retirements.length, 1);
+  assert.equal(history.retirementCursor, 0);
+  assert.equal(history.runs[0].state, "UNKNOWN");
+  assert.equal(await h.controller.mutate("ask", fields), false);
+  h.setBehavior(async () => {
+    throw new WorkflowError("UNAVAILABLE");
+  });
+  await h.controller.poll();
+  assert.equal(h.controller.getSnapshot().history.retirements.length, 1);
+  assert.equal(await h.controller.mutate("ask", fields), false);
+  h.setBehavior(async () => ({ ...page(), highWaterSequence: 1, nextCursor: 1, roomRevision: 1 }));
+  await h.controller.poll();
+  assert.equal(await h.controller.mutate("ask", fields), false);
+  h.setBehavior(async () => ({
+    ...page(),
+    highWaterSequence: 1,
+    nextCursor: 1,
+    roomRevision: retirementFixture.receipt.roomRevision,
+  }));
+  await h.controller.poll();
+  h.setBehavior(async () => fixture.admission);
+  assert.equal(await h.controller.mutate("ask", { ...fields, expectedRoomRevision: 2 }), true);
+});
+
+test("should reject every mismatched retirement receipt and confirm only the saved operation", async (t) => {
+  for (const field of ["requestId", "cycleId", "attemptId", "fence", "agentId", "bindingEpoch"]) {
+    t.mock.timers.reset();
+    const h = setup(t);
+    h.setPage(retirementFixture.history);
+    await h.controller.poll();
+    const receipt = structuredClone(retirementFixture.receipt);
+    receipt[field] = typeof receipt[field] === "number" ? 9 : fixture.ask.operationId;
+    h.setBehavior(async () => receipt);
+    assert.equal(await h.controller.mutate("retire", retireFields()), false);
+    assert.equal(h.controller.getSnapshot().history.retirements.length, 0);
+    const pending = h.controller.getSnapshot().pendingDirect!;
+    assert.equal(pending.action, "retire");
+    assert.equal(
+      await h.controller.mutate(
+        "retire",
+        {},
+        { ...pending.body, operationId: fixture.ask.targetAgentId },
+      ),
+      false,
+    );
+    h.setBehavior(async () => retirementFixture.receipt);
+    assert.equal(await h.controller.mutate("retire", {}, pending.body), true);
+    assert.deepEqual(h.calls.at(-1)!.body, pending.body);
+    h.controller.stop();
+  }
+});
+
+test("should preserve access when an uncertain cancel is retried after another actor retires it", async (t) => {
+  const h = setup(t);
+  h.setPage(fixture.history);
+  await h.controller.poll();
+  h.setBehavior(async () => {
+    throw new WorkflowError("UNAVAILABLE");
+  });
+  assert.equal(await h.controller.mutate("cancel", cancelFields), false);
+  const pending = h.controller.getSnapshot().pendingDirect!;
+  const { state, attemptId, fence, roomRevision, ...retirement } = retirementFixture.receipt;
+  void state;
+  void attemptId;
+  void fence;
+  h.setBehavior(async () => ({
+    ...page(),
+    highWaterSequence: 1,
+    nextCursor: 1,
+    roomRevision,
+    recovery: {
+      ...page().recovery,
+      retirements: [retirement],
+      nextRetirementCursor: 1,
+      highWaterRetirementSequence: 1,
+    },
+  }));
+  await h.controller.poll();
+  h.setBehavior(async () => fixture.cancelResult);
+  assert.equal(await h.controller.mutate("cancel", {}, pending.body), true);
+  assert.equal(h.controller.getSnapshot().permissionDenied, false);
+  assert.equal(h.controller.getSnapshot().history.retirements.length, 1);
+  h.setBehavior(async () => ({
+    ...page(),
+    highWaterSequence: 1,
+    nextCursor: 1,
+    roomRevision,
+    recovery: { ...page().recovery, nextRetirementCursor: 1, highWaterRetirementSequence: 1 },
+  }));
+  await h.controller.poll();
+  assert.equal(h.calls.at(-1)!.action, "read-recovery");
+});
+
+test("should drain independent retirement pages beyond the latest thirty-two runs", async (t) => {
+  const h = setup(t);
+  h.setPage(retirementFixture.history);
+  await h.controller.poll();
+  const uuid = (index: number) => `00000000-0000-4000-8000-${String(index).padStart(12, "0")}`;
+  const { state, attemptId, fence, roomRevision, ...first } = retirementFixture.receipt;
+  void state;
+  void attemptId;
+  void fence;
+  const retirements = [
+    first,
+    ...Array.from({ length: 32 }, (_, index) => ({
+      ...first,
+      sequence: index + 2,
+      requestId: uuid(index + 100),
+      cycleId: uuid(index + 200),
+    })),
+  ];
+  const base = {
+    ...page(),
+    roomRevision,
+    nextCursor: 1,
+    highWaterSequence: 1,
+    runs: [],
+    cycle: null,
+  };
+  h.setBehavior(async (_action, body) => ({
+    ...base,
+    recovery: {
+      ...page().recovery,
+      retirements:
+        body.afterRetirementSequence === 0 ? retirements.slice(0, 32) : retirements.slice(32),
+      nextRetirementCursor: body.afterRetirementSequence === 0 ? 32 : 33,
+      highWaterRetirementSequence: 33,
+      hasMoreRetirements: body.afterRetirementSequence === 0,
+    },
+  }));
+  await h.controller.poll();
+  assert.equal(h.controller.getSnapshot().history.retirementCursor, 32);
+  t.mock.timers.tick(2000);
+  await flush();
+  assert.equal(h.calls.at(-1)!.body.afterSequence, 1);
+  assert.equal(h.calls.at(-1)!.body.afterRetirementSequence, 32);
+  const history = h.controller.getSnapshot().history;
+  assert.equal(history.retirementCursor, 33);
+  assert.equal(history.retirements.length, 33);
+  assert.equal(history.runs.find((run) => run.requestId === first.requestId)!.state, "UNKNOWN");
+});
+
+test("should use the shared server blocker even when the latest run list is empty", async (t) => {
+  const h = setup(t);
+  h.setPage({ ...page(), recovery: { ...page().recovery, hasBlockingRuns: true } });
+  await h.controller.poll();
+  for (const action of ["ask", "start", "resume"] as const)
+    assert.equal(await h.controller.mutate(action, fields), false);
+  assert.equal(h.calls.length, 1);
+});
+
+test("should reject legacy fallback foreign rooms and retirement cursor jumps without enabling stale asks", async (t) => {
+  for (const invalid of [
+    fixture.history,
+    { ...page(), roomId: fixture.ask.targetAgentId },
+    {
+      ...page(),
+      recovery: { ...page().recovery, nextRetirementCursor: 1, highWaterRetirementSequence: 1 },
+    },
+  ]) {
+    t.mock.timers.reset();
+    const h = setup(t);
+    await h.controller.poll();
+    h.setBehavior(async () => invalid);
+    await h.controller.poll();
+    assert.ok(h.controller.getSnapshot().pollError);
+    assert.equal(h.controller.getSnapshot().permissionDenied, false);
+    assert.equal(await h.controller.mutate("ask", fields), false);
+    assert.equal(h.calls.length, 2);
+    assert.ok(h.calls.every((call) => call.action === "read-recovery"));
+    h.controller.stop();
+  }
+});
+
+test("should refuse observer retirement and protect saved retirement intents on storage and lifecycle failures", async (t) => {
+  const observer = setup(t, "observer");
+  observer.setPage(retirementFixture.history);
+  await observer.controller.poll();
+  assert.equal(await observer.controller.mutate("retire", retireFields()), false);
+  observer.controller.stop();
+  t.mock.timers.reset();
+  const h = setup(t);
+  h.setPage(retirementFixture.history);
+  await h.controller.poll();
+  const original = h.storage.setItem;
+  h.storage.setItem = () => {
+    throw new Error("Storage unavailable");
+  };
+  assert.equal(await h.controller.mutate("retire", retireFields()), false);
+  assert.equal(h.calls.length, 1);
+  h.storage.setItem = original;
+  const response = deferred<unknown>();
+  h.setBehavior(() => response.promise);
+  const sending = h.controller.mutate("retire", retireFields());
+  const saved = h.controller.getSnapshot().pendingDirect!;
+  assert.equal(JSON.parse(h.calls.at(-1)!.saved!).action, "retire");
+  h.controller.stop();
+  response.resolve(retirementFixture.receipt);
+  assert.equal(await sending, false);
+  assert.equal(h.controller.getSnapshot().history.retirements.length, 0);
+  h.controller.start();
+  assert.deepEqual(h.controller.getSnapshot().pendingDirect, saved);
+  h.setBehavior(async () => retirementFixture.receipt);
+  assert.equal(await h.controller.mutate("retire", {}, saved.body), true);
+});
+
+test("should reject foreign retirement identities against previously observed requests outside the new snapshot", async (t) => {
+  const h = setup(t);
+  h.setPage(retirementFixture.history);
+  await h.controller.poll();
+  const { state, attemptId, fence, roomRevision, ...retirement } = retirementFixture.receipt;
+  void state;
+  void attemptId;
+  void fence;
+  h.setBehavior(async () => ({
+    ...page(),
+    roomRevision,
+    nextCursor: 1,
+    highWaterSequence: 1,
+    recovery: {
+      ...page().recovery,
+      retirements: [{ ...retirement, cycleId: fixture.ask.operationId }],
+      nextRetirementCursor: 1,
+      highWaterRetirementSequence: 1,
+    },
+  }));
+  await h.controller.poll();
+  assert.ok(h.controller.getSnapshot().pollError);
+  assert.equal(h.controller.getSnapshot().history.retirementCursor, 0);
+  assert.equal(h.controller.getSnapshot().history.retirements.length, 0);
 });

@@ -15,6 +15,8 @@ export type {
 } from "./source-contracts.ts";
 export const humanActions = [
   "read",
+  "read-recovery",
+  "retire",
   "source-read",
   "input-state",
   "input-control",
@@ -199,6 +201,41 @@ export interface HistoryPage {
   highWaterSequence: number;
   hasMore: boolean;
 }
+export interface Candidate {
+  requestId: string;
+  cycleId: string;
+  attemptId: string;
+  fence: number;
+  agentId: string;
+  bindingEpoch: number;
+  roomRevision: number;
+  canRetire: boolean;
+  deviceRevoked: boolean;
+}
+export interface Retirement {
+  sequence: number;
+  requestId: string;
+  cycleId: string;
+  agentId: string;
+  bindingEpoch: number;
+  retiredAt: string;
+}
+export interface RetirementReceipt extends Retirement {
+  state: "RETIRED_UNCONFIRMED";
+  attemptId: string;
+  fence: number;
+  roomRevision: number;
+}
+export interface RecoveryHistoryPage extends HistoryPage {
+  recovery: {
+    hasBlockingRuns: boolean;
+    candidate: Candidate | null;
+    retirements: Retirement[];
+    nextRetirementCursor: number;
+    highWaterRetirementSequence: number;
+    hasMoreRetirements: boolean;
+  };
+}
 export interface RequestPayload {
   requestId: string;
   cycleId: string;
@@ -345,6 +382,15 @@ const pair: Shape = {
 };
 const bodies: Record<Action, Shape> = {
   read: { roomId: id, afterSequence: uint },
+  "read-recovery": { roomId: id, afterSequence: uint, afterRetirementSequence: uint },
+  retire: {
+    ...identity,
+    roomId: id,
+    expectedUserId: id,
+    expectedRoomRevision: positive,
+    cycleId: id,
+    confirmed: one([true]),
+  },
   "source-read": { roomId: id, eventId: id, afterIndex: nullable((v) => sourceUint(v, 4095)) },
   "source-support": { agentId: id, bindingEpoch: positive },
   "source-upload": { ...identity, packetJson: validPacketJson },
@@ -719,6 +765,33 @@ const history: Shape = {
   highWaterSequence: uint,
   hasMore: bool,
 };
+const candidate: Shape = {
+  requestId: id,
+  cycleId: id,
+  attemptId: id,
+  fence: positive,
+  agentId: id,
+  bindingEpoch: positive,
+  roomRevision: positive,
+  canRetire: bool,
+  deviceRevoked: bool,
+};
+const retirement: Shape = {
+  sequence: positive,
+  requestId: id,
+  cycleId: id,
+  agentId: id,
+  bindingEpoch: positive,
+  retiredAt: date,
+};
+const recovery: Shape = {
+  hasBlockingRuns: bool,
+  candidate: nullable(nested(candidate)),
+  retirements: list(nested(retirement), 32),
+  nextRetirementCursor: uint,
+  highWaterRetirementSequence: uint,
+  hasMoreRetirements: bool,
+};
 const poll: Shape = {
   roomId: id,
   roomRevision: positive,
@@ -780,6 +853,14 @@ const responses: Record<Action, Shape> = {
   admission: inputState,
   "admission-ack": inputState,
   read: history,
+  "read-recovery": { ...history, recovery: nested(recovery) },
+  retire: {
+    ...retirement,
+    state: one(["RETIRED_UNCONFIRMED"]),
+    attemptId: id,
+    fence: positive,
+    roomRevision: positive,
+  },
   speak: { eventId: id, sequence: positive },
   start: admission,
   ask: admission,
@@ -840,7 +921,7 @@ export function projectResponse(action: Action, value: unknown): unknown {
     if (new Set(state.bindings.map((binding) => binding.agentId)).size !== state.bindings.length)
       throw new WorkflowError("UNAVAILABLE");
   }
-  if (action === "read") {
+  if (action === "read" || action === "read-recovery") {
     const h = value as unknown as HistoryPage;
     if (
       h.events.some(
@@ -851,6 +932,63 @@ export function projectResponse(action: Action, value: unknown): unknown {
       h.hasMore !== h.nextCursor < h.highWaterSequence
     )
       throw new WorkflowError("UNAVAILABLE");
+  }
+  if (action === "read-recovery") {
+    const h = value as unknown as RecoveryHistoryPage;
+    const r = h.recovery;
+    if (
+      r.retirements.some(
+        (entry, index) => index > 0 && entry.sequence <= r.retirements[index - 1].sequence,
+      ) ||
+      new Set(r.retirements.map((entry) => entry.requestId)).size !== r.retirements.length ||
+      r.retirements.some(
+        (entry) =>
+          h.runs.some(
+            (run) =>
+              run.requestId === entry.requestId &&
+              (run.cycleId !== entry.cycleId ||
+                run.agentId !== entry.agentId ||
+                run.bindingEpoch !== entry.bindingEpoch),
+          ) ||
+          h.events.some(
+            (event) =>
+              event.requestId === entry.requestId &&
+              (event.cycleId !== entry.cycleId ||
+                event.agentId !== entry.agentId ||
+                event.bindingEpoch !== entry.bindingEpoch),
+          ),
+      ) ||
+      r.nextRetirementCursor > r.highWaterRetirementSequence ||
+      (r.retirements.length > 0 && r.nextRetirementCursor !== r.retirements.at(-1)!.sequence) ||
+      r.hasMoreRetirements !== r.nextRetirementCursor < r.highWaterRetirementSequence ||
+      (r.hasMoreRetirements && r.retirements.length !== 32)
+    )
+      throw new WorkflowError("UNAVAILABLE");
+    if (r.candidate) {
+      const c = r.candidate;
+      const current = h.cycle;
+      const matching = h.runs.filter((run) => run.requestId === c.requestId);
+      const run = matching[0];
+      if (
+        !current ||
+        !("mode" in current) ||
+        current.mode !== "DIRECT" ||
+        current.cycleId !== c.cycleId ||
+        current.targetAgentId !== c.agentId ||
+        current.targetEpoch !== c.bindingEpoch ||
+        c.roomRevision !== h.roomRevision ||
+        !r.hasBlockingRuns ||
+        (c.canRetire && !c.deviceRevoked) ||
+        matching.length !== 1 ||
+        run.cycleId !== c.cycleId ||
+        run.agentId !== c.agentId ||
+        run.bindingEpoch !== c.bindingEpoch ||
+        run.state !== "UNKNOWN" ||
+        run.requestKind !== "PEER" ||
+        r.retirements.some((entry) => entry.requestId === c.requestId)
+      )
+        throw new WorkflowError("UNAVAILABLE");
+    }
   }
   if (["claim", "start-intent", "lease"].includes(action)) {
     const a = value as unknown as AttemptSnapshot;
