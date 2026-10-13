@@ -191,6 +191,37 @@ export function ChatAnswerStatus({
   status: AnswerStatus;
   historical?: boolean;
 }) {
+  if (status.retiredAt)
+    return (
+      <details className="text-xs text-neutral-600">
+        <summary className="cursor-pointer">{status.target} · 답변 미확인 · 이전 기록</summary>
+        <div className="mt-2 space-y-1">
+          <p>마지막 상태: {status.state === "UNKNOWN" ? "실행 결과 확인 필요" : status.state}</p>
+          {status.interruptStage && (
+            <p>
+              {status.interruptStage === "ACKNOWLEDGED" ? "중단 요청 수신 확인" : "중단 요청 접수"}{" "}
+              · 종료 확인 대기
+            </p>
+          )}
+          {status.updatedAt && (
+            <p>
+              마지막 상태 보고:{" "}
+              <time dateTime={status.updatedAt}>
+                {new Date(status.updatedAt).toLocaleString("ko-KR", { timeZone: "Asia/Seoul" })}
+              </time>
+            </p>
+          )}
+          <p>
+            정리 시각:{" "}
+            <time dateTime={status.retiredAt}>
+              {new Date(status.retiredAt).toLocaleString("ko-KR", { timeZone: "Asia/Seoul" })}
+            </time>
+          </p>
+          <p>{status.detail}</p>
+          <p>{status.guidance}</p>
+        </div>
+      </details>
+    );
   return (
     <div className="min-w-0 space-y-1 text-xs [overflow-wrap:anywhere]">
       <p className="flex flex-wrap items-center gap-2 font-medium text-neutral-800">

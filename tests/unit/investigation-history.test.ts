@@ -90,10 +90,8 @@ test("should merge durable history without leaking state across rooms", () => {
   assert.equal(state.snapshot, latestSnapshot);
   assert.equal(state.runs.find((r) => r.requestId === currentRun.requestId)?.state, "RUNNING");
   state = mergeHistory(state, { ...runningPage, runs: [], highWaterSequence: 45 });
-  assert.equal(
-    state.runs.some((r) => r.requestId === currentRun.requestId),
-    false,
-  );
+  // Leaving the latest 32 summaries does not erase a previously observed request.
+  assert.equal(state.runs.find((r) => r.requestId === currentRun.requestId)?.state, "RUNNING");
   const current = {
     ...page,
     events: [...runEvents.slice(-1)],

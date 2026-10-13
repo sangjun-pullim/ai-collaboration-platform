@@ -1,5 +1,5 @@
 ---
-verified-against: 1227eae3dd071f3b592dc7d5cf3b523a69ccb887
+verified-against: 9f32dc02829d808fbdac558835e129b500e9b5a7
 sources:
   - supabase/migrations/**
   - src/features/room-access/access-service.ts
@@ -98,6 +98,14 @@ question의 `source:HUMAN`에는 `requester_user_id`가 있고 origin request·e
 
 [계정 전환 사전 조건 migration](../supabase/migrations/20261002000800-human-direct-actor-precondition.sql)의 private `human_actor`는 원본 16KiB·정확한 필드·UUID를 검사하고 `expectedUserId`를 현재 `auth.uid()`와 대조한다. 사전 조건을 제거한 본문은 기존 `human`에 위임한다. 기존 `human/validate` 정의와 실제 Auth 기준 receipt·정규화 hash를 보존한다. 두 공개 wrapper의 authenticated 권한은 유지하고 private helper의 직접 실행은 차단한다. `questions(cycle_id)` 일반 B-tree 인덱스는 HUMAN 부분 인덱스와 별도로 모든 모드의 cycle 조회를 지원한다. 기존 데이터·권한·query plan의 검증 범위는 [진행 상태](planning/delivery-and-validation.md#현재-진행-상태)를 따른다.
 
+
+### 종료 미확인 직접 질문의 정리 기록
+
+[SQL019](../supabase/migrations/20261013001900-unconfirmed-direct-question-retirement.sql)의 private `direct_retirements`는 request당 하나의 정리 기록을 보관한다. room·cycle·attempt/fence·원래 device/agent/epoch·원래 소유자·확인한 사용자·시각·room revision을 연결한다. request/attempt 복합 FK와 unique(room_id, retirement_sequence)를 유지하며 방 잠금 아래 독립 정리 번호를 할당한다. 기기 삭제로 과거 소유 식별자를 지우지 않는다. 테이블·private 함수의 public/anon/authenticated 직접 권한은 차단한다.
+
+공통 `request_retired` 판정은 정확한 DIRECT/PEER·UNKNOWN·시작 의도·정리 기록의 일치만 제외한다. `has_blocking_runs`를 ask/start/resume/pause/interrupt/reconcile에서 사용한다. 정리 없이 cycle.retired_at만 있는 작업이나 다른 UNKNOWN은 제외하지 않는다. 원래 request·attempt·control·source·receipt·예산과 원래 기기의 인증/실행 차단은 보존한다.
+
+기존 read는 변경하지 않는다. authenticated `workflow_human_read_recovery`는 같은 방 잠금에서 기존 이력과 독립 정리 커서의 32개 페이지를 반환한다. `workflow_human_retire`는 실제 Auth·현재 접근·원래 대상 소유권·해제 기기·기한·fence·revision을 검사하고 같은 operation의 정확한 receipt를 복구한다. [API 계약](API-SPEC.md#종료-미확인-직접-질문-정리)을 따른다.
 
 ## 소유자의 로컬 AI 설정
 

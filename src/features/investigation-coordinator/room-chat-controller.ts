@@ -2,10 +2,17 @@ import {
   WorkflowError,
   projectResponse,
   type Body,
-  type HistoryPage,
+  type RecoveryHistoryPage,
+  type RetirementReceipt,
   type HumanAction,
 } from "./contracts.ts";
-import { emptyHistory, mergeHistory, type HistoryState } from "./history-state.ts";
+import {
+  emptyHistory,
+  mergeHistory,
+  recordRetirements,
+  recoverySnapshot,
+  type HistoryState,
+} from "./history-state.ts";
 import {
   directIntentKey,
   mutationBody,
@@ -32,6 +39,7 @@ export type RoomChatState = {
   busy: boolean;
   pendingDirect: DirectIntent | null;
   observedAt: number;
+  requiredRecoveryRevision: number;
   cancelReceipts: CancelReceipt[];
 };
 export type CancelReceipt = {
@@ -76,6 +84,7 @@ export class RoomChatController {
       busy: false,
       pendingDirect: null,
       observedAt: 0,
+      requiredRecoveryRevision: 0,
       cancelReceipts: [],
     };
   }
@@ -156,6 +165,7 @@ export class RoomChatController {
     this.mutationAbort?.abort();
     this.update({
       history: emptyHistory(this.actor.roomId),
+      requiredRecoveryRevision: 0,
       permissionDenied: true,
       cancelReceipts: [],
       pollError: "접근 권한을 확인해 주세요.",
@@ -170,12 +180,25 @@ export class RoomChatController {
     this.pollAbort = abort;
     let backfill = false;
     try {
-      const page = (await this.request(
-        "read",
-        { protocol: 1, roomId: this.actor.roomId, afterSequence: this.state.history.cursor },
+      const afterSequence = this.state.history.cursor;
+      const afterRetirementSequence = this.state.history.retirementCursor;
+      const result = await this.request(
+        "read-recovery",
+        { protocol: 1, roomId: this.actor.roomId, afterSequence, afterRetirementSequence },
         abort.signal,
-      )) as HistoryPage;
+      );
       if (!this.current(generation, abort)) return;
+      const page = projectResponse("read-recovery", result) as RecoveryHistoryPage;
+      if (
+        page.roomId !== this.actor.roomId ||
+        page.nextCursor < afterSequence ||
+        page.events.some((event) => event.sequence <= afterSequence) ||
+        page.recovery.nextRetirementCursor < afterRetirementSequence ||
+        page.recovery.retirements.some((entry) => entry.sequence <= afterRetirementSequence) ||
+        (!page.recovery.retirements.length &&
+          page.recovery.nextRetirementCursor !== afterRetirementSequence)
+      )
+        throw new WorkflowError("UNAVAILABLE");
       const history = mergeHistory(this.state.history, page);
       const cancelReceipts = this.state.cancelReceipts.filter((receipt) => {
         const run = history.snapshot?.runs.find(
@@ -204,7 +227,7 @@ export class RoomChatController {
       });
       this.update({ history, cancelReceipts, observedAt: this.environment.now(), pollError: null });
       this.failures = 0;
-      backfill = page.hasMore || history.gap;
+      backfill = page.hasMore || page.recovery.hasMoreRetirements || history.gap;
     } catch (failure) {
       if (!this.current(generation, abort)) return;
       if (accessDenied(codeOf(failure))) {
@@ -230,7 +253,7 @@ export class RoomChatController {
     this.update({ pendingDirect: null });
   }
 
-  private persistIntent(action: "ask" | "cancel", body: Body) {
+  private persistIntent(action: DirectIntent["action"], body: Body) {
     const pendingDirect = { action, body };
     this.environment.storage().setItem(this.pendingKey, JSON.stringify(pendingDirect));
     this.update({ pendingDirect });
@@ -244,6 +267,26 @@ export class RoomChatController {
       this.state.permissionDenied ||
       this.mutationAbort ||
       (this.state.pendingDirect && !retryBody)
+    )
+      return false;
+    const pending = this.state.pendingDirect;
+    if (
+      retryBody &&
+      (!pending ||
+        pending.action !== action ||
+        Object.keys(retryBody).length !== Object.keys(pending.body).length ||
+        Object.keys(pending.body).some((key) => pending.body[key] !== retryBody[key]))
+    )
+      return false;
+    const recovery = recoverySnapshot(this.state.history);
+    const newInput = action === "ask" || action === "start" || action === "resume";
+    if (
+      newInput &&
+      !retryBody &&
+      (!recovery ||
+        recovery.recovery.hasBlockingRuns ||
+        this.state.pollError ||
+        recovery.roomRevision < this.state.requiredRecoveryRevision)
     )
       return false;
     this.clearTimer();
@@ -267,12 +310,46 @@ export class RoomChatController {
                 event.bindingEpoch !== null,
             ))
           : undefined;
-      if (action === "ask" || action === "cancel") {
+      if (action === "retire" && !retryBody) {
+        const candidate = recovery?.recovery.candidate;
+        if (
+          !candidate ||
+          !candidate.canRetire ||
+          this.state.pollError ||
+          this.state.history.retirements.some((entry) => entry.requestId === candidate.requestId) ||
+          candidate.roomRevision !== body.expectedRoomRevision ||
+          ["requestId", "cycleId", "attemptId", "fence", "agentId", "bindingEpoch"].some(
+            (key) => body[key] !== candidate[key as keyof typeof candidate],
+          )
+        )
+          throw new WorkflowError("CONFLICT");
+      }
+      if (action === "ask" || action === "cancel" || action === "retire") {
         this.persistIntent(action, body);
         directIntent = true;
       }
       const result = await this.request(action, body, abort.signal);
       if (!this.current(generation, abort)) return false;
+      if (action === "retire") {
+        const receipt = projectResponse("retire", result) as RetirementReceipt;
+        if (
+          ["requestId", "cycleId", "attemptId", "fence", "agentId", "bindingEpoch"].some(
+            (key) => receipt[key as keyof RetirementReceipt] !== body[key],
+          ) ||
+          receipt.roomRevision <= (body.expectedRoomRevision as number)
+        )
+          throw new WorkflowError("UNAVAILABLE");
+        const { sequence, requestId, cycleId, agentId, bindingEpoch, retiredAt } = receipt;
+        this.update({
+          history: recordRetirements(this.state.history, [
+            { sequence, requestId, cycleId, agentId, bindingEpoch, retiredAt },
+          ]),
+          requiredRecoveryRevision: Math.max(
+            this.state.requiredRecoveryRevision,
+            receipt.roomRevision,
+          ),
+        });
+      }
       if (action === "cancel") {
         const receipt = projectResponse("cancel", result) as {
           requestId: string | null;

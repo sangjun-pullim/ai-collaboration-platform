@@ -1,6 +1,12 @@
-import { WorkflowError, validateBody, type HumanAction, type Body } from "./contracts.ts";
+import {
+  WorkflowError,
+  validateBody,
+  type HumanAction,
+  type Body,
+  type Candidate,
+} from "./contracts.ts";
 
-export type DirectIntent = { action: "ask" | "cancel"; body: Body };
+export type DirectIntent = { action: "ask" | "cancel" | "retire"; body: Body };
 
 export function directIntentKey(userId: string, roomId: string) {
   return `human-direct-question:${userId}:${roomId}`;
@@ -23,7 +29,7 @@ export function restoreDirectIntent(
       typeof value !== "object" ||
       Array.isArray(value) ||
       Object.keys(value).length !== 2 ||
-      (value.action !== "ask" && value.action !== "cancel")
+      (value.action !== "ask" && value.action !== "cancel" && value.action !== "retire")
     )
       throw new WorkflowError("INVALID_BODY");
     const body = validateBody(value.action, value.body);
@@ -47,7 +53,7 @@ export function mutationBody(
   roomId: string,
   retryBody?: Body,
 ) {
-  const direct = action === "ask" || action === "cancel";
+  const direct = action === "ask" || action === "cancel" || action === "retire";
   const body = validateBody(
     action,
     retryBody ?? {
@@ -61,4 +67,24 @@ export function mutationBody(
   if (direct && (body.expectedUserId !== userId || body.roomId !== roomId))
     throw new WorkflowError("FORBIDDEN");
   return body;
+}
+
+export type RetirementPin = Candidate & { userId: string; roomId: string };
+export function pinRetirement(userId: string, roomId: string, candidate: Candidate): RetirementPin {
+  return { ...candidate, userId, roomId };
+}
+export function retirementPinMatches(
+  pin: RetirementPin,
+  userId: string,
+  roomId: string,
+  candidate: Candidate | null,
+) {
+  return (
+    !!candidate &&
+    pin.userId === userId &&
+    pin.roomId === roomId &&
+    Object.keys(candidate).every(
+      (key) => pin[key as keyof Candidate] === candidate[key as keyof Candidate],
+    )
+  );
 }

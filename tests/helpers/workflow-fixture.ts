@@ -301,14 +301,17 @@ export class WorkflowFixture {
     this.actorKinds.set(person.id, "human");
     const body = validateBody(action, {
       protocol: 1,
-      ...(action === "ask" || action === "cancel" || action === "input-control"
+      ...(action === "ask" ||
+      action === "cancel" ||
+      action === "retire" ||
+      action === "input-control"
         ? { expectedUserId: person.id }
         : {}),
       ...fields,
     });
     if (action === "input-control")
       ensure(body.expectedUserId === person.id, "Workflow input actor mismatch");
-    if (!["read", "input-state"].includes(action))
+    if (!["read", "read-recovery", "input-state"].includes(action))
       this.operations.push({
         roomId: String(body.roomId),
         actorId: person.id,
@@ -573,6 +576,7 @@ export class WorkflowFixture {
         "resume",
         "ask",
         "cancel",
+        "retire",
         "input-control",
       ].includes(op.action);
       ensure(

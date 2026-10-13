@@ -7,6 +7,8 @@ import { useRoomChat } from "./use-room-chat";
 import { OwnInputControls } from "./own-input-controls";
 import { ChatTimeline, ChatAnswerStatus } from "./chat-timeline";
 import { ChatComposer } from "./chat-composer";
+import { RequestRetirementControls } from "./request-retirement-controls";
+import { recoverySnapshot } from "./history-state";
 import { AdvancedControls } from "./advanced-controls";
 import { answerStatuses, nearTimelineBottom } from "./chat-presentation";
 import { Button } from "../../components/ui/button";
@@ -44,6 +46,7 @@ function RoomInvestigation({ userId, roomId, role }: Props) {
     pendingDirect,
     observedAt,
     cancelReceipts,
+    requiredRecoveryRevision,
     mutate,
     loseAccess,
   } = useRoomChat({ userId, roomId, role });
@@ -86,9 +89,17 @@ function RoomInvestigation({ userId, roomId, role }: Props) {
   const cycleOwned =
     !!pairedCycle &&
     bindings.some((binding) => binding.agentId === pairedCycle.originAgentId && binding.owned);
-  const blocked = history.runs.some((run) =>
-    ["QUEUED", "LEASED", "RUNNING", "UNKNOWN"].includes(run.state),
-  );
+  const recovery = recoverySnapshot(history);
+  const blocked =
+    !recovery ||
+    !!pollError ||
+    recovery.recovery.hasBlockingRuns ||
+    recovery.roomRevision < requiredRecoveryRevision;
+  const candidate = recovery?.recovery.candidate;
+  const retirementCandidate =
+    candidate && !history.retirements.some((entry) => entry.requestId === candidate.requestId)
+      ? candidate
+      : null;
   const ready = (binding: PublicBinding | undefined) =>
     !!binding?.reportedReady && !!binding.validUntil && Date.parse(binding.validUntil) > observedAt;
   const availableTargets = bindings.filter((binding) => !binding.owned && ready(binding));
@@ -121,6 +132,7 @@ function RoomInvestigation({ userId, roomId, role }: Props) {
     gap: history.gap,
     role,
     cancelReceipts,
+    retirements: history.retirements,
   });
   const cycleStatuses = cycle
     ? presentation.statuses.filter((status) => status.cycleId === cycle.cycleId)
@@ -396,9 +408,20 @@ function RoomInvestigation({ userId, roomId, role }: Props) {
         ) : (
           <p className="text-xs text-neutral-500">현재 요청된 AI 답변이 없습니다.</p>
         )}
+        {history.retirements.length > 0 && (
+          <p role="status">
+            답변 미확인 요청을 이전 기록에 보관했습니다. 질문 기록에서 상세를 확인할 수 있습니다.
+          </p>
+        )}
         {writable && (
           <>
-            {" "}
+            <RequestRetirementControls
+              userId={userId}
+              roomId={roomId}
+              candidate={retirementCandidate}
+              disabled={busy || !!pendingDirect || !!pollError}
+              mutate={mutate}
+            />{" "}
             {pendingDirect && (
               <p role="status">
                 전송 결과 미확정 · 새 질문으로 재전송하지 않습니다.
@@ -412,7 +435,7 @@ function RoomInvestigation({ userId, roomId, role }: Props) {
                 </Button>
               </p>
             )}
-            {directCycle && (
+            {directCycle && currentStatuses.length > 0 && (
               <div>
                 {Date.parse(directCycle.deadline) <= observedAt && (
                   <p>직접 질문 기한이 지났습니다. 늦은 답변은 현재 결과로 채택하지 않습니다.</p>
