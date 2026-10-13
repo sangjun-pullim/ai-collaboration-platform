@@ -17,6 +17,66 @@ type RoomOption = {
   roomTitle: string;
   organizationName: string;
 };
+
+function ConnectionCard({
+  device,
+  busy,
+  onAction,
+}: {
+  device: OwnedDevice;
+  busy: boolean;
+  onAction: (action: "revoke" | "remove", deviceId: string) => void;
+}) {
+  return (
+    <li className={styles.member}>
+      <div>
+        <strong>{device.deviceAlias}</strong>
+        <p className="break-all text-xs" aria-label="공개 연결 ID">
+          연결 ID: {device.deviceId}
+        </p>
+        <p>
+          {device.state === "active"
+            ? "등록 · 실행 미검증"
+            : device.state === "removed"
+              ? "제거됨 · 새 승인 필요"
+              : "취소됨 · 새 승인 필요"}
+        </p>
+        <p>
+          최근 수신:{" "}
+          {device.lastSeenAt ? new Date(device.lastSeenAt).toLocaleString("ko-KR") : "아직 없음"}
+        </p>
+        <p>
+          인증 만료:{" "}
+          {device.expiresAt ? new Date(device.expiresAt).toLocaleString("ko-KR") : "사용 불가"}
+        </p>
+        <Link href={`/app/rooms/${device.roomId}`}>연결한 방 보기</Link>
+      </div>
+      {device.state !== "removed" && (
+        <div>
+          {device.state === "active" && (
+            <Button
+              disabled={busy}
+              variant="outline"
+              aria-label={`${device.deviceAlias} 연결 취소`}
+              onClick={() => onAction("revoke", device.deviceId)}
+            >
+              연결 취소
+            </Button>
+          )}
+          <Button
+            disabled={busy}
+            variant="outline"
+            aria-label={`${device.deviceAlias} 기기 제거`}
+            onClick={() => onAction("remove", device.deviceId)}
+          >
+            기기 제거
+          </Button>
+        </div>
+      )}
+    </li>
+  );
+}
+
 export function ConnectionManager({
   devices,
   rooms,
@@ -49,6 +109,8 @@ export function ConnectionManager({
   const [notice, setNotice] = useState("");
   const [roomId, setRoomId] = useState(initialRoomId ?? rooms[0]?.roomId ?? "");
   const [pairingCode, setPairingCode] = useState("");
+  const currentDevices = devices.filter((device) => device.state !== "removed");
+  const removedDevices = devices.filter((device) => device.state === "removed");
   useEffect(() => {
     let active = true;
     const consume = () => {
@@ -281,65 +343,36 @@ export function ConnectionManager({
           </section>
           <section className={styles.panel}>
             <h2>내 연결</h2>
-            {devices.length ? (
+            {currentDevices.length ? (
               <ul className={styles.list}>
-                {devices.map((device) => (
-                  <li key={device.deviceId} className={styles.member}>
-                    <div>
-                      <strong>{device.deviceAlias}</strong>
-                      <p className="break-all text-xs" aria-label="공개 연결 ID">
-                        연결 ID: {device.deviceId}
-                      </p>
-                      <p>
-                        {device.state === "active"
-                          ? "등록 · 실행 미검증"
-                          : device.state === "removed"
-                            ? "제거됨 · 새 승인 필요"
-                            : "취소됨 · 새 승인 필요"}
-                      </p>
-                      <p>
-                        최근 수신:{" "}
-                        {device.lastSeenAt
-                          ? new Date(device.lastSeenAt).toLocaleString("ko-KR")
-                          : "아직 없음"}
-                      </p>
-                      <p>
-                        인증 만료:{" "}
-                        {device.expiresAt
-                          ? new Date(device.expiresAt).toLocaleString("ko-KR")
-                          : "사용 불가"}
-                      </p>
-                      <Link href={`/app/rooms/${device.roomId}`}>연결한 방 보기</Link>
-                    </div>
-                    <div>
-                      {device.state === "active" && (
-                        <Button
-                          disabled={busy}
-                          variant="outline"
-                          aria-label={`${device.deviceAlias} 연결 취소`}
-                          onClick={() => send("revoke", { deviceId: device.deviceId })}
-                        >
-                          연결 취소
-                        </Button>
-                      )}
-                      {device.state !== "removed" && (
-                        <Button
-                          disabled={busy}
-                          variant="outline"
-                          aria-label={`${device.deviceAlias} 기기 제거`}
-                          onClick={() => send("remove", { deviceId: device.deviceId })}
-                        >
-                          기기 제거
-                        </Button>
-                      )}
-                    </div>
-                  </li>
+                {currentDevices.map((device) => (
+                  <ConnectionCard
+                    key={device.deviceId}
+                    device={device}
+                    busy={busy}
+                    onAction={(action, deviceId) => void send(action, { deviceId })}
+                  />
                 ))}
               </ul>
             ) : (
               <p>연결된 기기가 없습니다. 로컬 프로그램에서 새 코드를 만들고 승인하세요.</p>
             )}
           </section>
+          {removedDevices.length > 0 && (
+            <details className={styles.panel}>
+              <summary className="cursor-pointer text-sm">이전 연결 기록</summary>
+              <ul className={styles.list}>
+                {removedDevices.map((device) => (
+                  <ConnectionCard
+                    key={device.deviceId}
+                    device={device}
+                    busy={busy}
+                    onAction={(action, deviceId) => void send(action, { deviceId })}
+                  />
+                ))}
+              </ul>
+            </details>
+          )}
           <section className={styles.panel} aria-label="본인 기기 AI 설정">
             <h2 className="font-semibold">AI 설정</h2>
             <p className="text-sm text-neutral-600">

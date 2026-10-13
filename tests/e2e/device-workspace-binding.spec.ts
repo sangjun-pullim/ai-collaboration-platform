@@ -269,8 +269,21 @@ test("should revoke a connection and require fresh approval after membership rem
     await connect(ap, owner.id, own, scope.roomId);
     await connect(bp, member.id, target, scope.roomId);
     await connectionsFromRoom(bp, scope.roomId);
+    const currentConnections = bp
+      .getByRole("heading", { name: "내 연결", exact: true })
+      .locator("..");
+    const removedCard = currentConnections
+      .getByRole("listitem")
+      .filter({ hasText: `기기 ${target}` });
+    const removedId = await removedCard.getByLabel("공개 연결 ID", { exact: true }).textContent();
+    check(removedId);
     await bp.getByRole("button", { name: `기기 ${target} 연결 취소`, exact: true }).click();
-    await expect(bp.getByText("취소됨 · 새 승인 필요", { exact: true })).toBeVisible();
+    await expect(
+      currentConnections.getByText("취소됨 · 새 승인 필요", { exact: true }),
+    ).toBeVisible();
+    await expect(
+      currentConnections.getByRole("button", { name: `기기 ${target} 기기 제거`, exact: true }),
+    ).toBeVisible();
     check(
       (await broker<{ status: number }>("heartbeat", { id: member.id, name: target })).status ===
         401,
@@ -279,7 +292,20 @@ test("should revoke a connection and require fresh approval after membership rem
       (await broker<{ status: number }>("heartbeat", { id: owner.id, name: own })).status === 200,
     );
     await bp.getByRole("button", { name: `기기 ${target} 기기 제거`, exact: true }).click();
-    await expect(bp.getByText("제거됨 · 새 승인 필요", { exact: true })).toBeVisible();
+    await expect(currentConnections.getByRole("listitem")).toHaveCount(0);
+    await expect(
+      currentConnections.getByText("연결된 기기가 없습니다.", { exact: false }),
+    ).toBeVisible();
+    const history = bp
+      .locator("details")
+      .filter({ has: bp.locator("summary", { hasText: "이전 연결 기록" }) });
+    await expect(history).not.toHaveAttribute("open", "");
+    await expect(history.getByText(`기기 ${target}`, { exact: true })).toBeHidden();
+    await history.locator("summary").click();
+    await expect(history.getByText("제거됨 · 새 승인 필요", { exact: true })).toBeVisible();
+    await expect(history.getByLabel("공개 연결 ID", { exact: true })).toHaveText(removedId);
+    await expect(history.getByRole("button")).toHaveCount(0);
+    await expect(bp.getByText(`기기 ${target}`, { exact: true })).toHaveCount(1);
     const active = `active-member-${suffix}`;
     await connect(bp, member.id, active, scope.roomId);
     check(
@@ -323,8 +349,17 @@ test("should revoke a connection and require fresh approval after membership rem
         401,
     );
     await bp.goto("/app/connections");
-    await expect(bp.getByText("제거됨 · 새 승인 필요", { exact: true })).toBeVisible();
-    await expect(bp.getByText("취소됨 · 새 승인 필요", { exact: true })).toBeVisible();
+    await expect(history).not.toHaveAttribute("open", "");
+    await expect(history.getByText("제거됨 · 새 승인 필요", { exact: true })).toBeHidden();
+    await expect(
+      currentConnections.getByText("취소됨 · 새 승인 필요", { exact: true }),
+    ).toBeVisible();
+    await history.locator("summary").click();
+    await expect(history.getByText("제거됨 · 새 승인 필요", { exact: true })).toBeVisible();
+    await expect(history.getByLabel("공개 연결 ID", { exact: true })).toHaveText(removedId);
+    await expect(history.getByRole("button")).toHaveCount(0);
+    await history.locator("summary").click();
+    await expect(history.getByText("제거됨 · 새 승인 필요", { exact: true })).toBeHidden();
     const appListReturn = bp.getByRole("link", { name: "채팅방 목록으로", exact: true });
     await expect(appListReturn).toHaveAttribute("href", "/app");
     await appListReturn.focus();

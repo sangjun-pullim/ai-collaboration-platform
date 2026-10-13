@@ -106,7 +106,7 @@ test(
     const address = server.address();
     assert.ok(address && typeof address !== "string");
     const origin = `http://127.0.0.1:${address.port}`;
-    for (const kind of ["first", "valid", "expired"] as const) {
+    for (const kind of ["first", "valid", "expired", "disconnected-future-intermediate"] as const) {
       const home = join(root, kind),
         work = join(home, "work");
       await mkdir(work, { recursive: true, mode: 0o700 });
@@ -116,7 +116,9 @@ test(
       const original = new Connector(
         new StateStore(
           join(home, "Library/Application Support/ai-collab/connector"),
-          selection.baseProfile,
+          kind === "disconnected-future-intermediate"
+            ? selection.chain[0].profile
+            : selection.baseProfile,
         ),
         new CentralClient(origin),
       ).store;
@@ -124,8 +126,8 @@ test(
         await original.write({
           version: 1,
           server: origin,
-          status: "connected",
-          deviceId: kind === "expired" ? randomUUID() : deviceId,
+          status: kind === "disconnected-future-intermediate" ? "disconnected" : "connected",
+          deviceId: kind === "valid" ? deviceId : randomUUID(),
           credential: "a".repeat(64),
           credentialExpiresAt: date(kind === "expired" ? -3600 : 604800),
           scope,
@@ -172,6 +174,11 @@ test(
         const result = JSON.parse(output);
         assert.equal(result.exitCode, 0, result.output);
         assert.ok(calls.slice(start).includes("/api/runtime-settings/poll"), result.output);
+        if (kind === "disconnected-future-intermediate" && retry === 0) {
+          assert.ok(result.output.includes("revoked를 입력하세요:"));
+          assert.ok(calls.slice(start).some((path) => path.endsWith("/begin")));
+          assert.ok(calls.slice(start).some((path) => path.endsWith("/exchange")));
+        }
         if (kind === "valid" || retry)
           assert.ok(
             !calls
@@ -182,7 +189,7 @@ test(
         assert.deepEqual(await readdir(work), []);
       }
       const selected =
-        kind === "expired"
+        kind === "expired" || kind === "disconnected-future-intermediate"
           ? new StateStore(original.dir, selection.chain.at(-1)!.profile)
           : original;
       assert.equal((await selected.read())?.status, "connected");
