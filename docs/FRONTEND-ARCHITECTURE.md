@@ -1,5 +1,5 @@
 ---
-verified-against: 427f9a37cb45879ec9ad8ca04424fe066b89c0ff
+verified-against: 024eb7edee46adf5f5f6af7a25187e472aeacb0b
 sources:
   - src/app/**
   - src/features/**
@@ -38,6 +38,8 @@ controller는 기존 순차 조회에서 read-recovery를 사용하고 이벤트
 `/app/connections`의 [ConnectionManager](../src/features/device-binding/connection-manager.tsx)는 자기 참가 방 선택·연결 코드 승인·기기 취소/제거와 최근 수신·만료를 표시한다. 방의 [RoomBindings](../src/features/device-binding/room-bindings.tsx)는 공개 저장소/session 별칭·Git metadata·runtime·epoch·미검증 상태만 보여 주며 observer도 읽을 수 있다. 기기 credential·proof·절대 경로·native locator는 props/HTML/RSC에 포함하지 않는다. heartbeat와 등록을 AI 실행 가능으로 표시하지 않는다.
 
 ### 본인 PC의 연결 표시
+
+웹의 재연결 명령은 브라우저가 보존한 version1 전체 연결 이력을 전달한다. 준비한 명령과 실제 Mac 실행 기록을 구분하며, 연결기는 해당 이력 안의 가장 가까운 실제 기록만 선택한다. 유효한 연결은 같은 프로필·기기·AI 설정으로 재사용하고, 만료된 기록은 기존 보존·소유권·새 승인 절차를 적용한다. 중간 명령이 실행되지 않았다고 기록을 삭제하거나 임의의 같은 방 기기를 선택하지 않는다. 기존5개/7개 bootstrap 인자도 지원하며, 이전 기록이 없는 구형 명령은 최신 명령 복사를 안내한다.
 
 [입장 후 공통 layout](../src/app/app/layout.tsx)은 서버에서 만든 연결 표시 슬롯을 공통 탐색 공급자에 전달한다. `/app`·채팅방·내 AI 연결 화면에서 연결 표시 한 인스턴스를 유지하며 데스크톱의 왼쪽 메뉴 하단과 모바일 제목 옆에 배치한다. 긴 조회 시각·기기 정보는 접힌 상세로 제공한다. [서버 조회](../src/features/device-binding/owned-connection-status.tsx)는 현재 세션과 기존 owner-only 기기 목록을 사용하며 다른 사람의 연결·모델 설정·workflow를 조회하지 않는다. [연결 판정](../src/features/device-binding/connection-presence.ts)은 유효한 인증·활성 기기·90초 미만 통신을 요구하고 5초를 넘는 미래 시각을 거절한다. 취소·제거 기기는 활성 집계에서 제외한다.
 

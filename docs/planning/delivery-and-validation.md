@@ -23,6 +23,12 @@
 
 ## 현재 진행 상태
 
+### 실행하지 않은 명령을 포함한 로컬 재연결
+
+[037 보정 계획](../impl-spec/037-recovery-command-lineage.md)의 코드 `024eb7edee46adf5f5f6af7a25187e472aeacb0b`를 구현하고 검증했다. 웹은 전체 연결 이력을 전달하며 Mac은 그 안의 가장 가까운 실제 기록만 선택한다. 유효한 인증은 원래 기기·설정으로 재사용하고 만료된 기록은 기존 보존과 새 승인을 유지한다. 새 만료 pairing 보존 파일은 profile을 파일명에 포함하되 원문 bytes를 유지한다. 기존 UUID 전용 파일은 바꾸지 않고, 누락 세대·귀속 불명 기록·실행 잠금·다른 scope를 계속 차단한다. 기록 누락을 다른 사람의 기기 권한 오류로 안내하던 경로를 구분했다.
+
+웹594/594, 연결기1031/1031(동시4), 보정 집중84/84와 격리 production/distribution build·타입·lint·format/check를 통과했다. 실제 생성한 명령·bootstrap·CLI·가짜 HTTP·Mac 터미널에서 첫 승인·유효 연결 재사용·만료 복구를 각각 같은 명령으로 다시 실행하는6번 검증을 프로젝트 테스트로 유지한다. 중간 pairing2개와 확인 대기 중 변화4개도 수정 전 실패시킨 뒤 통과했다. 실제 AI 입력과 개인 원본 수정은0회다. 첫 전체 병렬 검사의 기존 pending 준비1개는15초 제한으로 실패해, 동시4 전체 재검사 결과를 사용한다. 독립 구현 리뷰3차 C0/H0/M0으로 이전 지적의 해소를 확인했고 변경 없는 검토는 재사용했다. main 병합·운영 배포의 최종 증거는 이어서 기록한다.
+
 2026-10-12 [기기 인증 갱신과 만료 후 재승인](../impl-spec/archive/034-local-connection-renewal-and-reapproval.md)의 구현·검증·독립 리뷰·운영 배포를 완료했다. 신규 인증7일과 만료5분 전 자동 갱신을 제공한다. 이미 만료된 연결은 기존 기록 보존 검사 뒤 본인 연결을 명시적으로 취소하고 새 웹 승인·터미널 확인으로 복구한다. [PR15](https://github.com/sangjun-pullim/ai-collaboration-platform/pull/15)를 정상 main 병합했고 같은 SHA의 Production과 공개 배포물 검사를 완료했다. 완료 계획은 archive에 보관한다. 아래 검증 범위와 두 Mac 현장 수용의 구분은 유지한다.
 
 2026-10-12 내 AI 연결 화면의 공통 채팅방 메뉴와 이전 방 이동을 구현하고 관련 검증을 완료했다. 모바일 메뉴·설정 스크롤·접근 가능한 방과 승인 가능한 방의 구분을 유지한다. 검사·리뷰 근거는 아래 절을 따르며 운영 반영은 [Vercel 배포 기록](https://vercel.com/sangjuns-projects-488d9a9d/ai-collaboration-platform/deployments)의 main/Production에서 확인한다.
