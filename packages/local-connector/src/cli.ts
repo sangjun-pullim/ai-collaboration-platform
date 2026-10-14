@@ -26,6 +26,7 @@ import { revokeLocalProfile, revokeConfiguredProfile } from "./cli/remove-local-
 import { SettingsStore } from "./settings/store.ts";
 import { SettingsClient } from "./settings/client.ts";
 import { SettingsError } from "./settings/contracts.ts";
+import { heartbeatWithGitReport, reportCurrentRepositoryGit } from "./settings/git-report.ts";
 import { SettingsManager, type SettingsManagerOptions } from "./settings/manager.ts";
 import { createSettingsStatusSink } from "./cli/settings-status.ts";
 import { withSettingsDeviceLock, RetiredProfileError } from "./cli/settings-lock.ts";
@@ -533,8 +534,18 @@ export async function main(args: string[]) {
       onStatus,
       renewal,
       heartbeat: (credential, signal) => {
-        if (signal.aborted) return Promise.resolve();
-        return client.call("heartbeat", {}, credential);
+        return heartbeatWithGitReport(
+          () => client.call("heartbeat", {}, credential),
+          () =>
+            reportCurrentRepositoryGit(
+              store,
+              new SettingsStore(store),
+              client.origin,
+              credential,
+              signal,
+            ),
+          signal,
+        );
       },
       runner: (pointer, runtime) =>
         configuredRunner(store, client.origin, runnerOptions, pointer, runtime),

@@ -35,7 +35,7 @@ controller는 기존 순차 조회에서 read-recovery를 사용하고 이벤트
 
 요청·조사별 검색 인덱스를 한 번 만들고 상태·질문별 상태·사람 확인 안내의 계산 결과를 두 화면에서 공유한다. 최근 실행 요약에서 빠졌고 답변도 없는 AI 간 질문의 취소는 같은 방 잠금 안에서 저장된 **PEER 예약 대기 → 바로 다음 질문**의 순서로 연결을 복원한다. 같은 방·조사·연결·기록 번호를 확인하고 누락이나 충돌이 있으면 연결을 추측하지 않는다. 현재 이름이나 시각이 같다는 이유로 연결하지 않는다.
 
-`/app/connections`의 [ConnectionManager](../src/features/device-binding/connection-manager.tsx)는 자기 참가 방 선택·연결 코드 승인·기기 취소/제거와 최근 수신·만료를 표시한다. 방의 [RoomBindings](../src/features/device-binding/room-bindings.tsx)는 공개 저장소/session 별칭·Git metadata·runtime·epoch·미검증 상태만 보여 주며 observer도 읽을 수 있다. 기기 credential·proof·절대 경로·native locator는 props/HTML/RSC에 포함하지 않는다. heartbeat와 등록을 AI 실행 가능으로 표시하지 않는다.
+`/app/connections`의 [ConnectionManager](../src/features/device-binding/connection-manager.tsx)는 자기 참가 방 선택·연결 코드 승인·기기 취소/제거와 최근 수신·만료를 표시한다. 방의 [RoomBindings](../src/features/device-binding/room-bindings.tsx)는 공개 저장소/session 별칭·최근 Git 관찰·runtime·epoch·미검증 상태를 보여 주며 observer도 읽을 수 있다. Git 관찰 시각과 PC 통신 시각을 구분하며 조회 시점에2분 이상 지난 관찰은 `이전 Git 확인값`으로 표시한다. 보고가 없으면 `Git 확인 대기`, Git 값을 확인하지 못했으면 `Git 정보 확인 불가`로 표시한다. commit만 알면 `브랜치 이름 미확인`으로 표시하며 전체 commit은 짧은 해시의 title/접근성 이름으로 확인할 수 있다. 과거 등록 값은 `등록 당시 정보`로 구분한다. 자동 화면 갱신은 없으며 기존 다시 확인 버튼의 `router.refresh()`로 조회한다. 기기 credential·proof·절대 경로·native locator는 props/HTML/RSC에 포함하지 않는다. heartbeat와 등록을 AI 실행 가능으로 표시하지 않는다.
 
 ### 본인 PC의 연결 표시
 

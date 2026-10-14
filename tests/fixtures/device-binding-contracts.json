@@ -275,6 +275,289 @@
         "expiresAt": "2026-10-01T00:00:00Z"
       },
       "valid": false
+    },
+    {
+      "kind": "body",
+      "action": "git-report",
+      "input": {
+        "agentId": "00000000-0000-4000-8000-000000000001",
+        "workspaceId": "00000000-0000-4000-8000-000000000002",
+        "bindingEpoch": 1,
+        "configRevision": 1,
+        "branch": "dev",
+        "commit": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "observedAt": "2026-10-14T00:00:00.000Z"
+      },
+      "valid": true
+    },
+    {
+      "kind": "body",
+      "action": "git-report",
+      "input": {
+        "agentId": "00000000-0000-4000-8000-000000000001",
+        "workspaceId": "00000000-0000-4000-8000-000000000002",
+        "bindingEpoch": 1,
+        "configRevision": 1,
+        "branch": "dev",
+        "commit": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+        "observedAt": "2026-10-14T00:00:00.000Z"
+      },
+      "valid": true
+    },
+    {
+      "kind": "body",
+      "action": "git-report",
+      "input": {
+        "agentId": "00000000-0000-4000-8000-000000000001",
+        "workspaceId": "00000000-0000-4000-8000-000000000002",
+        "bindingEpoch": 1,
+        "configRevision": 1,
+        "branch": "unknown",
+        "commit": "unknown",
+        "observedAt": "2026-10-14T00:00:00.000Z"
+      },
+      "valid": true
+    },
+    {
+      "kind": "body",
+      "action": "git-report",
+      "input": {
+        "agentId": "00000000-0000-4000-8000-000000000001",
+        "workspaceId": "00000000-0000-4000-8000-000000000002",
+        "bindingEpoch": 1,
+        "configRevision": 1,
+        "branch": "../secret",
+        "commit": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "observedAt": "2026-10-14T00:00:00.000Z"
+      },
+      "valid": false
+    },
+    {
+      "kind": "body",
+      "action": "git-report",
+      "input": {
+        "agentId": "00000000-0000-4000-8000-000000000001",
+        "workspaceId": "00000000-0000-4000-8000-000000000002",
+        "bindingEpoch": 1,
+        "configRevision": 1,
+        "branch": "dev",
+        "commit": "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA",
+        "observedAt": "2026-10-14T00:00:00.000Z"
+      },
+      "valid": false
+    },
+    {
+      "kind": "body",
+      "action": "git-report",
+      "input": {
+        "agentId": "00000000-0000-4000-8000-000000000001",
+        "workspaceId": "00000000-0000-4000-8000-000000000002",
+        "bindingEpoch": 0,
+        "configRevision": 1,
+        "branch": "dev",
+        "commit": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "observedAt": "2026-10-14T00:00:00.000Z"
+      },
+      "valid": false
+    },
+    {
+      "kind": "body",
+      "action": "git-report",
+      "input": {
+        "agentId": "00000000-0000-4000-8000-000000000001",
+        "workspaceId": "00000000-0000-4000-8000-000000000002",
+        "bindingEpoch": 1,
+        "configRevision": 9007199254740992,
+        "branch": "dev",
+        "commit": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "observedAt": "2026-10-14T00:00:00.000Z"
+      },
+      "valid": false
+    },
+    {
+      "kind": "body",
+      "action": "git-report",
+      "input": {
+        "agentId": "00000000-0000-4000-8000-000000000001",
+        "workspaceId": "00000000-0000-4000-8000-000000000002",
+        "bindingEpoch": 1,
+        "configRevision": 1,
+        "branch": "dev",
+        "commit": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "observedAt": "2026-02-30T00:00:00.000Z"
+      },
+      "valid": false
+    },
+    {
+      "kind": "body",
+      "action": "git-report",
+      "input": {
+        "agentId": "00000000-0000-4000-8000-000000000001",
+        "workspaceId": "00000000-0000-4000-8000-000000000002",
+        "bindingEpoch": 1,
+        "configRevision": 1,
+        "branch": "dev",
+        "commit": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "observedAt": "2026-10-14T00:00:00Z"
+      },
+      "valid": false
+    },
+    {
+      "kind": "body",
+      "action": "git-report",
+      "input": {
+        "agentId": "00000000-0000-4000-8000-000000000001",
+        "workspaceId": "00000000-0000-4000-8000-000000000002",
+        "bindingEpoch": 1,
+        "configRevision": 1,
+        "branch": "dev",
+        "commit": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "observedAt": "2026-10-14T00:00:00.000+00:00"
+      },
+      "valid": false
+    },
+    {
+      "kind": "body",
+      "action": "git-report",
+      "input": {
+        "agentId": "00000000-0000-4000-8000-000000000001",
+        "workspaceId": "00000000-0000-4000-8000-000000000002",
+        "bindingEpoch": 1,
+        "configRevision": 1,
+        "branch": "dev",
+        "commit": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "observedAt": "2026-10-14T00:00:00.000Z",
+        "root": "/private"
+      },
+      "valid": false
+    },
+    {
+      "kind": "body",
+      "action": "git-report",
+      "input": {
+        "workspaceId": "00000000-0000-4000-8000-000000000002",
+        "bindingEpoch": 1,
+        "configRevision": 1,
+        "branch": "dev",
+        "commit": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "observedAt": "2026-10-14T00:00:00.000Z"
+      },
+      "valid": false
+    },
+    {
+      "kind": "body",
+      "action": "git-report",
+      "input": {
+        "agentId": "00000000-0000-4000-8000-000000000001",
+        "bindingEpoch": 1,
+        "configRevision": 1,
+        "branch": "dev",
+        "commit": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "observedAt": "2026-10-14T00:00:00.000Z"
+      },
+      "valid": false
+    },
+    {
+      "kind": "body",
+      "action": "git-report",
+      "input": {
+        "agentId": "00000000-0000-4000-8000-000000000001",
+        "workspaceId": "00000000-0000-4000-8000-000000000002",
+        "configRevision": 1,
+        "branch": "dev",
+        "commit": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "observedAt": "2026-10-14T00:00:00.000Z"
+      },
+      "valid": false
+    },
+    {
+      "kind": "body",
+      "action": "git-report",
+      "input": {
+        "agentId": "00000000-0000-4000-8000-000000000001",
+        "workspaceId": "00000000-0000-4000-8000-000000000002",
+        "bindingEpoch": 1,
+        "branch": "dev",
+        "commit": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "observedAt": "2026-10-14T00:00:00.000Z"
+      },
+      "valid": false
+    },
+    {
+      "kind": "body",
+      "action": "git-report",
+      "input": {
+        "agentId": "00000000-0000-4000-8000-000000000001",
+        "workspaceId": "00000000-0000-4000-8000-000000000002",
+        "bindingEpoch": 1,
+        "configRevision": 1,
+        "commit": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "observedAt": "2026-10-14T00:00:00.000Z"
+      },
+      "valid": false
+    },
+    {
+      "kind": "body",
+      "action": "git-report",
+      "input": {
+        "agentId": "00000000-0000-4000-8000-000000000001",
+        "workspaceId": "00000000-0000-4000-8000-000000000002",
+        "bindingEpoch": 1,
+        "configRevision": 1,
+        "branch": "dev",
+        "observedAt": "2026-10-14T00:00:00.000Z"
+      },
+      "valid": false
+    },
+    {
+      "kind": "body",
+      "action": "git-report",
+      "input": {
+        "agentId": "00000000-0000-4000-8000-000000000001",
+        "workspaceId": "00000000-0000-4000-8000-000000000002",
+        "bindingEpoch": 1,
+        "configRevision": 1,
+        "branch": "dev",
+        "commit": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+      },
+      "valid": false
+    },
+    {
+      "kind": "response",
+      "action": "git-report",
+      "input": {
+        "protocol": 1,
+        "reported": true
+      },
+      "valid": true
+    },
+    {
+      "kind": "response",
+      "action": "git-report",
+      "input": {
+        "protocol": 1,
+        "reported": false
+      },
+      "valid": false
+    },
+    {
+      "kind": "response",
+      "action": "git-report",
+      "input": {
+        "protocol": 1,
+        "reported": true,
+        "branch": "dev"
+      },
+      "valid": false
+    },
+    {
+      "kind": "response",
+      "action": "git-report",
+      "input": {
+        "protocol": 1,
+        "removed": true
+      },
+      "valid": false
     }
   ]
 }

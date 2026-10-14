@@ -4,6 +4,7 @@ import { readFileSync } from "node:fs";
 import { runInNewContext } from "node:vm";
 import ts from "typescript";
 import * as presence from "../../src/features/device-binding/connection-presence.ts";
+import * as roomGitReport from "../../src/features/device-binding/room-git-report.ts";
 import * as contracts from "../../src/features/device-binding/contracts.ts";
 
 type Node = { type: unknown; props: Record<string, unknown> };
@@ -173,6 +174,7 @@ test("should project only the owned connection snapshot and fail closed without 
       serverConfig: () => assert.fail("must not request server credentials"),
     },
     "./contracts": contracts,
+    "./room-git-report": roomGitReport,
   });
   const exports = load("src/features/device-binding/owned-connection-status.tsx", {
     "server-only": {},

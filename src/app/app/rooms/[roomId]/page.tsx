@@ -5,12 +5,12 @@ import { RoomAccessView } from "../../../../features/room-access/room-access-vie
 import { AccessError, messages } from "../../../../features/room-access/contracts";
 import { roomBindings } from "../../../../features/device-binding/service";
 import { RoomBindings } from "../../../../features/device-binding/room-bindings";
-import type { PublicBinding } from "../../../../features/device-binding/contracts";
+import type { RoomGitBinding } from "../../../../features/device-binding/room-git-report";
 import { InvestigationView } from "../../../../features/investigation-coordinator/investigation-view";
 export const dynamic = "force-dynamic";
 export default async function RoomPage({ params }: { params: Promise<{ roomId: string }> }) {
   let data: Awaited<ReturnType<typeof roomDetails>> | undefined;
-  let bindings: PublicBinding[] = [];
+  let bindings: RoomGitBinding[] = [];
   let bindingUnavailable = false;
   let rooms: Awaited<ReturnType<typeof dashboard>>["rooms"] = [];
   try {

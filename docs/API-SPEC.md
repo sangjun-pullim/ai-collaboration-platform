@@ -112,7 +112,7 @@ Git 기준과 작업트리의 사람 cookie Auth·기기 bearer·내구 조사·
 
 ## 로컬 connector
 
-`/api/connector/<action>`은 [공개 contracts](../src/features/device-binding/contracts.ts)의 고정 아홉 action만 허용한다. `begin`은 별칭·protocol 1과 서로 다른 code/proof hash, `pairing-status`/`exchange`는 원문 proof bearer, 나머지는 원문 device bearer를 사용한다. 그 bearer는 정확한 64자리 hex이며 Authorization header로 전달한다. 사람 cookie로 이 인증을 대체할 수 없다.
+`/api/connector/<action>`은 [공개 contracts](../src/features/device-binding/contracts.ts)의 고정 action만 허용한다. `begin`은 별칭·protocol 1과 서로 다른 code/proof hash, `pairing-status`/`exchange`는 원문 proof bearer, 나머지는 원문 device bearer를 사용한다. 그 bearer는 정확한 64자리 hex이며 Authorization header로 전달한다. 사람 cookie로 이 인증을 대체할 수 없다.
 
 `workspace`/`agent`/`replace`에는 확인한 공개 metadata와 opaque ID/operation/epoch만 받는다. 임의 owner/tenant·root·native session·provider key·RPC·명령·callback URL은 받지 않는다. exchange·rotate·등록·교체 receipt는 동일 operation/payload와 현재 credential·scope·epoch 조건을 만족할 때 제한된 시간 동안 복구한다. 후속 회전·교체·권한 취소 뒤 옛 결과를 재사용하지 않는다.
 
@@ -120,6 +120,14 @@ SQL018 적용 후 exchange·rotate의 expiresAt은 신규 발급 시각부터 7�
 
 기존 Codex 등록과 v1 로컬 profile은 유지한다. 설정 migration의 공개 runtime은 `codex` 또는 `claude`이며 `registered/unverified` 표시는 유지한다. owned context·native session·선택 파일의 원문은 로컬 private 계약이다. 모델/effort의 웹 선택은 별도의 runtime-settings 계약으로 전달하며 실행 명령을 받지 않는다. 실제 Claude 수용·Realtime는 후속 범위다. 내구 질문·실행 보고는 별도의 workflow 계약을 사용한다. 제품의 device upstream과 CLI server는 HTTPS 또는 canonical loopback HTTP만 허용하고 redirect를 거절한다. CLI의 private state와 복구 순서는 [온보딩](guides/onboarding-and-settings.md#현재-로컬-기기와-저장소-등록)을 따른다.
 
+
+## 현재 저장소의 Git 보고
+
+`POST /api/connector/git-report`는 현재 기기 bearer로 `agentId`, `workspaceId`, `bindingEpoch`, `configRevision`, `branch`, `commit`, `observedAt` 일곱 필드만 받는다. epoch/revision은 양의 안전한 정수, branch는 기존 공개 브랜치 형식 또는 `unknown`, commit은 소문자40/64자리 hex 또는 `unknown`, 시각은 밀리초를 포함한 ISO UTC이다. 성공 응답은 `{ok:true,data:{protocol:1,reported:true}}`이다. 경로·remote URL·파일 내용은 받지 않는다.
+
+[SQL020](../supabase/migrations/20261014002000-current-repository-git-report.sql)의 `connector_git_report`는 현재 credential·소유자·기기·조직·방·agent/workspace와 설정 revision·epoch를 대조한다. 미완료 설정이 있으면 보고를 거절한다. 서버 기준5분보다 오래되거나1분보다 미래인 값, 같은 epoch에서 이전 관찰값은 `CONFLICT`다. 같은 시각·같은 값은 재전달 가능하며 값이 다르면 거절한다.
+
+방 참가자용 `connection_room_git_bindings`는 기존 등록 정보에 현재 epoch/revision의 nullable `gitReport`와 조회 기준 시각을 제공한다. [웹 전용 projection](../src/features/device-binding/room-git-report.ts)이 검증하며, 기존 `connector_heartbeat`·`connector_bindings`·`connection_room_bindings`와 `PublicBinding` 응답은 유지한다. 이 값은 현재 연결의 관찰이며 과거 질문의 `sourceObservation`을 대체하지 않는다.
 
 ## 소유자의 로컬 AI 설정
 

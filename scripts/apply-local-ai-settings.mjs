@@ -45,6 +45,10 @@ const migrations = [
     "20261012001800-seven-day-device-credentials.sql",
     "7e27362e86313bb1ea12f6f03ecf66375807b0e566e260e0bd4755db2db120c8",
   ],
+  [
+    "20261014002000-current-repository-git-report.sql",
+    "6b6b1051a9c24806466444d1f552563c4c5c5a30e309a5a71910beedbb826a2e",
+  ],
 ];
 const featureChecks = {
   aiSettings: `to_regprocedure('public.runtime_settings_human(text,jsonb)') IS NOT NULL
@@ -158,7 +162,33 @@ correctionChecks.credentialLifetimeAbsent = `to_regprocedure('${credentialCorrec
 correctionChecks.credentialLifetimeLegacy += ` AND (${legacyLifetime})`;
 correctionChecks.credentialLifetimeFixed += ` AND (${fixedLifetime})`;
 featureChecks.sevenDayCredentials = correctionChecks.credentialLifetimeFixed;
+
+const gitReportMigration = migrations.at(-1)[0];
+const gitReportChecks = {
+  gitReportAbsent: `to_regclass('runtime_settings_private.git_reports') IS NULL
+    AND to_regprocedure('public.connector_git_report(jsonb,text)') IS NULL
+    AND to_regprocedure('public.connection_room_git_bindings(uuid)') IS NULL`,
+  gitReportFixed: `to_regclass('runtime_settings_private.git_reports') IS NOT NULL
+    AND (SELECT relrowsecurity FROM pg_catalog.pg_class WHERE oid=to_regclass('runtime_settings_private.git_reports'))
+    AND (SELECT count(*)=8 FROM pg_catalog.pg_attribute WHERE attrelid=to_regclass('runtime_settings_private.git_reports') AND attnum>0 AND NOT attisdropped
+      AND attname IN ('agent_id','workspace_id','binding_epoch','config_revision','branch','commit_hash','observed_at','received_at'))
+    AND NOT has_table_privilege('anon',to_regclass('runtime_settings_private.git_reports'),'SELECT,INSERT,UPDATE,DELETE')
+    AND NOT has_table_privilege('authenticated',to_regclass('runtime_settings_private.git_reports'),'SELECT,INSERT,UPDATE,DELETE')
+    AND (${reviewedSourceSql({ signature: "public.connector_git_report(jsonb,text)", arguments: ["p_body", "p_secret"], returnType: "jsonb", securityDefiner: true, volatility: "v" }, "e401f85a18a33cd8ea03869b1bbdee0e")})
+    AND (${reviewedSourceSql({ signature: "public.connection_room_git_bindings(uuid)", arguments: ["p_room_id"], returnType: "jsonb", securityDefiner: true, volatility: "v" }, "b6ad3349534e7d864f5cb52de7c098e3")})
+    AND has_function_privilege('anon',to_regprocedure('public.connector_git_report(jsonb,text)'),'EXECUTE')
+    AND NOT has_function_privilege('authenticated',to_regprocedure('public.connector_git_report(jsonb,text)'),'EXECUTE')
+    AND has_function_privilege('authenticated',to_regprocedure('public.connection_room_git_bindings(uuid)'),'EXECUTE')
+    AND NOT has_function_privilege('anon',to_regprocedure('public.connection_room_git_bindings(uuid)'),'EXECUTE')`,
+};
+Object.assign(correctionChecks, gitReportChecks);
+featureChecks.currentRepositoryGit = gitReportChecks.gitReportFixed;
 function assertCorrectionState(state, installed) {
+  if (
+    Number(state.gitReportAbsent) + Number(state.gitReportFixed) !== 1 ||
+    (!installed && !state.gitReportAbsent)
+  )
+    throw new UpgradeError("GIT_REPORT_SOURCE_UNVERIFIED");
   for (const correction of corrections) {
     const values = correctionKinds(correction).map((kind) => state[`${correction.key}${kind}`]);
     if (values.filter(Boolean).length !== 1 || (installed ? values[0] : !values[0]))
@@ -166,14 +196,19 @@ function assertCorrectionState(state, installed) {
   }
 }
 function expectedCorrectionChecks(state) {
-  return Object.fromEntries(
-    corrections.map((correction) => {
-      const key = correctionKinds(correction)
-        .map((kind) => `${correction.key}${kind}`)
-        .find((key) => state[key]);
-      return [key, correctionChecks[key]];
-    }),
-  );
+  return {
+    [state.gitReportAbsent ? "gitReportAbsent" : "gitReportFixed"]: state.gitReportAbsent
+      ? gitReportChecks.gitReportAbsent
+      : gitReportChecks.gitReportFixed,
+    ...Object.fromEntries(
+      corrections.map((correction) => {
+        const key = correctionKinds(correction)
+          .map((kind) => `${correction.key}${kind}`)
+          .find((key) => state[key]);
+        return [key, correctionChecks[key]];
+      }),
+    ),
+  };
 }
 const baselineChecks = {
   requiredFunctions: `to_regprocedure('public.team_entry_admit(text,text)') IS NOT NULL
@@ -222,7 +257,9 @@ function readySql(checks) {
 }
 const featureSql = checksSql(featureChecks);
 const priorFeatureChecks = Object.fromEntries(
-  Object.entries(featureChecks).filter(([name]) => name !== "sevenDayCredentials"),
+  Object.entries(featureChecks).filter(
+    ([name]) => !["sevenDayCredentials", "currentRepositoryGit"].includes(name),
+  ),
 );
 const baselineSql = checksSql(baselineChecks);
 const correctionSql = checksSql(correctionChecks);
@@ -342,7 +379,9 @@ async function migrationBodies(selected) {
         throw new UpgradeError("MIGRATION_INPUT_CHANGED");
       let sql = bytes.toString("utf8").trim();
       // Reviewed transaction-bearing files join the same atomic upgrade transaction.
-      if ([migrations[0][0], migrations[3][0], migrations[8][0]].includes(name)) {
+      if (
+        [migrations[0][0], migrations[3][0], migrations[8][0], gitReportMigration].includes(name)
+      ) {
         if (!/^begin;\s/i.test(sql) || !/\scommit;$/i.test(sql))
           throw new UpgradeError("MIGRATION_TRANSACTION_CHANGED");
         sql = sql.replace(/^begin;\s*/i, "").replace(/\s*commit;$/i, "");
@@ -396,7 +435,7 @@ export async function runLocalSettingsUpgrade(apply = false, execute = executeDo
   const before = flags(await inspect());
   if (!apply) return { status: "CHECKED", features: before, modelInputs: 0 };
   const originalFeatures = Object.entries(before)
-    .filter(([key]) => key !== "sevenDayCredentials")
+    .filter(([key]) => !["sevenDayCredentials", "currentRepositoryGit"].includes(key))
     .map(([, value]) => value);
   const installed = originalFeatures.every(Boolean);
   if (!installed && originalFeatures.some(Boolean))
@@ -408,10 +447,14 @@ export async function runLocalSettingsUpgrade(apply = false, execute = executeDo
   const pending = corrections.filter(
     (correction) => state[`${correction.key}Legacy`] || state[`${correction.key}Previous`],
   );
-  if (installed && pending.length === 0)
+  if (installed && pending.length === 0 && state.gitReportFixed)
     return { status: "ALREADY_PRESENT", features: before, modelInputs: 0 };
   const selected = installed
-    ? migrations.filter(([name]) => pending.some((correction) => correction.migration === name))
+    ? migrations.filter(
+        ([name]) =>
+          pending.some((correction) => correction.migration === name) ||
+          (state.gitReportAbsent && name === gitReportMigration),
+      )
     : migrations;
   const bodies = await migrationBodies(selected);
   const sql = `BEGIN;\nSET LOCAL lock_timeout='5s';\nSET LOCAL statement_timeout='30s';\n${preconditionSql(installed, state)}\n${bodies.join("\n")}\nNOTIFY pgrst, 'reload schema';\nCOMMIT;`;

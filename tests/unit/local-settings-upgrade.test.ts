@@ -11,6 +11,7 @@ type Features = {
   folderAutoRead: boolean;
   answerSources: boolean;
   sevenDayCredentials: boolean;
+  currentRepositoryGit: boolean;
 };
 type Execute = (args: string[], input?: string) => Promise<string>;
 type Result = { status: string; features: Features; modelInputs: number; migrations?: string[] };
@@ -20,6 +21,7 @@ const missing: Features = {
   folderAutoRead: false,
   answerSources: false,
   sevenDayCredentials: false,
+  currentRepositoryGit: false,
 };
 const present: Features = {
   aiSettings: true,
@@ -27,6 +29,7 @@ const present: Features = {
   folderAutoRead: true,
   answerSources: true,
   sevenDayCredentials: true,
+  currentRepositoryGit: true,
 };
 
 type CatalogState = {
@@ -100,6 +103,7 @@ const migrationNames = [
   "20261008001600-runtime-settings-binding-receipt.sql",
   "20261009001700-runtime-model-display-names.sql",
   "20261012001800-seven-day-device-credentials.sql",
+  "20261014002000-current-repository-git-report.sql",
 ];
 
 async function fixture(t: TestContext) {
@@ -130,6 +134,9 @@ async function fixture(t: TestContext) {
     sourceSummaryAfter: { ...fixedSourceSummary },
     commitBindingBefore: undefined as CommitBindingState | undefined,
     commitBindingAfter: { ...fixedCommitBinding },
+    gitReportBefore: true,
+    gitReportAfter: true,
+    gitReportPartial: false,
     sevenDayBefore: true,
     sevenDayAfter: true,
     credentialState: undefined as Record<string, boolean> | undefined,
@@ -161,6 +168,15 @@ async function fixture(t: TestContext) {
                 : f.before.aiSettings && f.sevenDayBefore,
             })
           : {}),
+        ...(input.includes("'gitReportAbsent'")
+          ? {
+              gitReportAbsent:
+                !f.applied && !f.gitReportPartial && (!f.before.aiSettings || !f.gitReportBefore),
+              gitReportFixed:
+                !f.gitReportPartial &&
+                (f.applied ? f.gitReportAfter : f.before.aiSettings && f.gitReportBefore),
+            }
+          : {}),
         catalogPrevious: false,
         ...(f.applied
           ? f.catalogAfter
@@ -185,6 +201,9 @@ async function fixture(t: TestContext) {
         f.raw ??
         JSON.stringify({
           ...(f.applied ? f.after : f.before),
+          currentRepositoryGit: f.applied
+            ? f.gitReportAfter
+            : f.before.aiSettings && f.gitReportBefore,
           ...(input.includes("'sevenDayCredentials'")
             ? {
                 sevenDayCredentials: f.applied
@@ -292,7 +311,7 @@ test("should inspect local settings without applying migrations by default", asy
   assert.equal(f.applied, false);
 });
 
-test("should apply all nine reviewed migrations in one transaction and confirm installed features", async (t) => {
+test("should apply all ten reviewed migrations in one transaction and confirm installed features", async (t) => {
   const f = await fixture(t);
   const result = await f.run(true, f.execute);
   assert.equal(result.status, "APPLIED");
@@ -841,4 +860,43 @@ test("should preserve SQL017 while applying another pending correction without d
     false,
   );
   assert.ok(sql.includes("bbb006cfb7bc9767a4bb25fdff528096"));
+});
+
+test("should add only the current repository Git migration to a corrected stack and leave repeated apply unchanged", async (t) => {
+  const f = await fixture(t);
+  f.before = { ...present };
+  f.catalogBefore = { ...fixedCatalog };
+  f.gitReportBefore = false;
+  const result = await f.run(true, f.execute);
+  assert.equal(result.status, "APPLIED");
+  assert.deepEqual(result.migrations, [migrationNames.at(-1)]);
+  assert.equal(result.features.currentRepositoryGit, true);
+  const writes = f.calls.filter((c) => c.input.startsWith("BEGIN;"));
+  assert.equal(writes.length, 1);
+  assert.match(writes[0].input, /create table runtime_settings_private\.git_reports/);
+  assert.doesNotMatch(
+    writes[0].input,
+    /create or replace function runtime_settings_private\.commit_binding/,
+  );
+  assert.equal((await f.run(true, f.execute)).status, "ALREADY_PRESENT");
+  assert.equal(f.calls.filter((c) => c.input.startsWith("BEGIN;")).length, 1);
+});
+test("should refuse partial Git installation and failed Git feature confirmation without replay", async (t) => {
+  for (const stage of ["partial", "confirmation"]) {
+    await t.test(stage, async (t) => {
+      const f = await fixture(t);
+      f.before = { ...present };
+      f.catalogBefore = { ...fixedCatalog };
+      f.gitReportBefore = false;
+      if (stage === "partial") f.gitReportPartial = true;
+      else f.gitReportAfter = false;
+      await assert.rejects(f.run(true, f.execute), {
+        code: stage === "partial" ? "GIT_REPORT_SOURCE_UNVERIFIED" : "APPLY_NOT_CONFIRMED",
+      });
+      assert.equal(
+        f.calls.filter((c) => c.input.startsWith("BEGIN;")).length,
+        stage === "partial" ? 0 : 1,
+      );
+    });
+  }
 });
