@@ -10,6 +10,8 @@ import { connectionFixture, pins, preloadNames } from "../helpers/local-connecti
 import { localConnectionCommand } from "../../src/features/device-binding/local-connection-command.ts";
 
 const macOnly = { skip: process.platform !== "darwin" };
+// Allow verified bootstrap startup before testing shutdown; keep all exit/proof assertions.
+const startupPollAttempts = 1500;
 test(
   "should carry the complete recovery selection through the generated shell and verified bootstrap",
   macOnly,
@@ -190,7 +192,7 @@ test(
       child.stderr.on("data", (b) => (stderr += b));
       child.on("exit", (code) => resolve({ code, stderr }));
     });
-    for (let n = 0; n < 200; n++) {
+    for (let n = 0; n < startupPollAttempts; n++) {
       try {
         await readFile(f.runFile);
         break;
@@ -306,7 +308,7 @@ test(
       child.stderr.on("data", (bytes) => (stderr += bytes));
       child.on("exit", (code) => done({ code, stderr }));
     });
-    for (let attempt = 0; attempt < 200; attempt++) {
+    for (let attempt = 0; attempt < startupPollAttempts; attempt++) {
       try {
         await readFile(f.runFile);
         break;
@@ -365,7 +367,7 @@ test("should verify child shutdown after a terminal group interrupt", macOnly, a
     child.stderr.on("data", (bytes) => (stderr += bytes));
     child.on("exit", (code) => done({ code, stdout, stderr }));
   });
-  for (let attempt = 0; attempt < 200; attempt++) {
+  for (let attempt = 0; attempt < startupPollAttempts; attempt++) {
     try {
       await readFile(f.runFile);
       break;

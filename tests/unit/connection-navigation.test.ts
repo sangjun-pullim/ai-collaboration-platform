@@ -1,3 +1,4 @@
+import { connectionSnapshot } from "../../src/features/device-binding/connection-presence.ts";
 import test from "node:test";
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
@@ -168,6 +169,7 @@ function manager(props: Record<string, unknown> = {}) {
     "../runtime-settings/runtime-settings-form": { RuntimeSettingsForm: "settings-form" },
     "./local-connection-guide": { LocalConnectionGuide: "connection-guide" },
     "./local-connection-command": {},
+    "./connection-presence": { connectionSnapshot },
     "../room-access/access.module.css": { default: {} },
   }).ConnectionManager as (props: unknown) => UINode;
   return component({
@@ -493,4 +495,24 @@ test("should fall back to the app list when no accessible return room exists", (
       "/app",
     );
   }
+});
+
+test("should put executable Mac connection before unavailable AI controls for a new owner", () => {
+  const tree = manager();
+  const guide = nodes(tree).find((node) => node.type === "connection-guide")!;
+  assert.equal(guide.props.prominent, true);
+  assert.equal(guide.props.showRoomSelection, false);
+  assert.equal(nodes(tree).filter((node) => node.type === "settings-form").length, 0);
+  const command = nodes(tree).find((node) => node.props.id === "mac-connection")!;
+  assert.equal(command.props.open, true);
+  const settings = nodes(tree).find((node) => node.props.id === "ai-settings")!;
+  assert.ok(nodes(tree).indexOf(command) < nodes(tree).indexOf(settings));
+  assert.equal(
+    nodes(tree).find((node) => node.props["aria-label"] === "기기 승인 안내")!.props.open,
+    false,
+  );
+  const refresh = nodes(tree).find((node) => node.props["aria-label"] === "연결 상태 새로 확인")!;
+  assert.equal(refresh.props.disabled, undefined);
+  (refresh.props.onClick as () => void)();
+  assert.ok(nodes(tree).find((node) => node.props["aria-label"] === "모델 선택과 채팅 시작"));
 });

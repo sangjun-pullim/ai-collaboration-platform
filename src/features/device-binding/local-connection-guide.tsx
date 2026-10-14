@@ -61,12 +61,20 @@ export function LocalConnectionGuide({
   rooms,
   roomId,
   onRoomChange,
+  showRoomSelection = true,
+  prominent = true,
+  deviceAliasHint,
+  deviceIdHint,
 }: {
   origin: string;
   userId: string;
   rooms: Room[];
   roomId: string;
   onRoomChange: (value: string) => void;
+  showRoomSelection?: boolean;
+  prominent?: boolean;
+  deviceAliasHint?: string;
+  deviceIdHint?: string;
 }) {
   const [deviceAlias, setDeviceAlias] = useState("내 Mac");
   const [manifestReceipt, setManifest] = useState<{
@@ -278,95 +286,102 @@ export function LocalConnectionGuide({
       className="space-y-4 rounded-xl border bg-white p-5"
       aria-label="명령 한 번으로 내 Mac 연결"
     >
-      <div>
-        <h2 className="font-semibold">내 Mac 연결</h2>
-        <p className="mt-1 text-sm text-neutral-600">
-          이미 설치해 사용 중인 Claude Code 또는 Codex CLI를 연결합니다. 별도 연결 앱 설치나
-          프로젝트 복제는 필요 없습니다.
-        </p>
-      </div>
-      <div className="grid gap-3 sm:grid-cols-2">
-        <label className="grid gap-1 text-sm">
-          AI를 제공할 채팅방
-          <select
-            className="rounded-md border p-2"
-            value={roomId}
-            onChange={(event) => onRoomChange(event.target.value)}
-          >
-            {rooms.map((item) => (
-              <option key={item.roomId} value={item.roomId}>
-                {item.organizationName} · {item.roomTitle}
-              </option>
-            ))}
-          </select>
-        </label>
-        <label className="grid gap-1 text-sm">
-          내 기기 이름
-          <Input
-            value={deviceAlias}
-            onChange={(event) => setDeviceAlias(event.target.value)}
-            maxLength={40}
-          />
-        </label>
-      </div>
-      <ol className="list-decimal space-y-1 pl-5 text-sm text-neutral-600">
-        <li>명령을 복사해 자기 Mac의 터미널에서 실행합니다. 연결 코드를 임시로 실행합니다.</li>
-        <li>열린 웹 화면에서 기기를 승인하고 터미널에서 내 계정과 방을 확인합니다.</li>
-        <li>아래 AI 설정에서 Claude/Codex·폴더·모델·추론 강도를 고릅니다.</li>
-      </ol>
+      {showRoomSelection && <h3 className="font-semibold">Mac 연결</h3>}
+      <Button
+        type="button"
+        aria-label="연결 명령 복사"
+        variant={prominent ? "default" : "outline"}
+        disabled={!command}
+        onClick={copy}
+      >
+        연결 명령 복사
+      </Button>
+      <p className="text-sm text-neutral-600">
+        {deviceAliasHint
+          ? `${deviceAliasHint}을 사용하는 Mac의 터미널에서 실행하세요.`
+          : "복사한 명령을 내 Mac의 터미널에 붙여 넣어 실행하세요."}
+      </p>
       {rooms.length === 0 && (
         <p className="text-sm">참가한 채팅방을 선택해야 연결 명령을 만들 수 있습니다.</p>
       )}
-      <Button type="button" disabled={!command} onClick={copy}>
-        연결 명령 복사
-      </Button>
-      <Button
-        type="button"
-        variant="outline"
-        disabled={!selection || !!blocked || preparing === scopeKey}
-        onClick={() => setRecoveryDialog({ key: scopeKey, confirmed: false })}
-      >
-        새 승인으로 다시 연결
-      </Button>
-      {recovering && (
-        <div className="space-y-2 rounded-md border p-3 text-sm" aria-label="새 승인 연결 확인">
-          <p>
-            기존 AI 기록은 그대로 보존합니다. 만료된 연결은 새 웹 승인이 필요하며, AI·폴더·모델은
-            다시 선택합니다.
-          </p>
-          <p>
-            기존 터미널 실행을 종료하세요. 준비만 하고 실행하지 않은 명령은 건너뛰고 실제 로컬
-            기록을 확인합니다. 유효한 연결은 기존 설정을 유지해 재사용합니다. 만료된 연결을 새로
-            승인하는 경우에만 공개 연결 ID를 보여 줍니다. 이때 내 연결 카드에서 같은 ID인 본인
-            연결만 연결 취소하고 터미널에서 완료를 확인하세요.
-          </p>
-          <label className="flex items-center gap-2">
-            <input
-              type="checkbox"
-              checked={recovering.confirmed}
-              onChange={(event) =>
-                setRecoveryDialog({ key: scopeKey, confirmed: event.target.checked })
-              }
-            />
-            이전 연결의 터미널 실행을 종료했습니다
-          </label>
-          <Button
-            type="button"
-            disabled={!recovering.confirmed || preparing === scopeKey || !!blocked}
-            onClick={prepareRecoveryCommand}
-          >
-            새 승인 명령 준비
-          </Button>
+      <details className="text-sm">
+        <summary className="cursor-pointer">기기 이름·새 승인으로 다시 연결</summary>
+        <div className="mt-3 space-y-3">
+          <div className="grid gap-3 sm:grid-cols-2">
+            {showRoomSelection && (
+              <label className="grid gap-1 text-sm">
+                AI를 제공할 채팅방
+                <select
+                  className="rounded-md border p-2"
+                  value={roomId}
+                  onChange={(event) => onRoomChange(event.target.value)}
+                >
+                  {rooms.map((item) => (
+                    <option key={item.roomId} value={item.roomId}>
+                      {item.organizationName} · {item.roomTitle}
+                    </option>
+                  ))}
+                </select>
+              </label>
+            )}
+            <label className="grid gap-1 text-sm">
+              내 기기 이름
+              <Input
+                value={deviceAlias}
+                onChange={(event) => setDeviceAlias(event.target.value)}
+                maxLength={40}
+              />
+            </label>
+          </div>
           <Button
             type="button"
             variant="outline"
-            disabled={preparing === scopeKey}
-            onClick={() => setRecoveryDialog(null)}
+            disabled={!selection || !!blocked || preparing === scopeKey}
+            onClick={() => setRecoveryDialog({ key: scopeKey, confirmed: false })}
           >
-            취소
+            새 승인으로 다시 연결
           </Button>
+          {recovering && (
+            <div className="space-y-2 rounded-md border p-3 text-sm" aria-label="새 승인 연결 확인">
+              <p>
+                기존 AI 기록은 그대로 보존합니다. 만료된 연결은 새 웹 승인이 필요하며,
+                AI·폴더·모델은 다시 선택합니다.
+              </p>
+              <p>
+                기존 터미널 실행을 종료하세요. 준비만 하고 실행하지 않은 명령은 건너뛰고 실제 로컬
+                기록을 확인합니다. 유효한 연결은 기존 설정을 유지해 재사용합니다. 만료된 연결을 새로
+                승인하는 경우에만 공개 연결 ID를 보여 줍니다. 이때 내 연결 카드에서 같은 ID인 본인
+                연결만 연결 취소하고 터미널에서 완료를 확인하세요.
+              </p>
+              <label className="flex items-center gap-2">
+                <input
+                  type="checkbox"
+                  checked={recovering.confirmed}
+                  onChange={(event) =>
+                    setRecoveryDialog({ key: scopeKey, confirmed: event.target.checked })
+                  }
+                />
+                이전 연결의 터미널 실행을 종료했습니다
+              </label>
+              <Button
+                type="button"
+                disabled={!recovering.confirmed || preparing === scopeKey || !!blocked}
+                onClick={prepareRecoveryCommand}
+              >
+                새 승인 명령 준비
+              </Button>
+              <Button
+                type="button"
+                variant="outline"
+                disabled={preparing === scopeKey}
+                onClick={() => setRecoveryDialog(null)}
+              >
+                취소
+              </Button>
+            </div>
+          )}
         </div>
-      )}
+      </details>
       {blocked && (
         <div role="alert" aria-label="연결 선택 확인 필요" className="text-sm">
           <p>{blocked}</p>
@@ -393,6 +408,13 @@ export function LocalConnectionGuide({
       )}
       <details className="text-sm">
         <summary className="cursor-pointer">명령 확인·직접 복사</summary>
+        {deviceAliasHint && (
+          <p className="mt-2 break-all text-xs text-neutral-600">
+            현재 설정 대상: {deviceAliasHint} ({deviceIdHint}). 명령은 이 방의 브라우저 저장 연결을
+            재사용합니다. 기기 선택을 바꿔도 다른 기기의 명령으로 전환되지 않습니다. Mac 터미널의
+            공개 연결 ID가 설정 대상과 같은지 확인하세요.
+          </p>
+        )}
         <textarea
           ref={commandField}
           aria-label="로컬 연결 명령"
@@ -402,10 +424,7 @@ export function LocalConnectionGuide({
           className="mt-2 w-full rounded-md border bg-neutral-50 p-3 font-mono text-xs"
         />
       </details>
-      <p className="text-xs text-neutral-500">
-        AI가 답변하려면 PC와 이 터미널을 열어 두세요. 연결은 생성된 같은 프로필을 재사용합니다.
-        질문만 하는 참가자는 실행할 필요가 없습니다.
-      </p>
+      <p className="text-xs text-neutral-500">연결 후에도 Mac과 이 터미널을 열어 두세요.</p>
     </section>
   );
 }

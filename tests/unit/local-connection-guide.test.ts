@@ -34,7 +34,7 @@ const manifest = {
   },
 };
 
-function fixture(saved = new Map<string, string>()) {
+function fixture(saved = new Map<string, string>(), extra: Record<string, unknown> = {}) {
   const slots: unknown[] = [],
     effects: { deps: unknown[]; cleanup?: () => void }[] = [];
   const listeners = new Set<(event: { key: string | null }) => void>();
@@ -149,6 +149,7 @@ function fixture(saved = new Map<string, string>()) {
     roomId,
     rooms: [{ roomId, organizationId: userId, roomTitle: "Room", organizationName: "Org" }],
     onRoomChange() {},
+    ...extra,
   };
   let tree: Node;
   const render = () => {
@@ -332,6 +333,35 @@ test("should keep recovery selection isolated when the origin user or authorized
     assert.notEqual(f.value(), recovered);
     assert.deepEqual([...f.saved.entries()], original);
     assert.equal(f.uuids(), 1);
+  } finally {
+    f.close();
+  }
+});
+
+test("should keep copy first and command identity stable when guidance becomes secondary", async () => {
+  const f = fixture(undefined, {
+    showRoomSelection: false,
+    deviceAliasHint: "내 Mac",
+    deviceIdHint: userId,
+  });
+  try {
+    await f.settle();
+    const tree = f.render();
+    const copy = f.button("연결 명령 복사");
+    assert.equal(copy.props.variant, "default");
+    assert.ok(nodes(tree).indexOf(copy) < nodes(tree).findIndex((node) => node.type === "input"));
+    const details = nodes(tree).find(
+      (node) => node.type === "details" && text(node).includes(userId),
+    )!;
+    assert.ok(details);
+    assert.equal(details.props.open, undefined);
+    const initial = f.value();
+    (f.props as Record<string, unknown>).prominent = false;
+    await f.settle();
+    assert.equal(f.button("연결 명령 복사").props.variant, "outline");
+    assert.equal(f.value(), initial);
+    await f.click("연결 명령 복사");
+    assert.deepEqual(f.copies, [initial]);
   } finally {
     f.close();
   }

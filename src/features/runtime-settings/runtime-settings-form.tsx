@@ -48,10 +48,16 @@ export function RuntimeSettingsForm({
   deviceId,
   deviceAlias,
   disabled = false,
+  connectionRecent = true,
+  guidanceActive = true,
+  roomHref,
 }: {
   deviceId: string;
   deviceAlias: string;
   disabled?: boolean;
+  connectionRecent?: boolean;
+  guidanceActive?: boolean;
+  roomHref?: string;
 }) {
   const controller = useMemo(() => new SettingsController(deviceId, requestSettings), [deviceId]);
   const view = useSyncExternalStore(
@@ -69,6 +75,7 @@ export function RuntimeSettingsForm({
   const model = catalog?.models.find((item) => item.model === draft?.model);
   const saved = selectionSaved(view);
   const blocked = disabled || !!busy;
+  const setupBlocked = blocked || !connectionRecent;
   const canCancel =
     !!reservedOperationId &&
     operation?.state !== "COMMITTED" &&
@@ -94,11 +101,58 @@ export function RuntimeSettingsForm({
     applied.workspaceId === response.currentBinding?.workspaceId &&
     applied.bindingEpoch === response.currentBinding?.bindingEpoch;
 
+  const cancellationPending =
+    operation?.state === "CANCELLED" && operation.receipt?.state !== "CANCELLED";
+  const phase = !connectionRecent
+    ? "connection"
+    : cancellationPending
+      ? "cancellation"
+      : operation?.state === "UNKNOWN" || operation?.state === "FAILED"
+        ? "uncertain"
+        : operation?.state === "COMMITTED" || operation?.state === "APPLYING"
+          ? "applying"
+          : operation?.state === "REQUESTED" || (reservedOperationId && !operation)
+            ? "terminal"
+            : catalog
+              ? saved
+                ? "apply"
+                : "model"
+              : appliedCurrent && !reservedOperationId
+                ? "applied"
+                : reservedOperationId
+                  ? "terminal"
+                  : "folder";
+  const nextAction = {
+    connection: cancellationPending
+      ? "취소 확인을 기다리고 있지만 최근 통신을 확인하지 못했습니다. 다음: 1단계의 연결 명령을 Mac에서 실행하세요. PC가 취소와 정리를 확인해야 새 설정을 요청할 수 있습니다. 기기를 제거할 필요는 없습니다."
+      : "최근 통신을 확인하지 못했습니다. 먼저 1단계의 연결 명령을 Mac에서 실행하세요. 기기와 이전 적용 설정은 그대로 유지됩니다.",
+    cancellation:
+      "PC의 취소 확인을 기다립니다. 다음: 실행 중인 연결 터미널을 확인하세요. 최근 통신만으로 취소와 정리가 완료되지는 않습니다.",
+    uncertain:
+      "결과가 아직 확정되지 않았거나 요청이 실패했습니다. 다음: 실행 중인 연결 터미널에서 같은 요청의 상태를 확인하세요. 새 요청이나 재적용은 하지 않습니다.",
+    applying:
+      "PC의 설정 확정을 기다립니다. 다음: 실행 중인 연결 터미널의 적용 상태를 확인하세요. 서버 저장만으로 적용이 완료되지는 않습니다.",
+    terminal:
+      operation?.state === "LOCAL_CONFIRMATION"
+        ? "PC에서 모델 목록을 확인하지 못했습니다. 다음: 연결 터미널에서 설치 버전과 로그인 상태를 확인하고 이 요청을 취소하세요."
+        : "다음: Mac의 폴더 선택 창에서 폴더와 공유 범위를 확인하세요. 연결 터미널을 열어 두세요.",
+    model: "다음: 3단계에서 모델과 추론 강도를 고르고 모델 선택을 확인하세요.",
+    apply: "다음: 공개 세션 별칭을 확인한 뒤 PC에 설정을 적용하세요.",
+    applied:
+      "PC 설정 적용이 확인되었습니다. 다음: 채팅방에서 질문 대상을 선택하고 AI 응답 준비를 확인하세요.",
+    folder: view.provider
+      ? "다음: Mac에서 폴더 선택을 눌러 폴더와 공유 범위를 확인하세요."
+      : "다음: 사용할 AI 프로그램을 선택하세요. 그러면 Mac에서 폴더를 선택할 수 있습니다.",
+  }[phase];
+
+  function openConnectionCommand() {
+    const section = document.getElementById("mac-connection");
+    section?.setAttribute("open", "");
+    section?.focus();
+  }
+
   return (
-    <section
-      className="grid gap-4 rounded-lg border border-neutral-200 p-4"
-      aria-label={`${deviceAlias} AI 설정`}
-    >
+    <section className="grid gap-3" aria-label={`${deviceAlias} AI 설정`}>
       <div className="flex flex-wrap items-center justify-between gap-2">
         <h3 className="font-semibold">{deviceAlias}의 AI 설정</h3>
         <Badge variant="secondary">
@@ -108,22 +162,55 @@ export function RuntimeSettingsForm({
               : states[operation.state]
             : reservedOperationId
               ? "요청 결과 확인 중"
-              : response
-                ? "설정 요청 가능"
-                : "현재 설정 확인 중"}
+              : appliedCurrent
+                ? "PC 설정 적용 완료"
+                : response
+                  ? "설정 요청 가능"
+                  : "현재 설정 확인 중"}
         </Badge>
       </div>
-      <p className="text-sm text-neutral-600">
-        연결 명령을 실행한 터미널을 계속 열어 두세요. 추가 관리 프로세스를 실행할 필요가 없습니다.
-        새 폴더의 필요한 코드 자동 탐색과 답·근거 경로 기록을 해당 Mac에서 승인합니다.
-      </p>
-      <details className="text-sm text-neutral-600">
-        <summary className="cursor-pointer">수동 연결의 AI 설정 실행 방법</summary>
-        <p className="mt-2">
-          수동 pair·exchange로 연결했다면 자기 PC에서 <code>manage --profile &lt;profile&gt;</code>
-          을 실행하세요. 프로필은 해당 기기 연결에 사용한 이름입니다.
-        </p>
-      </details>
+      {guidanceActive && (
+        <div
+          id="settings-next-action"
+          data-phase={phase}
+          role="status"
+          className="space-y-2 rounded-md bg-neutral-50 p-3 text-sm"
+        >
+          <p>{nextAction}</p>
+          {guidanceActive && connectionRecent && phase === "applied" && roomHref && (
+            <a
+              href={roomHref}
+              aria-label="채팅 시작"
+              className="inline-block rounded-md bg-primary px-4 py-2 text-primary-foreground"
+            >
+              채팅 시작
+            </a>
+          )}
+
+          {!connectionRecent && (
+            <a
+              href="#mac-connection"
+              onClick={openConnectionCommand}
+              aria-label="Mac 연결 명령으로 이동"
+              className="inline-block rounded-md border px-3 py-2 font-medium"
+            >
+              Mac 연결 명령 보기
+            </a>
+          )}
+          {phase === "cancellation" && (
+            <details>
+              <summary className="cursor-pointer">터미널을 닫았다면</summary>
+              <p className="mt-2">
+                실행 중인 연결이 없는지 Mac에서 확인한 뒤{" "}
+                <a href="#mac-connection" onClick={openConnectionCommand} className="underline">
+                  1단계의 연결 명령
+                </a>
+                을 실행하세요. 기기를 제거할 필요는 없습니다.
+              </p>
+            </details>
+          )}
+        </div>
+      )}
       {(operation?.receipt?.readMode === "AUTO_CODE" ||
         (appliedCurrent && applied?.readMode === "AUTO_CODE")) && (
         <p className="text-sm text-neutral-600">
@@ -140,37 +227,62 @@ export function RuntimeSettingsForm({
           이전에 적용한 AI 연결이 현재 연결과 다릅니다. 자기 PC에서 연결 상태를 확인하세요.
         </p>
       )}
-      <label className={field}>
-        AI 프로그램
-        <select
-          className={select}
-          value={view.provider ?? ""}
-          disabled={blocked || !!reservedOperationId}
-          onChange={(event) => {
-            if (event.target.value === "codex" || event.target.value === "claude")
-              controller.setProvider(event.target.value);
-          }}
+      <details open={!appliedCurrent || !!reservedOperationId}>
+        <summary
+          className={appliedCurrent && !reservedOperationId ? "cursor-pointer text-sm" : "hidden"}
         >
-          <option value="" disabled>
-            프로그램 선택
-          </option>
-          <option value="codex">Codex</option>
-          <option value="claude">Claude</option>
-        </select>
-      </label>
-      <Button
-        variant="outline"
-        disabled={blocked || !view.provider || !response?.current || !!reservedOperationId}
-        onClick={() => void controller.selectFolder()}
-      >
-        Mac에서 폴더 선택
-      </Button>
+          AI·폴더 변경
+        </summary>
+        <div className="grid gap-3 pt-2">
+          <label className={field}>
+            AI 프로그램
+            <select
+              className={select}
+              value={view.provider ?? ""}
+              aria-label="AI 프로그램"
+              aria-describedby="settings-prerequisites"
+              disabled={setupBlocked || !!reservedOperationId}
+              onChange={(event) => {
+                if (event.target.value === "codex" || event.target.value === "claude")
+                  controller.setProvider(event.target.value);
+              }}
+            >
+              <option value="" disabled>
+                프로그램 선택
+              </option>
+              <option value="codex">Codex</option>
+              <option value="claude">Claude</option>
+            </select>
+          </label>
+          <Button
+            aria-label="Mac에서 폴더 선택"
+            variant={
+              guidanceActive && connectionRecent && phase === "folder" ? "default" : "outline"
+            }
+            disabled={setupBlocked || !view.provider || !response?.current || !!reservedOperationId}
+            onClick={() => void controller.selectFolder()}
+          >
+            Mac에서 폴더 선택
+          </Button>
+          <p id="settings-prerequisites" className="text-xs text-neutral-600">
+            {!connectionRecent
+              ? "AI와 폴더 선택은 Mac의 최근 통신을 확인한 뒤 가능합니다. 먼저 1단계를 완료하세요."
+              : reservedOperationId
+                ? "진행 중인 요청이 끝나거나 PC의 취소·정리가 확인되어야 AI와 폴더를 새로 선택할 수 있습니다."
+                : !response?.current
+                  ? "현재 기기 설정을 확인해야 폴더 선택이 가능합니다."
+                  : !view.provider
+                    ? "AI 프로그램을 먼저 선택하면 Mac에서 폴더 선택을 사용할 수 있습니다."
+                    : "폴더와 공유 범위를 Mac에서 확인하면 3단계의 모델 선택을 사용할 수 있습니다."}
+          </p>
+        </div>
+      </details>
       {!!reservedOperationId && (
         <p role="status" className="text-sm text-neutral-600">
           {operation?.state === "CANCELLED"
             ? operation.receipt?.state === "CANCELLED"
               ? "PC에서 취소와 정리가 확인되었습니다. 새 설정을 요청할 수 있습니다."
-              : "취소 요청을 접수했습니다. Mac의 연결 프로그램이 실행 중이어야 취소가 완료됩니다. 연결 터미널을 종료했다면 이 페이지의 연결 명령을 다시 실행하세요. 기기를 제거할 필요는 없습니다."
+              : "취소 요청을 접수했습니다. PC의 취소·정리 확인 전에는 새 설정을 요청할 수 없습니다."
             : operation?.state === "COMMITTED"
               ? "서버에 저장했습니다. PC가 설정을 확정할 때까지 기다립니다."
               : operation?.state === "APPLYING"
@@ -188,87 +300,106 @@ export function RuntimeSettingsForm({
           로그인과 실행 권한을 확인한 뒤 이 요청을 취소하세요. 웹에서 로그인을 대신하지 않습니다.
         </p>
       )}
-      {catalog && (
-        <div className="grid gap-4 rounded-md bg-neutral-50 p-4">
-          <p className="text-sm">공유 저장소: {operation!.receipt!.repositoryAlias}</p>
-          <p className="text-xs text-neutral-500">
-            PC에서 확인한 {catalog.runtime === "codex" ? "Codex" : "Claude"} {catalog.version}의
-            모델만 표시합니다.
-          </p>
-          <label className={field}>
-            모델
-            <select
-              className={select}
-              value={draft?.model ?? ""}
-              disabled={blocked || saved}
-              onChange={(event) => controller.setModel(event.target.value)}
-            >
-              <option value="" disabled>
-                모델 선택
-              </option>
-              {catalog.models.map((item) => (
-                <option key={item.id} value={item.model}>
-                  {modelLabel(item.model, catalog)}
-                </option>
-              ))}
-            </select>
-          </label>
-          {model && model.efforts.length > 0 ? (
+      <section aria-label="모델 선택과 채팅 시작" className="grid gap-3 border-t pt-3">
+        <h3 className="font-semibold">3. 모델 선택과 채팅 시작</h3>
+        {catalog ? (
+          <div className="grid gap-4 rounded-md bg-neutral-50 p-4">
+            <p className="text-sm">공유 저장소: {operation!.receipt!.repositoryAlias}</p>
+            <p className="text-xs text-neutral-500">
+              PC에서 확인한 {catalog.runtime === "codex" ? "Codex" : "Claude"} {catalog.version}의
+              모델만 표시합니다.
+            </p>
             <label className={field}>
-              추론 강도 (effort)
+              모델
               <select
                 className={select}
-                value={draft?.effort ?? ""}
-                disabled={blocked || saved}
-                onChange={(event) => controller.setEffort(event.target.value)}
+                aria-label="모델"
+                value={draft?.model ?? ""}
+                disabled={setupBlocked || saved}
+                onChange={(event) => controller.setModel(event.target.value)}
               >
                 <option value="" disabled>
-                  추론 강도 선택
+                  모델 선택
                 </option>
-                {model.efforts.map((effort) => (
-                  <option key={effort} value={effort}>
-                    {effort}
+                {catalog.models.map((item) => (
+                  <option key={item.id} value={item.model}>
+                    {modelLabel(item.model, catalog)}
                   </option>
                 ))}
               </select>
             </label>
-          ) : model ? (
-            <p className="text-sm">이 모델은 별도의 추론 강도 설정을 사용하지 않습니다.</p>
-          ) : null}
-          <Button
-            variant="outline"
-            disabled={blocked || !validSelection || saved}
-            onClick={() => void controller.selectRuntime()}
-          >
-            {saved ? "모델 선택 확인됨" : "모델 선택 확인"}
-          </Button>
-          <label className={field}>
-            공개 세션 별칭
-            <Input
-              value={view.sessionAlias}
-              maxLength={40}
-              disabled={blocked}
-              placeholder="예: 내 작업 AI"
-              onChange={(event) => controller.setSessionAlias(event.target.value)}
-            />
-          </label>
-          <p className="text-xs text-neutral-500">
-            공유 저장소와 세션 별칭은 연결한 AI 채팅방에 공개됩니다. 실제 경로와 인증 정보는 PC에
-            남습니다.
+            {model && model.efforts.length > 0 ? (
+              <label className={field}>
+                추론 강도 (effort)
+                <select
+                  className={select}
+                  aria-label="추론 강도"
+                  value={draft?.effort ?? ""}
+                  disabled={setupBlocked || saved}
+                  onChange={(event) => controller.setEffort(event.target.value)}
+                >
+                  <option value="" disabled>
+                    추론 강도 선택
+                  </option>
+                  {model.efforts.map((effort) => (
+                    <option key={effort} value={effort}>
+                      {effort}
+                    </option>
+                  ))}
+                </select>
+              </label>
+            ) : model ? (
+              <p className="text-sm">이 모델은 별도의 추론 강도 설정을 사용하지 않습니다.</p>
+            ) : null}
+            <Button
+              aria-label="모델 선택 확인"
+              variant={
+                guidanceActive && connectionRecent && phase === "model" ? "default" : "outline"
+              }
+              disabled={setupBlocked || !validSelection || saved}
+              onClick={() => void controller.selectRuntime()}
+            >
+              {saved ? "모델 선택 확인됨" : "모델 선택 확인"}
+            </Button>
+            <label className={field}>
+              공개 세션 별칭
+              <Input
+                aria-label="공개 세션 별칭"
+                value={view.sessionAlias}
+                maxLength={40}
+                disabled={setupBlocked}
+                placeholder="예: 내 작업 AI"
+                onChange={(event) => controller.setSessionAlias(event.target.value)}
+              />
+            </label>
+            <p className="text-xs text-neutral-500">
+              공유 저장소와 세션 별칭은 연결한 AI 채팅방에 공개됩니다. 실제 경로와 인증 정보는 PC에
+              남습니다.
+            </p>
+            <Button
+              aria-label="PC에 설정 적용"
+              variant={
+                guidanceActive && connectionRecent && phase === "apply" ? "default" : "outline"
+              }
+              disabled={
+                setupBlocked ||
+                !saved ||
+                !view.sessionAlias.trim() ||
+                response?.currentBinding === undefined
+              }
+              onClick={() => void controller.apply()}
+            >
+              PC에 설정 적용
+            </Button>
+          </div>
+        ) : (
+          <p className="text-sm text-neutral-600">
+            {appliedCurrent && !reservedOperationId
+              ? "PC에 적용된 설정은 아래에서 확인하세요. 채팅방의 질문 대상 선택에서 AI 응답 준비를 확인할 수 있습니다."
+              : "모델 선택과 적용은 Mac에서 AI와 폴더를 확인한 뒤 가능합니다."}
           </p>
-          <Button
-            disabled={
-              blocked ||
-              !saved ||
-              !view.sessionAlias.trim() ||
-              response?.currentBinding === undefined
-            }
-            onClick={() => void controller.apply()}
-          >
-            PC에 설정 적용
-          </Button>
-        </div>
-      )}
+        )}
+      </section>
       {canCancel && (
         <Button variant="outline" disabled={blocked} onClick={() => void controller.cancel()}>
           설정 요청 취소
@@ -312,6 +443,20 @@ export function RuntimeSettingsForm({
           </p>
         )}
       </div>
+      <details className="text-sm text-neutral-600">
+        <summary className="cursor-pointer">Mac에서 확인할 내용</summary>
+        <p className="mt-2">
+          연결 명령을 실행한 터미널을 계속 열어 두세요. 추가 관리 프로세스를 실행할 필요가 없습니다.
+          새 폴더의 필요한 코드 자동 탐색과 답·근거 경로 기록을 해당 Mac에서 승인합니다.
+        </p>
+      </details>
+      <details className="text-sm text-neutral-600">
+        <summary className="cursor-pointer">수동 연결의 AI 설정 실행 방법</summary>
+        <p className="mt-2">
+          수동 pair·exchange로 연결했다면 자기 PC에서 <code>manage --profile &lt;profile&gt;</code>
+          을 실행하세요. 프로필은 해당 기기 연결에 사용한 이름입니다.
+        </p>
+      </details>
     </section>
   );
 }

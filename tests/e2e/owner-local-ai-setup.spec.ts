@@ -129,9 +129,7 @@ test("should distinguish owner Claude request application and readiness and answ
     await form
       .getByRole("combobox", { name: "모델", exact: true })
       .selectOption("claude-product-synthetic");
-    await expect(
-      form.getByRole("combobox", { name: "추론 강도 (effort)", exact: true }),
-    ).toHaveCount(0);
+    await expect(form.getByRole("combobox", { name: "추론 강도", exact: true })).toHaveCount(0);
     await expect(form).toContainText("이 모델은 별도의 추론 강도 설정을 사용하지 않습니다.");
     const selection = owner.waitForResponse(
       (response) =>
@@ -228,12 +226,8 @@ test("should show the observed Codex catalog and wait for PC cancellation cleanu
       }),
     ).toHaveAttribute("value", "owned-synthetic");
     await form.getByRole("combobox", { name: "모델", exact: true }).selectOption("owned-synthetic");
-    await expect(
-      form.getByRole("combobox", { name: "추론 강도 (effort)", exact: true }),
-    ).toBeVisible();
-    await form
-      .getByRole("combobox", { name: "추론 강도 (effort)", exact: true })
-      .selectOption("high");
+    await expect(form.getByRole("combobox", { name: "추론 강도", exact: true })).toBeVisible();
+    await form.getByRole("combobox", { name: "추론 강도", exact: true }).selectOption("high");
     await expect(form).toContainText("Codex 0.159.1");
     await requester.goto("/app/connections");
     await expect(
