@@ -901,14 +901,37 @@ export class SettingsStore {
     if (state.retained.length) unsafe();
     if (!state.current) return;
     const pointer = state.current;
+    const journal = state.journal;
+    const emptyCancellation =
+      journal?.phase === "CANCEL_INTENT" &&
+      journal.operation.state === "CANCELLED" &&
+      journal.operation.receipt === null &&
+      journal.root === null &&
+      journal.settings === null &&
+      journal.context === null &&
+      !journal.catalogContext &&
+      !journal.applyBody &&
+      !journal.commitBody &&
+      journal.receipt?.state === "CANCELLED" &&
+      journal.receipt.configRevision === 0 &&
+      journal.receipt.runtime === journal.operation.requested.runtime &&
+      Object.entries(journal.receipt).every(([key, value]) =>
+        ["operationId", "state", "configRevision", "runtime"].includes(key) ? true : value === null,
+      );
+    if (emptyCancellation) validateBody("select-folder", journal.operation.requested);
     if (
       pointer.legacy !== true ||
       pointer.configRevision !== 0 ||
       !state.journal ||
       !equal(state.journal.previous, pointer) ||
-      !["CHOOSING", "CATALOG_INTENT", "LOCAL_CONFIRMATION", "APPLYING", "PREPARE_INTENT"].includes(
-        state.journal.phase,
-      )
+      (!emptyCancellation &&
+        ![
+          "CHOOSING",
+          "CATALOG_INTENT",
+          "LOCAL_CONFIRMATION",
+          "APPLYING",
+          "PREPARE_INTENT",
+        ].includes(state.journal.phase))
     )
       unsafe();
     const legacy = await new RuntimeStore(

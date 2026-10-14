@@ -487,62 +487,97 @@ test("should preserve a separate immutable Claude catalog reservation before set
   }
 });
 
-test("should bootstrap a legacy pointer only against its exact runtime and profile mapping", async () => {
-  const f = await fixture();
-  try {
-    const oldStore = new (await import("../src/runtime-store.ts")).RuntimeStore(
-      f.stateDir,
-      "one",
-      f.scope.agentId,
-    );
-    await oldStore.write(f.record);
-    const bytes = await readFile(oldStore.file);
-    const workspaceId = uuid();
-    const pointer: GenerationPointer = {
-      generation: f.context.generation,
-      agentId: f.scope.agentId,
-      workspaceId,
-      bindingEpoch: f.scope.bindingEpoch,
-      configRevision: 0,
-      provider: "codex",
-      localRootReference: uuid(),
-      legacy: true,
-    };
-    f.state.current = pointer;
-    f.state.journal!.previous = pointer;
-    await f.profile.write({
-      version: 1,
-      server: f.scope.server,
-      status: "connected",
-      deviceId: f.scope.deviceId,
-      scope: {
-        organizationId: f.scope.organizationId,
-        roomId: f.scope.roomId,
-        ownerAlias: "Owner",
-        organizationName: "Organization",
-        roomTitle: "Room",
-        deviceAlias: "Device",
-      },
-      mappings: [
-        {
-          root: f.root,
-          nativeSessionId: f.context.threadId,
-          workspaceId,
-          agentId: f.scope.agentId,
-          bindingEpoch: f.scope.bindingEpoch,
+for (const cancelling of [false, true])
+  test(`should bootstrap a legacy pointer only against its exact runtime and profile mapping when ${cancelling ? "cancelling" : "preparing"}`, async () => {
+    const f = await fixture();
+    try {
+      const oldStore = new (await import("../src/runtime-store.ts")).RuntimeStore(
+        f.stateDir,
+        "one",
+        f.scope.agentId,
+      );
+      await oldStore.write(f.record);
+      const bytes = await readFile(oldStore.file);
+      const workspaceId = uuid();
+      const pointer: GenerationPointer = {
+        generation: f.context.generation,
+        agentId: f.scope.agentId,
+        workspaceId,
+        bindingEpoch: f.scope.bindingEpoch,
+        configRevision: 0,
+        provider: "codex",
+        localRootReference: uuid(),
+        legacy: true,
+      };
+      f.state.current = pointer;
+      f.state.journal!.previous = pointer;
+      if (cancelling) {
+        const j = f.state.journal!;
+        j.phase = "CANCEL_INTENT";
+        j.root = null;
+        j.settings = null;
+        j.operation.state = "CANCELLED";
+        j.operation.requested = {
+          operationId: j.operation.operationId,
+          deviceId: f.scope.deviceId,
+          expectedConfigRevision: 0,
+          runtime: "codex",
+        };
+        j.receipt = {
+          operationId: j.operation.operationId,
+          state: "CANCELLED",
+          configRevision: 0,
+          runtime: "codex",
+          model: null,
+          effort: null,
+          snapshotHash: null,
+          localRootReference: null,
+          repositoryAlias: null,
+          sessionAlias: null,
+          catalog: null,
+          bindingEpoch: null,
+          agentId: null,
+          workspaceId: null,
+        };
+      }
+      await f.profile.write({
+        version: 1,
+        server: f.scope.server,
+        status: "connected",
+        deviceId: f.scope.deviceId,
+        scope: {
+          organizationId: f.scope.organizationId,
+          roomId: f.scope.roomId,
+          ownerAlias: "Owner",
+          organizationName: "Organization",
+          roomTitle: "Room",
+          deviceAlias: "Device",
         },
-      ],
-    });
-    const changed = structuredClone(f.state);
-    changed.current!.workspaceId = uuid();
-    await assert.rejects(async () => f.store.write(changed), unsafe);
-    await f.store.write(f.state);
-    assert.deepEqual(await readFile(oldStore.file), bytes);
-    assert.deepEqual((await f.store.read())!.current, pointer);
-  } finally {
-    await f.close();
-  }
-});
+        mappings: [
+          {
+            root: f.root,
+            nativeSessionId: f.context.threadId,
+            workspaceId,
+            agentId: f.scope.agentId,
+            bindingEpoch: f.scope.bindingEpoch,
+          },
+        ],
+      });
+      if (cancelling) {
+        const withCandidate = structuredClone(f.state);
+        withCandidate.journal!.root = f.policy.root;
+        await assert.rejects(() => f.store.write(withCandidate), unsafe);
+      }
+      const changed = structuredClone(f.state);
+      changed.current!.workspaceId = uuid();
+      await assert.rejects(async () => f.store.write(changed), unsafe);
+      await f.store.write(f.state);
+      assert.deepEqual(await readFile(oldStore.file), bytes);
+      assert.deepEqual((await f.store.read())!.current, pointer);
+    } finally {
+      await f.close();
+    }
+  });
 
 test("should preserve confirmed public file scope and handoff before model selection", async () => {
   const f = await fixture();
