@@ -9,6 +9,7 @@ import {
   type AnswerStatus,
 } from "./chat-presentation";
 import { RunSourceView } from "./run-source-view";
+import { ChatMarkdown } from "./chat-markdown";
 import { Avatar, AvatarFallback } from "../../components/ui/avatar";
 import { Badge } from "../../components/ui/badge";
 import { Button } from "../../components/ui/button";
@@ -117,9 +118,7 @@ export function ChatTimeline({
                     </p>
                   )}
                   {event.publicText && (
-                    <p className="mt-1 whitespace-pre-wrap break-words text-sm [overflow-wrap:anywhere]">
-                      {event.publicText}
-                    </p>
+                    <ChatMarkdown text={event.publicText} messageId={event.eventId} />
                   )}
                   {notice && (
                     <div className="mt-2 space-y-2 rounded-md border border-amber-200 bg-amber-50 p-3 text-xs text-amber-950">

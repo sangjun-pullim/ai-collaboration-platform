@@ -13,6 +13,7 @@ import {
 } from "../../src/features/investigation-coordinator/history-state.ts";
 import * as presentation from "../../src/features/investigation-coordinator/chat-presentation.ts";
 import type { RoomChatController } from "../../src/features/investigation-coordinator/room-chat-controller.ts";
+import { ChatMarkdown } from "../helpers/chat-markdown-renderer.ts";
 const fixture = JSON.parse(readFileSync("tests/fixtures/human-direct-contracts.json", "utf8"));
 const retirementFixture = JSON.parse(
   readFileSync("tests/fixtures/retirement-contracts.json", "utf8"),
@@ -250,6 +251,7 @@ async function harness(
           ChatTimeline: "timeline",
         };
       if (name === "./run-source-view") return { RunSourceView: "source-view" };
+      if (name === "./chat-markdown") return { ChatMarkdown };
       if (name === "../../components/ui/avatar") return { Avatar: "div", AvatarFallback: "span" };
       if (name === "../../components/ui/badge") return { Badge: "span" };
       if (name === "./own-input-controls") return { OwnInputControls: "own-input-controls" };

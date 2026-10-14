@@ -17,6 +17,7 @@ import {
 import { callInvestigation } from "../../src/features/investigation-coordinator/investigation-client.ts";
 
 import * as presentation from "../../src/features/investigation-coordinator/chat-presentation.ts";
+import { ChatMarkdown } from "../helpers/chat-markdown-renderer.ts";
 
 const roomId = "00000000-0000-4000-8000-000000000001";
 const eventId = "00000000-0000-4000-8000-000000000002";
@@ -556,6 +557,7 @@ test("should attach historical event addresses even outside thirty-two current r
         if (name === "react/jsx-runtime") return { jsx, jsxs: jsx };
         if (name === "./chat-presentation") return presentation;
         if (name === "./run-source-view") return { RunSourceView: "source-view" };
+        if (name === "./chat-markdown") return { ChatMarkdown };
         if (name.startsWith("../../components/ui/"))
           return {
             Avatar: "avatar",

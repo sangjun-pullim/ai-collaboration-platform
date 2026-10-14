@@ -41,7 +41,7 @@ test("should propagate ordinary capacity failures and cancellation after a reade
     const reader = new RepositoryReader(
       f.record.context!.root,
       () => {
-        time += 500;
+        time += 3000;
       },
       () => time,
     );
@@ -72,7 +72,7 @@ test("should report a repository search timeout to the provider and still publis
   const limited = new RepositoryReader(
     f.record.context!.root,
     () => {
-      time += 500;
+      time += 3000;
     },
     () => time,
   );
