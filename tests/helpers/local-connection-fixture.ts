@@ -38,7 +38,7 @@ export async function connectionFixture(
   t: TestContext,
   options: {
     fallback?: "arm64" | "x64";
-    behavior?: "failure" | "no-proof" | "signal";
+    behavior?: "failure" | "no-proof" | "signal" | "interrupt";
     corrupt?: boolean;
     redirect?: boolean;
     escape?: boolean;
@@ -103,8 +103,8 @@ export async function connectionFixture(
           ? 'throw Object.assign(new Error("private-marker"), {code:"UNAVAILABLE"});'
           : options.behavior === "no-proof"
             ? "process.exit(0);"
-            : options.behavior === "signal"
-              ? `await new Promise(resolve => { const timer = setInterval(() => {}, 1000); process.once("SIGTERM", () => { clearInterval(timer); fs.writeFileSync(${JSON.stringify(join(root, "stopped"))}, "stopped"); resolve(); }); });`
+            : options.behavior === "signal" || options.behavior === "interrupt"
+              ? `await new Promise(resolve => { const timer = setInterval(() => {}, 1000); process.once(${JSON.stringify(options.behavior === "interrupt" ? "SIGINT" : "SIGTERM")}, () => { clearInterval(timer); fs.writeFileSync(${JSON.stringify(join(root, "stopped"))}, "stopped"); resolve(); }); });`
               : "";
       await writeFile(
         join(out, "src", "cli.js"),

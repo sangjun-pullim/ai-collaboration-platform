@@ -8,6 +8,7 @@ import { StateStore, type ConnectorState, type Pending, type Mapping } from "./s
 import {
   ConnectionError,
   isId,
+  isHash,
   isAlias,
   validateBody,
   type Body,
@@ -35,6 +36,7 @@ import {
   prepareConnection,
   terminalInteraction,
   connectionFailureHint,
+  type ConnectInput,
 } from "./cli/connect-command.ts";
 export { connectionFailureHint } from "./cli/connect-command.ts";
 import { ConnectionRenewal } from "./connection-renewal.ts";
@@ -173,7 +175,7 @@ export class Connector {
     await this.send(state);
     return { state: "pairing", code, expiresAt: state.pairingExpiresAt };
   }
-  async status() {
+  async status(onAuthorityRejected?: () => void) {
     const state = await this.state();
     if (state.pending?.action === "begin")
       return {
@@ -224,6 +226,7 @@ export class Connector {
       ) {
         state.status = "disconnected";
         await this.store.write(state);
+        if (["UNAUTHENTICATED", "FORBIDDEN"].includes(error.code)) onAuthorityRejected?.();
         return { state: "disconnected", recovery: "fresh approval required" };
       }
       throw error;
@@ -408,6 +411,57 @@ export class Connector {
     }
   }
 }
+/** Probe only a reusable ancestor selected by an explicit fresh-approval command.
+ * Release every old-device/gap lock before selecting the requested recovery target again.
+ */
+async function selectConnectProfile(target: StateStore, input: ConnectInput, origin: string) {
+  const selected = await selectConnectionProfile(target, input, origin);
+  if (
+    !input.previousProfile ||
+    !input.recoveryId ||
+    selected.mode !== "normal" ||
+    selected.store.profile === target.profile
+  )
+    return selected;
+  return untilStopped(async (signal) => {
+    const check = () => {
+      if (signal.aborted) throw new ConnectionError("CONFLICT");
+    };
+    check();
+    if (!isId(input.organizationId) || !isId(input.roomId) || !isAlias(input.deviceAlias))
+      throw new ConnectionError("INVALID_BODY");
+    if (!terminalInteraction(signal).interactive) throw new ConnectionError("FORBIDDEN");
+    let rejected = false;
+    await prepareSelectedConnection(selected, check, async (verify) => {
+      const owner = await selected.store.read();
+      if (
+        owner?.status !== "connected" ||
+        !isHash(owner.credential) ||
+        !isId(owner.deviceId) ||
+        !(Date.parse(owner.credentialExpiresAt ?? "") > Date.now()) ||
+        owner.pending ||
+        owner.registration
+      )
+        return;
+      await selected.store.transaction(async () => {
+        await verify();
+        check();
+        // Only a validated 401/403 persisted by status authorizes this one reselection.
+        await new Connector(selected.store, new CentralClient(origin)).status(() => {
+          rejected = true;
+        });
+        check();
+      });
+    });
+    check();
+    if (!rejected) return selected;
+    const recovered = await selectConnectionProfile(target, input, origin);
+    check();
+    if (recovered.mode !== "recovery") throw new RuntimeError("AUTHORITY_LOST");
+    return recovered;
+  });
+}
+
 export async function main(args: string[]) {
   if (process.platform !== "darwin" || Number(process.versions.node.split(".")[0]) !== 24)
     throw new ConnectionError("UNAVAILABLE");
@@ -429,7 +483,7 @@ export async function main(args: string[]) {
       : required("server"));
   const selection =
     command === "connect"
-      ? await selectConnectionProfile(
+      ? await selectConnectProfile(
           requestedStore,
           {
             organizationId: required("organization-id"),

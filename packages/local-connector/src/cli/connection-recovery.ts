@@ -692,7 +692,9 @@ export async function prepareRecovery(
             previous,
             settings,
             async (_owner, metadata) => {
-              await configuredSetupEvidence(previous, settings, configured);
+              // Protected inspection owns the never-prepared classification and inventory checks.
+              if (!metadata.preservedUnappliedSetup)
+                await configuredSetupEvidence(previous, settings, configured);
               return { snapshot: await evidence(previous), ...metadata };
             },
             "fresh-approval",
@@ -702,10 +704,14 @@ export async function prepareRecovery(
         return withLocalProfileProtection(
           previous,
           (agent) => runner(previous, agent),
-          async () => ({ snapshot: await evidence(previous), unresolvedCount: 0 }),
+          async () => ({
+            snapshot: await evidence(previous),
+            unresolvedCount: 0,
+            preservedUnappliedSetup: undefined,
+          }),
         );
       };
-      const { snapshot, unresolvedCount } = await inspect();
+      const { snapshot, unresolvedCount, preservedUnappliedSetup } = await inspect();
       check();
       const next = await connector.store.read();
       if (next?.credential) {
@@ -720,6 +726,10 @@ export async function prepareRecovery(
       }
       // Locks exclude a live connector owner; they do not reconstruct a vanished terminal's proof.
       // A retry with fresh credentials must acknowledge preserved UNKNOWN answers again.
+      if (preservedUnappliedSetup)
+        interaction.write(
+          "이전 미완료 AI 설정과 목록 조회 결과는 확인 불가 상태로 그대로 보존합니다. 이전 설정을 다시 실행하지 않습니다. 새 기기의 AI와 폴더는 웹에서 다시 설정하세요.\n",
+        );
       if (unresolvedCount > 0) {
         interaction.write(
           `이전 답변 ${unresolvedCount}건은 결과 확인 불가로 보존합니다. 이전 질문을 자동 재실행하지 않습니다. 원래 연결 터미널을 종료하고 웹에서 이전 기기를 연결 취소한 뒤 새 대화로 연결하세요.\n`,
@@ -741,7 +751,11 @@ export async function prepareRecovery(
       }
       check();
       const rechecked = await inspect();
-      if (rechecked.snapshot !== snapshot || rechecked.unresolvedCount !== unresolvedCount)
+      if (
+        rechecked.snapshot !== snapshot ||
+        rechecked.unresolvedCount !== unresolvedCount ||
+        rechecked.preservedUnappliedSetup !== preservedUnappliedSetup
+      )
         throw new RuntimeError("AUTHORITY_LOST");
       // All old runtime/session/profile protections have returned before acquiring the new device.
       await withSettingsDeviceLock(connector.store, "connect", async () => {
