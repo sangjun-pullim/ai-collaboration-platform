@@ -163,7 +163,9 @@ async function fixture(provider: "codex" | "claude" = "codex", profileName = "on
     if (action === "receipt") receiptHook?.(body as unknown as Receipt);
     const hiddenTerminal =
       action === "poll" &&
-      ["APPLIED", "CANCELLED"].includes(response.operation?.state ?? "") &&
+      (response.operation?.state === "APPLIED" ||
+        (response.operation?.state === "CANCELLED" &&
+          response.operation.receipt?.state === "CANCELLED")) &&
       body.operationId !== response.operation?.operationId;
     return Response.json({
       ok: true,
@@ -1581,6 +1583,156 @@ test("should refuse capability drift before preparing a new context", async () =
     await f.close();
   }
 });
+
+for (const configured of [false, true])
+  test(`should acknowledge an unreceived cancelled folder request with ${configured ? "an existing" : "no"} AI configuration`, async () => {
+    const f = await fixture();
+    try {
+      if (configured) {
+        await local(f);
+        await f.manager().run({ once: true });
+      }
+      const before = await f.store.read();
+      const operationId = uuid();
+      f.response.operation = {
+        operationId,
+        deviceId: f.response.deviceId,
+        expectedConfigRevision: f.response.configRevision,
+        state: "CANCELLED",
+        requested: {
+          operationId,
+          deviceId: f.response.deviceId,
+          expectedConfigRevision: f.response.configRevision,
+          runtime: "codex",
+        },
+        receipt: null,
+      };
+      const start = f.requests.length;
+      const status = await f
+        .manager({
+          folder: async () => assert.fail("cancelled request must not open a picker"),
+          adapter: () => assert.fail("cancelled request must not start AI"),
+          runner: () => ({ run: async () => ({ ready: true }) }),
+        })
+        .run({ once: true });
+      assert.equal(status.state, "CANCELLED");
+      const receipts = f.requests.slice(start).filter((r) => r.action === "receipt");
+      assert.equal(receipts.length, 1);
+      assert.equal(receipts[0].body.state, "CANCELLED");
+      assert.equal(receipts[0].body.operationId, operationId);
+      assert.equal(receipts[0].body.localRootReference, null);
+      assert.equal(receipts[0].body.repositoryAlias, null);
+      assert.deepEqual((await f.store.read())!.current, before?.current ?? null);
+      assert.deepEqual((await f.store.read())!.retained, before?.retained ?? []);
+      await f.store.assertIdle();
+    } finally {
+      await f.close();
+    }
+  });
+
+test("should acknowledge an unreceived cancellation while preserving the initial legacy binding", async () => {
+  const f = await fixture();
+  try {
+    const previous = new (await import("../src/runtime-store.ts")).RuntimeStore(
+      f.stateDir,
+      "one",
+      f.scope.agentId,
+    );
+    await previous.write(f.record);
+    const bytes = await readFile(previous.file);
+    const workspaceId = uuid();
+    await f.profile.write({
+      ...(await f.profile.read())!,
+      mappings: [
+        {
+          root: f.root,
+          nativeSessionId: f.context.threadId,
+          agentId: f.scope.agentId,
+          workspaceId,
+          bindingEpoch: f.scope.bindingEpoch,
+        },
+      ],
+    });
+    const profileBytes = await readFile(f.profile.file);
+    f.response.currentBinding = {
+      agentId: f.scope.agentId,
+      workspaceId,
+      bindingEpoch: f.scope.bindingEpoch,
+      runtime: "codex",
+    };
+    f.response.operation!.state = "CANCELLED";
+    const status = await f
+      .manager({
+        folder: async () => assert.fail("cancelled legacy request must not open a picker"),
+        adapter: () => assert.fail("cancelled legacy request must not start AI"),
+        runner: () => ({ run: async () => ({ ready: true }) }),
+      })
+      .run({ once: true });
+    assert.equal(status.state, "CANCELLED");
+    assert.equal((await f.store.read())!.current!.legacy, true);
+    assert.equal((await f.store.read())!.current!.workspaceId, workspaceId);
+    assert.deepEqual(await readFile(previous.file), bytes);
+    assert.deepEqual(await readFile(f.profile.file), profileBytes);
+    assert.equal(f.requests.filter((r) => r.action === "receipt").length, 1);
+  } finally {
+    await f.close();
+  }
+});
+
+test("should replay an unreceived cancellation after a lost acknowledgement without opening a picker", async () => {
+  const f = await fixture();
+  try {
+    f.response.operation!.state = "CANCELLED";
+    let lost = false;
+    f.receiptHook = (value) => {
+      if (value.state === "CANCELLED" && !lost) {
+        lost = true;
+        throw new Error("lost cancellation acknowledgement");
+      }
+    };
+    const manager = () =>
+      f.manager({
+        folder: async () => assert.fail("cancelled request must not open a picker"),
+        adapter: () => assert.fail("cancelled request must not start AI"),
+      });
+    assert.equal((await manager().run({ once: true })).state, "UNKNOWN");
+    const pending = (await f.store.read())!;
+    assert.equal(pending.journal!.receipt!.state, "CANCELLED");
+    assert.equal((await manager().run({ once: true })).state, "CANCELLED");
+    const receipts = f.requests.filter((r) => r.action === "receipt");
+    assert.equal(receipts.length, 2);
+    assert.deepEqual(receipts[0].body, receipts[1].body);
+    assert.equal((await f.store.read())!.journal!.generation, pending.journal!.generation);
+  } finally {
+    await f.close();
+  }
+});
+
+for (const mismatch of ["receipt", "selected-model", "revision", "binding"] as const)
+  test(`should refuse unreceived cancellation with ${mismatch} evidence`, async () => {
+    const f = await fixture();
+    try {
+      if (mismatch === "receipt" || mismatch === "selected-model") {
+        await local(f);
+        if (mismatch === "selected-model") f.response.operation!.receipt = null;
+      }
+      const profile = new StateStore(f.stateDir, "unreceived");
+      await profile.write((await f.profile.read())!);
+      const store = new SettingsStore(profile);
+      f.response.operation!.state = "CANCELLED";
+      if (mismatch === "revision") f.response.configRevision++;
+      if (mismatch === "binding") f.response.current = false;
+      const start = f.requests.length;
+      await new SettingsManager(profile, store, f.client, {
+        folder: async () => assert.fail("no picker before identity verification"),
+        adapter: () => assert.fail("no AI before identity verification"),
+      }).run({ once: true });
+      assert.equal(await store.read(), undefined);
+      assert.equal(f.requests.slice(start).filter((r) => r.action === "receipt").length, 0);
+    } finally {
+      await f.close();
+    }
+  });
 
 test("should send exact cleanup receipt when the native folder chooser is cancelled", async () => {
   const f = await fixture();

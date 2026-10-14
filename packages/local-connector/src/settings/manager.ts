@@ -317,6 +317,13 @@ export class SettingsManager {
       : this.store.generationStore(pointer.agentId, pointer.generation);
   }
   private async bootstrap(response: SettingsResponse, operation: Operation) {
+    const unreceivedCancellation = operation.state === "CANCELLED";
+    if (unreceivedCancellation) {
+      // Only an untouched folder request can be acknowledged without candidate cleanup.
+      // A received or partially prepared request must use its existing durable journal.
+      if (operation.receipt !== null) throw new RuntimeError("CONTEXT_UNCONFIRMED");
+      validateBody("select-folder", operation.requested);
+    }
     if (
       operation.expectedConfigRevision !== response.configRevision ||
       operation.deviceId !== this.state.deviceId
@@ -377,6 +384,11 @@ export class SettingsManager {
         previous,
       },
     };
+    if (unreceivedCancellation) {
+      // Persist the exact receipt before network I/O so reconnect can replay it safely.
+      next.journal!.phase = "CANCEL_INTENT";
+      next.journal!.receipt = receipt(next.journal!, "CANCELLED");
+    }
     await this.store.write(next);
     this.state = next;
     this.reportStatus();
@@ -1171,9 +1183,11 @@ export class SettingsManager {
                 (closed(journal) &&
                   journal.operation.operationId !== response.operation.operationId))
             ) {
-              if (response.operation.state !== "REQUESTED") throw new RuntimeError("UNKNOWN");
+              if (!["REQUESTED", "CANCELLED"].includes(response.operation.state))
+                throw new RuntimeError("UNKNOWN");
               await this.bootstrap(response, response.operation);
-              await this.choose();
+              if (response.operation.state === "CANCELLED") await this.recover(response);
+              else await this.choose();
             } else if (journal && !closed(journal)) await this.recover(response);
             if (!this.state.journal || closed(this.state.journal)) {
               if (this.state.current) this.assertBinding(this.latestResponse ?? response);

@@ -170,7 +170,7 @@ export function RuntimeSettingsForm({
           {operation?.state === "CANCELLED"
             ? operation.receipt?.state === "CANCELLED"
               ? "PC에서 취소와 정리가 확인되었습니다. 새 설정을 요청할 수 있습니다."
-              : "취소를 요청했습니다. PC에서 후보 설정 정리가 확인될 때까지 기다립니다."
+              : "취소 요청을 접수했습니다. Mac의 연결 프로그램이 실행 중이어야 취소가 완료됩니다. 연결 터미널을 종료했다면 이 페이지의 연결 명령을 다시 실행하세요. 기기를 제거할 필요는 없습니다."
             : operation?.state === "COMMITTED"
               ? "서버에 저장했습니다. PC가 설정을 확정할 때까지 기다립니다."
               : operation?.state === "APPLYING"
