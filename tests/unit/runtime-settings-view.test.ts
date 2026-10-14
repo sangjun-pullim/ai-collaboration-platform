@@ -3,6 +3,7 @@ import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import { runInNewContext } from "node:vm";
 import ts from "typescript";
+import { connectionSnapshot } from "../../src/features/device-binding/connection-presence.ts";
 import { consumeConnectionFragment } from "../../src/features/device-binding/local-connection-command.ts";
 import {
   connectionSelectionKey,
@@ -452,6 +453,7 @@ function loadUI(
     ...globals,
     require(name: string) {
       if (name === "react/jsx-runtime") return { jsx, jsxs: jsx };
+      if (name === "./connection-presence") return { connectionSnapshot };
       if (Object.hasOwn(replacements, name)) return replacements[name];
       throw new Error(`Unexpected settings UI dependency ${name}`);
     },
@@ -535,8 +537,10 @@ test("should discover a terminal registration and show the approved room AI sett
           return key === "confirmed" ? "on" : "a".repeat(64);
         }
       },
-      async fetch(url: string) {
+      async fetch(url: string, init: { body: string }) {
         assert.equal(url, "/api/connections/approve");
+        assert.equal(JSON.parse(init.body).roomId, rootId);
+        assert.equal(JSON.parse(init.body).confirmed, true);
         return {
           ok: true,
           async json() {
@@ -615,7 +619,7 @@ test("should discover a terminal registration and show the approved room AI sett
   const settingsPanel = nodes(tree).find((node) => node.props.id === "ai-settings")!;
   assert.ok(settingsPanel);
   assert.ok(
-    nodes(tree).indexOf(settingsPanel) <
+    nodes(tree).indexOf(settingsPanel) >
       nodes(tree).findIndex((node) => node.type === "connection-guide"),
   );
   const nextCleanup = effects[1]() as () => void;
@@ -632,7 +636,11 @@ test("should discover a terminal registration and show the approved room AI sett
   nextCleanup();
   assert.equal(timers.size, 0);
 });
-function formTree(view: SettingsView, onModel: (model: string) => void = () => {}) {
+function formTree(
+  view: SettingsView,
+  onModel: (model: string) => void = () => {},
+  props: Record<string, unknown> = {},
+) {
   const component = loadUI("src/features/runtime-settings/runtime-settings-form.tsx", {
     react: {
       useMemo: (factory: () => unknown) => factory(),
@@ -654,7 +662,7 @@ function formTree(view: SettingsView, onModel: (model: string) => void = () => {
       },
     },
   }).RuntimeSettingsForm as (props: unknown) => UINode;
-  return component({ deviceId, deviceAlias: "본인 Mac" });
+  return component({ deviceId, deviceAlias: "본인 Mac", ...props });
 }
 
 test("should render only actual capability choices and disable changes after the model is saved", () => {
@@ -799,6 +807,28 @@ test("should restrict setup to a live owned device in the selected room and pres
     return ui(props);
   }
   const first = render();
+  assert.equal(nodes(first).find((node) => node.props.id === "mac-connection")!.props.open, true);
+  assert.equal(
+    nodes(first).find((node) => node.type === "settings-form")!.props.connectionRecent,
+    false,
+  );
+  const guide = nodes(first).find((node) => node.type === "connection-guide")!;
+  assert.equal(guide.props.prominent, true);
+  props.devices[0].lastSeenAt = new Date().toISOString() as unknown as null;
+  const connected = render();
+  assert.equal(
+    nodes(connected).find((node) => node.props.id === "mac-connection")!.props.open,
+    false,
+  );
+  assert.equal(
+    nodes(connected).find((node) => node.type === "settings-form")!.props.connectionRecent,
+    true,
+  );
+  assert.equal(
+    nodes(connected).find((node) => node.type === "connection-guide")!.props.roomId,
+    guide.props.roomId,
+  );
+  props.devices[0].lastSeenAt = null;
   // Expand pure local cards; imported components remain mocked by this harness.
   const renderedCards = nodes(first)
     .filter((node) => typeof node.type === "function")
@@ -817,10 +847,10 @@ test("should restrict setup to a live owned device in the selected room and pres
   const panel = nodes(first).find((node) => node.props["aria-label"] === "본인 기기 AI 설정")!;
   assert.equal(panel.props.id, "ai-settings");
   assert.ok(
-    nodes(first).indexOf(panel) <
+    nodes(first).indexOf(panel) >
       nodes(first).findIndex((node) => node.type === "connection-guide"),
   );
-  const selects = nodes(panel).filter((node) => node.type === "select");
+  const selects = nodes(first).filter((node) => node.type === "select");
   assert.deepEqual(
     nodes(selects[1])
       .filter((node) => node.type === "option")
@@ -830,13 +860,24 @@ test("should restrict setup to a live owned device in the selected room and pres
   (selects[0].props.onChange as (event: unknown) => void)({ target: { value: "second-room" } });
   const second = render();
   assert.equal(
+    nodes(second).find((node) => node.type === "connection-guide")!.props.roomId,
+    "second-room",
+  );
+  assert.equal(
+    nodes(second).find((node) => node.props.name === "roomId")!.props.value,
+    "second-room",
+  );
+  assert.equal(nodes(second).filter((node) => node.props.name === "roomId").length, 1);
+  assert.equal(
     nodes(second).find((node) => node.type === "settings-form")!.props.deviceId,
     secondOperationId,
   );
   assert.equal(
     nodes(second).some(
       (node) =>
-        node.type === "link" && node.props.href === "/app" && textContent(node) === "질문만 하기",
+        node.type === "link" &&
+        node.props.href === "/app/rooms/second-room" &&
+        textContent(node) === "질문만 하기",
     ),
     true,
   );
@@ -970,12 +1011,13 @@ test("should keep the active connector and put manage only inside closed manual 
   assert.ok(outside.every((node) => !textContent(node).includes("manage --profile")));
 });
 
-test("should consume a known pairing fragment once without selecting approval", async () => {
+test("should consume pairing fragments without auto-approval and preserve successful approval after refresh", async () => {
   const states: unknown[] = [],
     effects: (() => unknown)[] = [];
   let cursor = 0,
     replaced = "",
     requests = 0;
+  let explicitApproval = false;
   const roomId = deviceId,
     code = "a".repeat(64);
   const refs: { current: unknown }[] = [];
@@ -1029,9 +1071,19 @@ test("should consume a known pairing fragment once without selecting approval", 
     {
       window,
       queueMicrotask,
+      FormData: class {
+        constructor(private form: { values: Record<string, string> }) {}
+        get(name: string) {
+          return this.form.values[name];
+        }
+      },
       fetch() {
         requests++;
-        throw Error("must not approve automatically");
+        if (!explicitApproval) throw Error("must not approve automatically");
+        return Promise.resolve({
+          ok: true,
+          json: async () => ({ ok: true, data: { deviceAlias: "내 Mac" } }),
+        });
       },
     },
   ).ConnectionManager as (props: unknown) => UINode;
@@ -1068,7 +1120,7 @@ test("should consume a known pairing fragment once without selecting approval", 
   assert.equal(replaced, "");
   assert.equal(entryFocus, 1);
   assert.equal(entryScroll, 1);
-  assert.equal(nodes(entryPanel).find((node) => node.type === "select")!.props.value, rootId);
+  assert.equal(nodes(entry).find((node) => node.props.name === "roomId")!.props.value, rootId);
   entryCleanup();
   const repeatedEntryCleanup = effects[0]() as () => void;
   assert.equal(entryFocus, 1, "StrictMode must not take settings focus again");
@@ -1113,6 +1165,26 @@ test("should consume a known pairing fragment once without selecting approval", 
   assert.equal(checkbox.props.defaultChecked, undefined);
   assert.equal(listeners.size, 1);
   assert.equal(confirmation.checked, false);
+  assert.equal(nodes(tree).find((node) => node.type === "connection-guide")!.props.roomId, roomId);
+  assert.equal(
+    nodes(tree).find((node) => node.props["aria-label"] === "기기 승인 안내")!.props.open,
+    true,
+  );
+  assert.equal(
+    nodes(tree).find((node) => node.props["aria-label"] === "기기 승인")!.props.variant,
+    "default",
+  );
+  const approval = nodes(tree).find((node) => node.props.id === "connection-approval")!;
+  let approvalFocus = 0;
+  (approval.props.ref as { current: unknown }).current = {
+    focus() {
+      approvalFocus++;
+    },
+    scrollIntoView() {},
+  };
+  effects[effects.length - 1]();
+  assert.equal(approvalFocus, 1);
+
   const render = () => {
     cursor = 0;
     refCursor = 0;
@@ -1175,13 +1247,58 @@ test("should consume a known pairing fragment once without selecting approval", 
   navigate("");
   await Promise.resolve();
   assert.equal(codeField().props.value, nextCode);
+  (codeField().props.onChange as (event: unknown) => void)({ target: { value: "" } });
+  confirmation.checked = true;
+  navigate(`#code=${nextCode}&room=${rootId}`);
+  await Promise.resolve();
+  assert.equal(window.location.hash, "");
+  assert.equal(
+    codeField().props.value,
+    nextCode,
+    "an unapproved link remains usable after editing",
+  );
+  assert.equal(confirmation.checked, false);
+  (
+    nodes(render()).find((node) => node.props.name === "roomId")!.props.onChange as (
+      event: unknown,
+    ) => void
+  )({ target: { value: roomId } });
+  navigate(`#code=${nextCode}&room=${rootId}`);
+  await Promise.resolve();
+  assert.equal(nodes(render()).find((node) => node.props.name === "roomId")!.props.value, rootId);
+  assert.equal(codeField().props.value, nextCode);
+  (codeField().props.onChange as (event: unknown) => void)({ target: { value: nextCode } });
+  assert.equal(requests, 0);
+  explicitApproval = true;
+  const formNode = nodes(render()).find((node) => node.type === "form")!;
+  await (formNode.props.onSubmit as (event: unknown) => Promise<void>)({
+    preventDefault() {},
+    currentTarget: { values: { code: nextCode, confirmed: "on" }, reset() {} },
+  });
+  assert.equal(codeField().props.value, "");
+  navigate("#mac-connection");
+  await Promise.resolve();
+  navigate(`#code=${nextCode}&room=${rootId}`);
+  await Promise.resolve();
+  assert.equal(window.location.hash, "");
+  assert.equal(
+    codeField().props.value,
+    "",
+    "completed approval must survive intermediate navigation",
+  );
+  assert.match(
+    textContent(nodes(render()).find((node) => node.props["aria-label"] === "Mac 연결 상태")),
+    /yes/,
+  );
+  assert.equal(requests, 1);
+  (codeField().props.onChange as (event: unknown) => void)({ target: { value: nextCode } });
   navigate(`#code=${code}&room=${roomId}`);
   assert.equal(typeof cleanup, "function");
   (cleanup as () => void)();
   await Promise.resolve();
   assert.equal(codeField().props.value, nextCode);
   assert.equal(listeners.size, 0);
-  assert.equal(requests, 0);
+  assert.equal(requests, 1);
 });
 
 test("should prepare a room-specific command and expose it when clipboard permission is denied", async () => {
@@ -1355,4 +1472,75 @@ test("should use a native label for matching requested and applied settings iden
       textContent(nodes(stale).find((n) => n.props["aria-label"] === label)),
       /Native Claude/,
     );
+});
+
+test("should provide executable reconnect navigation and keep cancellation locked while offline", () => {
+  const pending = response({ operation: { ...operation("CANCELLED"), receipt: localReceipt() } });
+  const tree = formTree(formView({ response: pending, draft: null }), undefined, {
+    connectionRecent: false,
+  });
+  const reconnect = nodes(tree).find(
+    (node) => node.props["aria-label"] === "Mac 연결 명령으로 이동",
+  );
+  assert.ok(reconnect);
+  assert.equal(reconnect.props.href, "#mac-connection");
+  assert.equal(nodes(tree).find((node) => node.type === "select")!.props.disabled, true);
+  assert.equal(
+    nodes(tree).find((node) => textContent(node) === "Mac에서 폴더 선택")!.props.disabled,
+    true,
+  );
+  assert.match(textContent(tree), /기기를 제거할 필요/);
+});
+
+test("should use terminal inspection instead of another launch for recent cancellation", () => {
+  const pending = response({ operation: { ...operation("CANCELLED"), receipt: localReceipt() } });
+  const tree = formTree(formView({ response: pending, draft: null }), undefined, {
+    connectionRecent: true,
+  });
+  assert.equal(
+    nodes(tree).some((node) => node.props["aria-label"] === "Mac 연결 명령으로 이동"),
+    false,
+  );
+  assert.equal(
+    nodes(tree).find((node) => node.props.id === "settings-next-action")!.props["data-phase"],
+    "cancellation",
+  );
+  assert.match(textContent(tree), /실행 중인 연결 터미널/);
+  assert.equal(nodes(tree).find((node) => node.type === "select")!.props.disabled, true);
+});
+
+test("should promote model confirmation then apply and keep applied settings separate", () => {
+  const modelTree = formTree(formView());
+  const modelButton = nodes(modelTree).find(
+    (node) => node.props["aria-label"] === "모델 선택 확인",
+  )!;
+  assert.ok(modelButton);
+  assert.equal(modelButton.props.variant, "default");
+  const c = catalog();
+  const saved = confirmed(c, { model: "model-one", effort: null, snapshotHash: c.snapshotHash });
+  const applyTree = formTree(formView({ response: saved }));
+  const applyButton = nodes(applyTree).find((node) => textContent(node) === "PC에 설정 적용")!;
+  assert.equal(applyButton.props.variant, "default");
+  assert.equal(applyButton.props.disabled, false);
+  const applied = {
+    ...localReceipt("APPLIED"),
+    ...binding,
+    model: "model-one",
+    sessionAlias: "내 AI",
+    snapshotHash: c.snapshotHash,
+  };
+  const appliedTree = formTree(
+    formView({ response: response({ applied }), reservedOperationId: null, draft: null }),
+  );
+  assert.equal(
+    nodes(appliedTree).find((node) => node.props.id === "settings-next-action")!.props[
+      "data-phase"
+    ],
+    "applied",
+  );
+  assert.ok(nodes(appliedTree).find((node) => node.props["aria-label"] === "PC에 적용된 설정"));
+  assert.equal(
+    nodes(appliedTree).some((node) => textContent(node) === "PC에 설정 적용"),
+    false,
+  );
 });

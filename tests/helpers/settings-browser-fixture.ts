@@ -63,6 +63,12 @@ export async function runSettingsBrowserParent() {
         if (input.scenario === "automatic") fixture.readMode = "AUTO_CODE";
         fixtures.set(id, fixture);
         fixture.suppressRunner = true;
+        const heartbeat = await workflow.devices.request(
+          "heartbeat",
+          {},
+          fixture.scene.responder.credential,
+        );
+        ensure(heartbeat.status === 200, "Owned settings device must report recent communication");
         data = {
           id,
           roomId: fixture.scene.scope.roomId,
