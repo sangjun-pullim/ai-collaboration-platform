@@ -14,9 +14,14 @@ import {
   type OwnedContext,
   type RuntimeAdapter,
 } from "../src/runtime-contracts.ts";
-import { SettingsManager, type SettingsManagerOptions } from "../src/settings/manager.ts";
+import {
+  SettingsManager,
+  type SettingsManagerOptions,
+  type SettingsManagerStatus,
+} from "../src/settings/manager.ts";
 import { SettingsClient } from "../src/settings/client.ts";
 import { SettingsStore } from "../src/settings/store.ts";
+import type { RuntimeStore } from "../src/runtime-store.ts";
 import {
   capabilityHash,
   jsonbTextBytes,
@@ -27,7 +32,9 @@ import {
 } from "../src/settings/contracts.ts";
 import { runtimeFixture, uuid, observation } from "./runtime-fixture.ts";
 import { claudeRecord } from "./provider-runtime-fixture.ts";
-import { runnerFixture, deferred } from "./runner-fixture.ts";
+import { runnerFixture, deferred, SyntheticAdapter } from "./runner-fixture.ts";
+import { WorkflowRunner } from "../src/workflow-runner.ts";
+import { WorkflowClient } from "../src/workflow-client.ts";
 import { ConnectionError } from "../src/contracts.ts";
 import { ConnectionRenewal } from "../src/connection-renewal.ts";
 import { Connector } from "../src/cli.ts";
@@ -90,6 +97,7 @@ async function fixture(provider: "codex" | "claude" = "codex", profileName = "on
   let failBeforeCommit = false;
   let receiptHook: ((receipt: Receipt) => void) | undefined;
   let refusePoll = false;
+  let unauthenticatedPoll = false;
   let pollHook: (() => Promise<void> | void) | undefined;
   const fetcher: typeof fetch = async (url, init) => {
     const action = String(url).split("/").at(-1)!;
@@ -97,6 +105,8 @@ async function fixture(provider: "codex" | "claude" = "codex", profileName = "on
     requests.push({ action, body, secret: new Headers(init?.headers).get("authorization") });
     if (action === "poll") {
       await pollHook?.();
+      if (unauthenticatedPoll)
+        return Response.json({ ok: false, error: { code: "UNAUTHENTICATED" } }, { status: 401 });
       if (refusePoll)
         return Response.json({ ok: false, error: { code: "FORBIDDEN" } }, { status: 403 });
     } else {
@@ -290,6 +300,12 @@ async function fixture(provider: "codex" | "claude" = "codex", profileName = "on
     set refusePoll(value: boolean) {
       refusePoll = value;
     },
+    get unauthenticatedPoll() {
+      return unauthenticatedPoll;
+    },
+    set unauthenticatedPoll(value: boolean) {
+      unauthenticatedPoll = value;
+    },
     get receiptHook() {
       return receiptHook;
     },
@@ -319,6 +335,497 @@ async function fixture(provider: "codex" | "claude" = "codex", profileName = "on
     },
   };
 }
+type ObservedManagerOptions = SettingsManagerOptions & {
+  onStatus: (status: SettingsManagerStatus) => void;
+};
+
+for (const code of ["UNAUTHENTICATED", "FORBIDDEN"] as const) {
+  test(`should report ${code} while persistent settings polling is still running`, async () => {
+    const f = await fixture();
+    const abort = new AbortController();
+    const timer = setTimeout(() => abort.abort(), 250);
+    try {
+      f.response = { ...f.response, operation: null };
+      f.unauthenticatedPoll = code === "UNAUTHENTICATED";
+      f.refusePoll = code === "FORBIDDEN";
+      let settled = false;
+      const observed: SettingsManagerStatus[] = [];
+      const options: ObservedManagerOptions = {
+        onStatus: (status) => {
+          assert.equal(settled, false);
+          observed.push(status);
+          if (observed.length === 2) abort.abort();
+        },
+      };
+      await f
+        .manager(options)
+        .run({ signal: abort.signal })
+        .finally(() => {
+          settled = true;
+        });
+      assert.equal(observed.length, 2, "failures must be visible before run returns");
+      assert.deepEqual(
+        observed.map((status) => status.reason),
+        [code, code],
+      );
+      assert.ok(observed.every((status) => !status.ready));
+      assert.equal(f.requests.length, 2);
+      assert.ok(f.requests.every((request) => request.action === "poll"));
+      assert.equal(f.catalogs, 0);
+      assert.equal(f.prepares, 0);
+      assert.equal(await f.store.read(), undefined);
+      assert.equal((await f.profile.read())!.status, "connected");
+    } finally {
+      clearTimeout(timer);
+      abort.abort();
+      await f.close();
+    }
+  });
+}
+
+test("should report the existing UNKNOWN authentication journal without repairing it", async () => {
+  const f = await fixture();
+  const abort = new AbortController();
+  const timer = setTimeout(() => abort.abort(), 250);
+  try {
+    await f.manager().run({ once: true });
+    const state = (await f.store.read())!;
+    state.journal!.phase = "UNKNOWN";
+    state.journal!.reason = "UNAUTHENTICATED";
+    await f.store.write(state);
+    f.unauthenticatedPoll = true;
+    const profile = await readFile(f.profile.file);
+    const observed: SettingsManagerStatus[] = [];
+    const options: ObservedManagerOptions = {
+      onStatus: (status) => {
+        observed.push(status);
+        if (status.reason === "UNAUTHENTICATED") abort.abort();
+      },
+    };
+    await f.manager(options).run({ signal: abort.signal });
+    assert.ok(
+      observed.some(
+        (status) =>
+          status.state === "UNKNOWN" && status.reason === "UNAUTHENTICATED" && !status.ready,
+      ),
+    );
+    assert.equal((await f.store.read())!.current, null);
+    assert.equal((await f.store.read())!.journal!.phase, "UNKNOWN");
+    assert.deepEqual(await readFile(f.profile.file), profile);
+    assert.equal(f.prepares, 0);
+  } finally {
+    clearTimeout(timer);
+    abort.abort();
+    await f.close();
+  }
+});
+
+test("should isolate observer mutations and exceptions from settings and persistent control flow", async () => {
+  const f = await fixture();
+  const abort = new AbortController();
+  const timer = setTimeout(() => abort.abort(), 250);
+  try {
+    f.response = { ...f.response, operation: null };
+    const profile = await readFile(f.profile.file);
+    let calls = 0;
+    const options: ObservedManagerOptions = {
+      onStatus: (status) => {
+        calls++;
+        status.ready = true;
+        status.state = "APPLIED";
+        status.reason = "UNAUTHENTICATED";
+        if (calls === 3) abort.abort();
+        throw new Error("observer is not manager control flow");
+      },
+    };
+    const result = await f.manager(options).run({ signal: abort.signal });
+    assert.equal(calls, 3);
+    assert.equal(result.state, "UNCONFIGURED");
+    assert.equal(result.ready, false);
+    assert.equal(result.reason, null);
+    assert.equal(f.requests.length, 3);
+    assert.equal(await f.store.read(), undefined);
+    assert.deepEqual(await readFile(f.profile.file), profile);
+    assert.equal(f.catalogs, 0);
+    assert.equal(f.prepares, 0);
+  } finally {
+    clearTimeout(timer);
+    abort.abort();
+    await f.close();
+  }
+});
+
+test("should deduplicate displayed authentication failures and show recovery then recurrence during polling", async () => {
+  const f = await fixture();
+  const abort = new AbortController();
+  const timer = setTimeout(() => abort.abort(), 250);
+  try {
+    const helper = new URL("../src/cli/settings-status.js", import.meta.url).href;
+    const { createSettingsStatusSink } = await import(helper);
+    const messages: string[] = [];
+    const sink = createSettingsStatusSink({
+      origin: f.client.origin,
+      roomId: f.scope.roomId,
+      write: (message: string) => messages.push(message),
+    });
+    f.response = { ...f.response, operation: null };
+    let polls = 0;
+    f.pollHook = () => {
+      polls++;
+      f.unauthenticatedPoll = polls !== 3;
+    };
+    const options: ObservedManagerOptions = {
+      onStatus: (status) => {
+        sink(status);
+        if (polls === 4) abort.abort();
+      },
+    };
+    await f.manager(options).run({ signal: abort.signal });
+    assert.equal(polls, 4);
+    assert.equal(messages.length, 3);
+    assert.match(messages[0], /서버.*인증.*거부/);
+    assert.match(messages[1], /AI.*폴더/);
+    assert.equal(messages[2], messages[0]);
+    assert.equal(f.requests.length, 4);
+    assert.equal(f.prepares, 0);
+  } finally {
+    clearTimeout(timer);
+    abort.abort();
+    await f.close();
+  }
+});
+
+test("should display setup completion while the actual runner remains active without claiming live readiness", async () => {
+  const f = await fixture();
+  const abort = new AbortController();
+  const entered = deferred(),
+    release = deferred();
+  const timer = setTimeout(() => {
+    abort.abort();
+    entered.resolve();
+    release.resolve();
+  }, 3000);
+  let job: ReturnType<SettingsManager["run"]> | undefined;
+  try {
+    await local(f);
+    const helper = new URL("../src/cli/settings-status.js", import.meta.url).href;
+    const { createSettingsStatusSink } = await import(helper);
+    const messages: string[] = [];
+    const sink = createSettingsStatusSink({
+      origin: f.client.origin,
+      write: (message: string) => messages.push(message),
+    });
+    const adapter = new SyntheticAdapter();
+    adapter.validateHook = async () => {
+      entered.resolve();
+      await release.promise;
+    };
+    const observed: SettingsManagerStatus[] = [];
+    let runtimeStore: RuntimeStore | undefined;
+    let runtimeReadyWhileRunning = false,
+      settled = false;
+    const workflowActions: string[] = [];
+    f.pollHook = async () => {
+      if (!runtimeStore) return;
+      const record = await runtimeStore.read();
+      if (record?.ready && workflowActions.filter((action) => action === "poll").length >= 3) {
+        runtimeReadyWhileRunning = !settled;
+        abort.abort();
+      }
+    };
+    const options: ObservedManagerOptions = {
+      onStatus: (status) => {
+        observed.push(status);
+        sink(status);
+      },
+      runner: (pointer, store) => {
+        runtimeStore = store;
+        const fetcher: typeof fetch = async (url, init) => {
+          const action = String(url).split("/").at(-1)!;
+          const body = JSON.parse(String(init?.body));
+          workflowActions.push(action);
+          const identity = { agentId: pointer.agentId, bindingEpoch: pointer.bindingEpoch };
+          let data: unknown;
+          if (action === "source-support") data = { version: 2, ...identity };
+          else if (action === "poll")
+            data = {
+              ...identity,
+              roomId: f.scope.roomId,
+              roomRevision: 1,
+              roomMode: "ACTIVE",
+              reportedReady: true,
+              validUntil: new Date(Date.now() + 60000).toISOString(),
+              queuedRequest: null,
+              attempt: null,
+              control: null,
+            };
+          else if (action === "admission" || action === "admission-ack")
+            data = {
+              ...identity,
+              revision: 1,
+              paused: false,
+              appliedRevision: 1,
+              appliedEpoch: pointer.bindingEpoch,
+              appliedAt: new Date().toISOString(),
+            };
+          else if (action === "ready")
+            data = {
+              ...identity,
+              reportedReady: body.reportedReady,
+              verification: "reported",
+              validUntil: body.reportedReady ? new Date(Date.now() + 60000).toISOString() : null,
+            };
+          else assert.fail(`unexpected workflow action: ${action}`);
+          return Response.json({ ok: true, data });
+        };
+        return new WorkflowRunner(
+          f.profile,
+          store,
+          new WorkflowClient(f.client.origin, fetcher),
+          adapter,
+          {
+            rotate: async () => assert.fail("no credential rotation expected"),
+            bindings: async () => assert.fail("no new binding request expected"),
+            replace: async () => assert.fail("no replacement expected"),
+          },
+          { pollIntervalMs: 2 },
+        );
+      },
+    };
+    job = f
+      .manager(options)
+      .run({ signal: abort.signal })
+      .finally(() => {
+        settled = true;
+      });
+    await entered.promise;
+    assert.equal(settled, false);
+    assert.match(messages.at(-1)!, /설정 적용 완료.*질문 가능한 상태.*웹 채팅방.*확인/);
+    assert.equal((await runtimeStore!.read())!.ready, false);
+    release.resolve();
+    await job;
+    const preparing = observed.findIndex((status) => status.state === "PREPARE_INTENT");
+    assert.ok(preparing >= 0, "preparation must be visible before the poll finishes");
+    assert.ok(observed.findIndex((status) => status.state === "APPLIED") > preparing);
+    assert.equal(observed[preparing].ready, false);
+    assert.equal(runtimeReadyWhileRunning, true);
+    assert.ok(observed.every((status) => !status.ready));
+    assert.match(messages.at(-1)!, /설정 적용 완료.*웹 채팅방.*확인/);
+    assert.ok(!messages.join("").includes("준비 완료"));
+    assert.equal(adapter.starts, 0);
+    assert.equal(adapter.prepares, 0);
+    assert.equal(adapter.closed, true);
+    assert.equal(f.prepares, 1);
+    assert.equal(f.catalogs, 2);
+    assert.equal(f.closes, 2);
+    assert.equal((await f.store.read())!.journal!.phase, "APPLIED");
+  } finally {
+    clearTimeout(timer);
+    abort.abort();
+    release.resolve();
+    await job;
+    await f.close();
+  }
+});
+
+test("should display restored local confirmation without retaining a previous authentication error", async () => {
+  const f = await fixture();
+  const abort = new AbortController();
+  const timer = setTimeout(() => abort.abort(), 250);
+  try {
+    await f.manager().run({ once: true });
+    let polls = 0;
+    f.pollHook = () => {
+      f.unauthenticatedPoll = ++polls === 1;
+    };
+    const observed: SettingsManagerStatus[] = [];
+    const options: ObservedManagerOptions = {
+      onStatus: (status) => {
+        observed.push(status);
+        if (polls >= 2 && status.state === "LOCAL_CONFIRMATION" && status.reason === null)
+          abort.abort();
+      },
+    };
+    await f.manager(options).run({ signal: abort.signal });
+    assert.ok(observed.some((status) => status.reason === "UNAUTHENTICATED"));
+    assert.equal(observed.at(-1)!.state, "LOCAL_CONFIRMATION");
+    assert.equal(observed.at(-1)!.reason, null);
+    assert.equal((await f.store.read())!.journal!.phase, "LOCAL_CONFIRMATION");
+    assert.equal(f.catalogs, 1);
+    assert.equal(f.prepares, 0);
+  } finally {
+    clearTimeout(timer);
+    abort.abort();
+    await f.close();
+  }
+});
+
+test("should replace an old authentication error before the recovered folder chooser settles", async () => {
+  const f = await fixture();
+  const abort = new AbortController();
+  const entered = deferred(),
+    release = deferred();
+  const timer = setTimeout(() => {
+    abort.abort();
+    entered.resolve();
+    release.resolve();
+  }, 3000);
+  let job: ReturnType<SettingsManager["run"]> | undefined;
+  try {
+    const profile = await readFile(f.profile.file);
+    const observed: SettingsManagerStatus[] = [];
+    let polls = 0,
+      settled = false;
+    f.pollHook = () => {
+      f.unauthenticatedPoll = ++polls === 1;
+    };
+    job = f
+      .manager({
+        onStatus: (status) => observed.push(status),
+        folder: async () => {
+          entered.resolve();
+          await release.promise;
+          return { status: "SELECTED", root: f.policy.root };
+        },
+      })
+      .run({ signal: abort.signal })
+      .finally(() => {
+        settled = true;
+      });
+    await entered.promise;
+    assert.equal(settled, false);
+    assert.ok(observed.some((status) => status.reason === "UNAUTHENTICATED"));
+    assert.equal(observed.at(-1)!.state, "CHOOSING");
+    assert.equal(
+      observed.at(-1)!.reason,
+      null,
+      "authenticated recovery must be visible while the chooser is pending",
+    );
+    assert.equal((await f.store.read())!.journal!.reason, null);
+    assert.deepEqual(await readFile(f.profile.file), profile);
+    assert.equal(f.catalogs, 0);
+    assert.equal(f.prepares, 0);
+  } finally {
+    clearTimeout(timer);
+    abort.abort();
+    release.resolve();
+    await job;
+    await f.close();
+  }
+});
+
+test("should report the preserved UNKNOWN journal error after successful authentication without changing the run result", async () => {
+  const f = await fixture();
+  const abort = new AbortController();
+  const timer = setTimeout(() => abort.abort(), 1000);
+  try {
+    await local(f);
+    await f
+      .manager({
+        adapter: () => {
+          throw new RuntimeError("UNKNOWN");
+        },
+      })
+      .run({ once: true });
+    const before = (await f.store.read())!;
+    assert.ok(before.journal!.applyBody);
+    assert.equal(before.journal!.phase, "UNKNOWN");
+    const settings = await readFile(f.store.file),
+      profile = await readFile(f.profile.file);
+    const helper = new URL("../src/cli/settings-status.js", import.meta.url).href;
+    const { createSettingsStatusSink } = await import(helper);
+    const messages: string[] = [];
+    const sink = createSettingsStatusSink({
+      origin: f.client.origin,
+      write: (message: string) => messages.push(message),
+    });
+    let polls = 0;
+    const observed: SettingsManagerStatus[] = [];
+    f.pollHook = () => {
+      f.unauthenticatedPoll = ++polls === 1;
+    };
+    const result = await f
+      .manager({
+        onStatus: (status) => {
+          observed.push(status);
+          sink(status);
+          if (polls >= 2 && status.reason === "UNKNOWN") abort.abort();
+        },
+      })
+      .run({ signal: abort.signal });
+    assert.ok(observed.some((status) => status.reason === "UNAUTHENTICATED"));
+    assert.equal(observed.at(-1)!.state, "UNKNOWN");
+    assert.equal(observed.at(-1)!.reason, "UNKNOWN");
+    assert.equal(
+      result.reason,
+      "UNAUTHENTICATED",
+      "display correction must not change the run result",
+    );
+    assert.match(messages[0], /서버.*인증.*거부/);
+    assert.match(messages.at(-1)!, /설정 상태.*확인하지 못/);
+    assert.deepEqual(await readFile(f.store.file), settings);
+    assert.deepEqual(await readFile(f.profile.file), profile);
+    assert.equal(f.prepares, 0);
+    assert.equal(f.catalogs, 1);
+  } finally {
+    clearTimeout(timer);
+    abort.abort();
+    await f.close();
+  }
+});
+
+test("should contain asynchronous observer rejection without changing settings, polls or cleanup", async () => {
+  const f = await fixture();
+  const abort = new AbortController();
+  const timer = setTimeout(() => abort.abort(), 1000);
+  try {
+    f.response = { ...f.response, operation: null };
+    await f.store.write({
+      version: 1,
+      server: f.scope.server,
+      deviceId: f.scope.deviceId,
+      organizationId: f.scope.organizationId,
+      roomId: f.scope.roomId,
+      current: null,
+      retained: [],
+      journal: null,
+    });
+    const settings = await readFile(f.store.file),
+      profile = await readFile(f.profile.file);
+    let callbacks = 0,
+      rejections = 0;
+    const result = await f
+      .manager({
+        onStatus: async (status) => {
+          callbacks++;
+          await Promise.resolve();
+          status.state = "APPLIED";
+          status.ready = true;
+          status.reason = "UNAUTHENTICATED";
+          if (callbacks === 3) abort.abort();
+          rejections++;
+          throw new Error("asynchronous display failure");
+        },
+      })
+      .run({ signal: abort.signal });
+    assert.equal(callbacks, 3);
+    assert.equal(rejections, 3);
+    assert.equal(result.state, "UNCONFIGURED");
+    assert.equal(result.ready, false);
+    assert.equal(result.reason, null);
+    assert.deepEqual(await readFile(f.store.file), settings);
+    assert.deepEqual(await readFile(f.profile.file), profile);
+    assert.equal(f.requests.length, 3);
+    assert.ok(f.requests.every((request) => request.action === "poll"));
+    assert.equal(f.catalogs, 0);
+    assert.equal(f.prepares, 0);
+    assert.equal(f.closes, 0);
+  } finally {
+    clearTimeout(timer);
+    abort.abort();
+    await f.close();
+  }
+});
 async function local(f: Awaited<ReturnType<typeof fixture>>) {
   assert.equal((await f.manager().run({ once: true })).state, "LOCAL_CONFIRMATION");
   assert.equal(f.prepares, 0);

@@ -63,6 +63,7 @@ test(
     };
     const calls: string[] = [];
     let operation: Operation | null = null;
+    let rejectSettingsPoll = false;
     let stop: () => void = () => {};
     const date = (seconds: number) => new Date(Date.now() + seconds * 1000).toISOString();
     const server = createServer(async (req, res) => {
@@ -78,6 +79,12 @@ test(
         calls.push(req.url!);
         let data: Record<string, unknown> = { protocol: 1 };
         if (req.url === "/api/runtime-settings/poll") {
+          if (rejectSettingsPoll) {
+            res.writeHead(401, { "Content-Type": "application/json" });
+            res.end(JSON.stringify({ ok: false, error: { code: "UNAUTHENTICATED" } }));
+            setTimeout(() => stop(), 150);
+            return;
+          }
           data = {
             ...data,
             deviceId,
@@ -116,6 +123,7 @@ test(
       "valid",
       "expired",
       "disconnected-future-intermediate",
+      "auth-failure",
     ] as const) {
       const home = join(root, kind),
         work = join(home, "work");
@@ -145,6 +153,7 @@ test(
         });
       const settings = new SettingsStore(original);
       operation = null;
+      rejectSettingsPoll = kind === "auth-failure";
       if (kind.startsWith("unfinished-")) {
         const operationId = randomUUID();
         operation = {
@@ -218,6 +227,18 @@ test(
         const result = JSON.parse(output);
         assert.equal(result.exitCode, 0, result.output);
         assert.ok(calls.slice(start).includes("/api/runtime-settings/poll"), result.output);
+        if (kind === "auth-failure") {
+          assert.match(result.output, /서버.*인증.*거부/);
+          assert.match(result.output, /웹.*연결.*확인/);
+          assert.ok(result.output.includes(`${origin}/app/connections?room=${roomId}`));
+          assert.ok(!result.output.includes("준비 완료"));
+          assert.equal((await original.read())!.status, "connected");
+          assert.equal(await settings.read(), undefined);
+        } else if (kind.startsWith("unfinished-")) {
+          assert.match(result.output, /모델.*effort.*적용/);
+        } else {
+          assert.match(result.output, /AI.*폴더/);
+        }
         if (kind === "disconnected-future-intermediate" && retry === 0) {
           assert.ok(result.output.includes("revoked를 입력하세요:"));
           assert.ok(calls.slice(start).some((path) => path.endsWith("/begin")));

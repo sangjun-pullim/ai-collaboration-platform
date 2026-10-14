@@ -51,6 +51,7 @@ type Runner = {
   run(options: { once: boolean; signal: AbortSignal }): Promise<{ ready?: boolean }>;
 };
 export type SettingsManagerOptions = {
+  onStatus?: (status: SettingsManagerStatus) => void;
   renewal?: ConnectionRenewalControl;
   adapter?: (provider: Provider, reserveCatalog: CatalogReservation) => RuntimeAdapter;
   folder?: (signal: AbortSignal) => Promise<FolderPickerResult>;
@@ -163,6 +164,7 @@ export class SettingsManager {
   private state!: SettingsState;
   private ready = false;
   private reason: string | null = null;
+  private pollSucceeded = false;
   private signal: AbortSignal = new AbortController().signal;
   private adapter: RuntimeAdapter | undefined;
   private runnerJob: Promise<void> | undefined;
@@ -191,6 +193,22 @@ export class SettingsManager {
       configRevision: this.state?.current?.configRevision ?? 0,
       reason: this.reason ?? this.state?.journal?.reason ?? null,
     };
+  }
+  /** Observers receive detached values and never participate in manager control flow. */
+  private reportStatus() {
+    if (!this.options.onStatus) return;
+    try {
+      const status = this.status();
+      // Authenticated polls expose the journal's current error without changing the run result.
+      if (
+        this.pollSucceeded &&
+        (status.reason === "UNAUTHENTICATED" || status.reason === "FORBIDDEN")
+      )
+        status.reason = this.state?.journal?.reason ?? null;
+      void Promise.resolve(this.options.onStatus(status)).catch(() => {});
+    } catch {
+      // Display failures must not become settings failures or interrupt cleanup.
+    }
   }
   private assertOwner(p: ConnectorState) {
     if (
@@ -291,6 +309,7 @@ export class SettingsManager {
       this.state = (await this.store.read()) ?? this.state;
       throw error;
     }
+    this.reportStatus();
   }
   private runtimeStore(pointer: GenerationPointer) {
     return pointer.legacy
@@ -360,6 +379,7 @@ export class SettingsManager {
     };
     await this.store.write(next);
     this.state = next;
+    this.reportStatus();
   }
   private assertBinding(response: SettingsResponse, pointer = this.state.current) {
     if (
@@ -1105,6 +1125,7 @@ export class SettingsManager {
     this.ready = false;
     this.reason = null;
     this.latestResponse = undefined;
+    this.pollSucceeded = false;
     return this.store.locked(async () => {
       const stored = await this.store.read();
       if (stored) this.state = stored;
@@ -1142,6 +1163,7 @@ export class SettingsManager {
           if (this.signal.aborted) break;
           try {
             const response = await this.call("poll");
+            this.pollSucceeded = true;
             const journal = this.state.journal;
             if (
               response.operation &&
@@ -1162,8 +1184,11 @@ export class SettingsManager {
               ranRunner ||= !!this.runnerJob;
             }
           } catch (error) {
+            this.pollSucceeded = false;
             await this.failure(error);
             if (error instanceof RuntimeError && error.code === "CLEANUP_INCOMPLETE") throw error;
+          } finally {
+            this.reportStatus();
           }
           if (options.once && (!this.runnerJob || this.runnerSettled)) {
             await this.stopRunner();

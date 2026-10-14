@@ -2,6 +2,7 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import { readFile, mkdir } from "node:fs/promises";
 import { join } from "node:path";
+import { Interface } from "node:readline/promises";
 import { StateStore } from "../src/state-store.ts";
 import { RuntimeError } from "../src/runtime-contracts.ts";
 import { SettingsStore, type SettingsState } from "../src/settings/store.ts";
@@ -20,6 +21,124 @@ import { Connector, main } from "../src/cli.ts";
 import { CentralClient } from "../src/central-client.ts";
 import { ConnectionError } from "../src/contracts.ts";
 import { SettingsManager, type SettingsManagerOptions } from "../src/settings/manager.ts";
+
+for (const command of ["connect", "manage"] as const) {
+  test(`should ${command === "connect" ? "display persistent auth failures in interactive connect" : "preserve the JSON-only manage once contract"}`, async (t) => {
+    const f = await runtimeFixture();
+    const profile = new StateStore(f.stateDir, "one");
+    try {
+      await profile.write({
+        version: 1,
+        server: f.scope.server,
+        deviceId: f.scope.deviceId,
+        status: "connected",
+        credential: "a".repeat(64),
+        credentialExpiresAt: new Date(Date.now() + 3600000).toISOString(),
+        scope: {
+          organizationId: f.scope.organizationId,
+          roomId: f.scope.roomId,
+          ownerAlias: "Owner",
+          organizationName: "Org",
+          roomTitle: "Room",
+          deviceAlias: "Device",
+        },
+        mappings: [],
+      });
+      const before = await readFile(profile.file);
+      const output: string[] = [];
+      const requests: string[] = [];
+      let polls = 0;
+      t.mock.method(process.stdout, "write", (message: string | Uint8Array) => {
+        output.push(String(message));
+        return true;
+      });
+      t.mock.method(globalThis, "fetch", async (url: string | URL | Request) => {
+        const path = new URL(String(url)).pathname;
+        requests.push(path);
+        if (path === "/api/runtime-settings/poll") {
+          if (++polls === 2) queueMicrotask(() => process.emit("SIGINT"));
+          return Response.json({ ok: false, error: { code: "UNAUTHENTICATED" } }, { status: 401 });
+        }
+        assert.ok(path === "/api/connector/bindings" || path === "/api/connector/heartbeat");
+        return Response.json({
+          ok: true,
+          data: {
+            protocol: 1,
+            ...(path.endsWith("bindings")
+              ? { bindings: [] }
+              : {
+                  state: "registered",
+                  verification: "unverified",
+                  lastSeenAt: new Date().toISOString(),
+                }),
+          },
+        });
+      });
+      if (command === "connect") {
+        for (const stream of [process.stdin, process.stdout]) {
+          const descriptor = Object.getOwnPropertyDescriptor(stream, "isTTY");
+          Object.defineProperty(stream, "isTTY", { configurable: true, value: true });
+          t.after(() => {
+            if (descriptor) Object.defineProperty(stream, "isTTY", descriptor);
+            else delete (stream as { isTTY?: boolean }).isTTY;
+          });
+        }
+        t.mock.method(Interface.prototype, "question", async () => "yes");
+      }
+      const timeout = setTimeout(() => process.emit("SIGINT"), 3000);
+      try {
+        await main([
+          command,
+          "--server",
+          f.scope.server,
+          "--state-dir",
+          f.stateDir,
+          "--profile",
+          "one",
+          ...(command === "connect"
+            ? [
+                "--organization-id",
+                f.scope.organizationId,
+                "--room-id",
+                f.scope.roomId,
+                "--device-alias",
+                "Device",
+              ]
+            : ["--once", "yes"]),
+        ]);
+      } finally {
+        clearTimeout(timeout);
+      }
+      if (command === "connect") {
+        assert.equal(polls, 2);
+        assert.equal(output.filter((message) => /서버.*인증.*거부/.test(message)).length, 1);
+        assert.ok(
+          output.some((message) =>
+            message.includes(`${f.scope.server}/app/connections?room=${f.scope.roomId}`),
+          ),
+        );
+        assert.ok(!output.join("").includes("준비 완료"));
+      } else {
+        assert.equal(polls, 1);
+        assert.equal(output.length, 1);
+        assert.equal(JSON.parse(output[0]).reason, "UNAUTHENTICATED");
+      }
+      assert.deepEqual(await readFile(profile.file), before);
+      assert.equal(await new SettingsStore(profile).read(), undefined);
+      assert.ok(
+        requests.every((path) =>
+          [
+            "/api/runtime-settings/poll",
+            "/api/connector/bindings",
+            "/api/connector/heartbeat",
+          ].includes(path),
+        ),
+      );
+    } finally {
+      await f.close();
+    }
+  });
+}
 
 test("should keep standalone Claude default admission closed under the device settings lock", async (t) => {
   const f = await runtimeFixture(),
