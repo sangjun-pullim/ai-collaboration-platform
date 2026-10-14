@@ -25,7 +25,8 @@ import { revokeLocalProfile, revokeConfiguredProfile } from "./cli/remove-local-
 import { SettingsStore } from "./settings/store.ts";
 import { SettingsClient } from "./settings/client.ts";
 import { SettingsError } from "./settings/contracts.ts";
-import { SettingsManager } from "./settings/manager.ts";
+import { SettingsManager, type SettingsManagerOptions } from "./settings/manager.ts";
+import { createSettingsStatusSink } from "./cli/settings-status.ts";
 import { withSettingsDeviceLock, RetiredProfileError } from "./cli/settings-lock.ts";
 import { currentRunner, configuredRunner } from "./cli/runtime-context.ts";
 import { runRuntimeCommand, untilStopped } from "./cli/runtime-command.ts";
@@ -473,8 +474,9 @@ export async function main(args: string[]) {
       createProviderAdapter("codex", { profile }),
       runnerOptions,
     );
-  const manage = (signal: AbortSignal) =>
+  const manage = (signal: AbortSignal, onStatus?: SettingsManagerOptions["onStatus"]) =>
     new SettingsManager(store, new SettingsStore(store), new SettingsClient(client.origin), {
+      onStatus,
       renewal,
       heartbeat: (credential, signal) => {
         if (signal.aborted) return Promise.resolve();
@@ -540,7 +542,14 @@ export async function main(args: string[]) {
                   },
                 );
               if (signal.aborted) throw new ConnectionError("CONFLICT");
-              return manage(signal);
+              return manage(
+                signal,
+                createSettingsStatusSink({
+                  origin: client.origin,
+                  roomId: input.roomId,
+                  write: interaction.write,
+                }),
+              );
             }),
           )
         : command === "manage"
