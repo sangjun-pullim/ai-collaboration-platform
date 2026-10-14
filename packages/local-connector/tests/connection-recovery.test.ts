@@ -3,21 +3,26 @@ import assert from "node:assert/strict";
 import { createHash } from "node:crypto";
 import { readFile, writeFile, unlink, rename, mkdir, chmod, symlink } from "node:fs/promises";
 import { join } from "node:path";
+import { Interface } from "node:readline/promises";
+import childProcess from "node:child_process";
+import { syncBuiltinESMExports } from "node:module";
 import { StateStore } from "../src/state-store.ts";
 import { RuntimeStore } from "../src/runtime-store.ts";
 import { SettingsStore } from "../src/settings/store.ts";
-import { Connector } from "../src/cli.ts";
+import { Connector, main } from "../src/cli.ts";
 import { CentralClient } from "../src/central-client.ts";
 import { WorkflowClient } from "../src/workflow-client.ts";
 import { WorkflowRunner } from "../src/workflow-runner.ts";
 import { prepareConnection, type ConnectInteraction } from "../src/cli/connect-command.ts";
 import { SyntheticAdapter } from "./runner-fixture.ts";
 import { runtimeFixture, uuid, appendFixtureCompletion } from "./runtime-fixture.ts";
-import { capabilityHash } from "../src/settings/contracts.ts";
+import { capabilityHash, type Receipt, type SettingsResponse } from "../src/settings/contracts.ts";
+import { SettingsManager } from "../src/settings/manager.ts";
+import { SettingsClient } from "../src/settings/client.ts";
 import { revokeConfiguredProfile } from "../src/cli/remove-local-profile.ts";
 import { withSettingsDeviceLock } from "../src/cli/settings-lock.ts";
 import { claudeRecord } from "./provider-runtime-fixture.ts";
-import { digest, stableJson } from "../src/runtime-contracts.ts";
+import { digest, stableJson, RuntimeError } from "../src/runtime-contracts.ts";
 
 async function fixture(intermediate = false) {
   const f = await runtimeFixture();
@@ -149,7 +154,22 @@ async function fixture(intermediate = false) {
       interaction,
       runner,
     );
-  return { ...f, previous, runtime, next, connector, calls, notices, adapter, interaction, run };
+  return {
+    ...f,
+    previous,
+    runtime,
+    next,
+    connector,
+    calls,
+    notices,
+    adapter,
+    interaction,
+    run,
+    approvalScope: scope,
+    recoveryId,
+    intermediateId,
+    baseProfile,
+  };
 }
 
 test("should inspect a real no-settings legacy profile and retain its bytes before fresh approval", async () => {
@@ -178,6 +198,577 @@ test("should inspect a real no-settings legacy profile and retain its bytes befo
     await f.close();
   }
 });
+
+/** Fail the real manager before its durable PREPARE_INTENT, then remove the device. */
+async function unappliedSetup(
+  f: Awaited<ReturnType<typeof fixture>>,
+  apply = true,
+  prepareAt?: "intent" | "context" | "commit",
+) {
+  await unlink(f.runtime.file);
+  const owner = (await f.previous.read())!;
+  owner.status = "connected";
+  owner.credentialExpiresAt = new Date(Date.now() + 3600000).toISOString();
+  owner.mappings = [];
+  await f.previous.write(owner);
+  const settings = new SettingsStore(f.previous),
+    operationId = uuid(),
+    capabilities = claudeRecord(f.record).settings!.capabilities;
+  let response: SettingsResponse = {
+    protocol: 1,
+    deviceId: owner.deviceId!,
+    configRevision: 0,
+    catalog: null,
+    applied: null,
+    current: true,
+    currentBinding: null,
+    operation: {
+      operationId,
+      deviceId: owner.deviceId!,
+      expectedConfigRevision: 0,
+      state: "REQUESTED",
+      requested: {
+        operationId,
+        deviceId: owner.deviceId!,
+        expectedConfigRevision: 0,
+        runtime: "claude",
+      },
+      receipt: null,
+    },
+  };
+  const requests: string[] = [];
+  let revoked = false,
+    catalogs = 0;
+  const client = new SettingsClient(owner.server, async (url, init) => {
+    const action = String(url).split("/").at(-1)!;
+    requests.push(action);
+    if (revoked)
+      return Response.json({ ok: false, error: { code: "UNAUTHENTICATED" } }, { status: 401 });
+    if (action === "receipt") {
+      const receipt = JSON.parse(String(init?.body)) as Receipt;
+      assert.equal(receipt.state, "LOCAL_CONFIRMATION");
+      response = {
+        ...response,
+        catalog: receipt.catalog,
+        operation: {
+          ...response.operation!,
+          state: receipt.state,
+          receipt: { ...receipt, catalog: null },
+        },
+      };
+    }
+    return Response.json({ ok: true, data: response });
+  });
+  const manager = new SettingsManager(f.previous, settings, client, {
+    folder: async () => ({ status: "SELECTED", root: f.policy.root }),
+    confirm: async () => ({
+      confirmed: true,
+      repositoryAlias: "Repository",
+      files: [...f.policy.files],
+      handoff: "Shared evidence.",
+    }),
+    adapter: (_provider, reserve) => ({
+      capabilities: async (root, check) => {
+        check();
+        catalogs++;
+        await reserve(root, capabilities.version, digest("verified-policy-fixture"));
+        if (catalogs === 2 && !prepareAt) {
+          // The second metadata lookup outcome never reached durable settings.
+          revoked = true;
+          throw new RuntimeError("UNKNOWN");
+        }
+        return structuredClone(capabilities);
+      },
+      prepare: async (root, runtimeSettings, generation, epoch, check, onCreated) => {
+        assert.ok(prepareAt, "initial setup must not prepare a runtime");
+        check();
+        if (prepareAt === "intent") throw new RuntimeError("UNKNOWN");
+        const context = {
+          ...structuredClone((await settings.read())!.journal!.catalogContext!),
+          root,
+          generation,
+          epoch,
+          threadId: uuid(),
+        };
+        assert.equal(context.materialization!.version, runtimeSettings.capabilities.version);
+        await onCreated!(context);
+        if (prepareAt === "context") throw new RuntimeError("UNKNOWN");
+        return context;
+      },
+      execute: async () => assert.fail("metadata lookup must not execute a question"),
+      validate: async () => assert.fail("initial setup must not validate a runtime"),
+      observe: async () => null,
+      interrupt: async () => false,
+      close: async () => {},
+    }),
+    runner: () => assert.fail("initial setup must not start a runner"),
+  });
+  assert.equal((await manager.run({ once: true })).state, "LOCAL_CONFIRMATION");
+  const confirmed = (await settings.read())!.journal!;
+  if (apply)
+    response.operation = {
+      ...response.operation!,
+      state: "APPLYING",
+      requested: {
+        ...response.operation!.requested,
+        localRootReference: confirmed.localRootReference,
+        repositoryAlias: "Repository",
+        sessionAlias: "Session",
+        expectedEpoch: null,
+        model: capabilities.defaultSettings!.model,
+        effort: capabilities.defaultSettings!.effort,
+        snapshotHash: confirmed.receipt!.catalog!.snapshotHash,
+      },
+    };
+  else revoked = true;
+  assert.equal((await manager.run({ once: true })).state, "UNKNOWN");
+  owner.status = "disconnected";
+  await f.previous.write(owner);
+  const state = (await settings.read())!;
+  assert.equal(state.journal!.receipt!.state, "LOCAL_CONFIRMATION");
+  assert.equal(!!state.journal!.applyBody, apply);
+  if (!prepareAt) {
+    assert.equal(state.journal!.settings, null);
+    assert.equal(state.journal!.context, null);
+  }
+  assert.equal(f.adapter.prepares, 0);
+  return { settings, state, requests, catalogs: () => catalogs };
+}
+
+for (const apply of [true, false])
+  test(`should preserve a real UNKNOWN initial setup ${apply ? "with" : "without"} apply intent through fresh approval`, async () => {
+    const f = await fixture();
+    try {
+      const c = await unappliedSetup(f, apply),
+        files = [f.previous.file, c.settings.file],
+        before = await Promise.all(files.map((file) => readFile(file))),
+        requests = [...c.requests],
+        catalogs = c.catalogs();
+      await f.run();
+      assert.deepEqual(await Promise.all(files.map((file) => readFile(file))), before);
+      assert.deepEqual(c.requests, requests);
+      assert.equal(c.catalogs(), catalogs);
+      assert.deepEqual(f.calls, ["begin", "pairing-status", "exchange"]);
+      assert.equal(f.adapter.starts, 0);
+      assert.equal(f.adapter.prepares, 0);
+      assert.equal((await c.settings.read())!.journal!.phase, "UNKNOWN");
+      assert.match(f.notices.join(""), /미완료 AI 설정과 목록 조회 결과는 확인 불가/);
+      assert.ok(!f.notices.join("").includes("이전 답변"));
+      // The latest lineage command reuses its newly approved device, preserving the old setup.
+      f.interaction.confirmPreviousRevoked = async () =>
+        assert.fail("new device is already approved");
+      await f.run();
+      assert.deepEqual(f.calls, ["begin", "pairing-status", "exchange", "bindings"]);
+      assert.deepEqual(await Promise.all(files.map((file) => readFile(file))), before);
+      assert.deepEqual(c.requests, requests);
+      assert.equal(c.catalogs(), catalogs);
+    } finally {
+      await f.close();
+    }
+  });
+
+for (const stage of ["intent", "context", "commit"] as const)
+  test(`should refuse a real UNKNOWN setup after runtime preparation ${stage}`, async () => {
+    const f = await fixture();
+    try {
+      const c = await unappliedSetup(f, true, stage);
+      assert.ok(c.state.journal!.settings);
+      assert.equal(!!c.state.journal!.context, stage !== "intent");
+      assert.equal(!!c.state.journal!.commitBody, stage === "commit");
+      const before = await readFile(c.settings.file);
+      await assert.rejects(f.run(), { code: "RUNTIME_BUSY" });
+      assert.deepEqual(await readFile(c.settings.file), before);
+      assert.deepEqual(f.calls, []);
+      assert.equal(await f.next.read(), undefined);
+    } finally {
+      await f.close();
+    }
+  });
+
+for (const fault of [
+  "declined",
+  "missing-confirmation",
+  "scope",
+  "web-scope",
+  "yes-declined",
+  "live-lock",
+  "live-owner",
+  "prepare-phase",
+  "previous",
+  "apply-epoch",
+  "local-receipt",
+  "applied-receipt",
+  "current",
+  "retained",
+  "mapping",
+  "generation",
+  "legacy-record",
+  "materialized",
+  "owned-turn",
+  "catalog-epoch",
+  "catalog-root",
+  "catalog-generation",
+  "catalog-provider",
+  "catalog-ownership",
+  "drift",
+  "replacement",
+  "revoked-drift",
+  "new-approval-drift",
+] as const)
+  test(`should refuse fresh initial setup recovery with ${fault}`, async () => {
+    const f = await fixture();
+    try {
+      const c = await unappliedSetup(f),
+        journal = c.state.journal!,
+        catalog = journal.catalogContext!,
+        pointer = {
+          generation: journal.generation,
+          agentId: f.scope.agentId,
+          workspaceId: uuid(),
+          bindingEpoch: 1,
+          configRevision: 1,
+          provider: "claude" as const,
+          localRootReference: journal.localRootReference,
+        };
+      let changesSettings = false;
+      if (fault === "declined") f.interaction.confirmPreviousRevoked = async () => false;
+      if (fault === "missing-confirmation") delete f.interaction.confirmPreviousRevoked;
+      if (fault === "web-scope") f.approvalScope.roomId = uuid();
+      if (fault === "yes-declined") f.interaction.confirm = async () => false;
+      if (fault === "scope" || fault === "live-owner") {
+        const owner = (await f.previous.read())!;
+        if (fault === "scope") owner.scope!.roomId = uuid();
+        else owner.status = "connected";
+        await f.previous.write(owner);
+      }
+      if (fault === "prepare-phase") {
+        journal.phase = "PREPARE_INTENT";
+        changesSettings = true;
+      }
+      if (fault === "previous") {
+        journal.previous = pointer;
+        journal.applyBody!.expectedEpoch = pointer.bindingEpoch;
+        journal.applyHash = digest(stableJson(journal.applyBody));
+        changesSettings = true;
+      }
+      if (fault === "apply-epoch") {
+        journal.applyBody!.expectedEpoch = 1;
+        journal.applyHash = digest(stableJson(journal.applyBody));
+        changesSettings = true;
+      }
+      if (fault === "local-receipt") {
+        Object.assign(journal, { localReceipt: journal.receipt });
+        changesSettings = true;
+      }
+      if (fault === "applied-receipt") {
+        journal.operation.receipt = { ...journal.receipt!, state: "APPLIED" };
+        changesSettings = true;
+      }
+      if (fault === "current") {
+        c.state.current = pointer;
+        changesSettings = true;
+      }
+      if (fault === "retained") {
+        c.state.retained.push(pointer);
+        changesSettings = true;
+      }
+      if (fault === "mapping") {
+        const owner = (await f.previous.read())!;
+        owner.mappings.push({
+          agentId: f.scope.agentId,
+          workspaceId: pointer.workspaceId,
+          bindingEpoch: 1,
+          root: f.root,
+          nativeSessionId: uuid(),
+        });
+        await f.previous.write(owner);
+      }
+      if (fault === "generation")
+        await mkdir(join(c.settings.dir, "generations", journal.generation), {
+          recursive: true,
+          mode: 0o700,
+        });
+      if (fault === "legacy-record") await f.runtime.write(f.record);
+      if (fault === "materialized") {
+        catalog.materialization!.state = "MATERIALIZED";
+        catalog.materialization!.initHash = digest("unproven-init");
+        changesSettings = true;
+      }
+      if (fault === "owned-turn") {
+        catalog.ownedTurns.push({ turnId: uuid(), terminal: "COMPLETED" });
+        changesSettings = true;
+      }
+      if (fault === "catalog-epoch") {
+        catalog.epoch++;
+        changesSettings = true;
+      }
+      if (fault === "catalog-root") {
+        catalog.root = { ...catalog.root, ino: catalog.root.ino + 1 };
+        changesSettings = true;
+      }
+      if (fault === "catalog-generation") {
+        catalog.generation = uuid();
+        changesSettings = true;
+      }
+      if (fault === "catalog-provider") {
+        catalog.provider = "codex";
+        changesSettings = true;
+      }
+      if (fault === "catalog-ownership") {
+        Object.assign(catalog, { ownership: "IMPORTED" });
+        changesSettings = true;
+      }
+      if (changesSettings)
+        await writeFile(c.settings.file, JSON.stringify(c.state), { mode: 0o600 });
+      const drift = async () => {
+        journal.reason = "CHANGED";
+        await c.settings.write(c.state);
+        return true;
+      };
+      if (fault === "drift") f.interaction.confirmPreviousRevoked = drift;
+      if (fault === "replacement")
+        f.interaction.confirmPreviousRevoked = async () => {
+          const replacement = `${c.settings.file}.replacement`;
+          await writeFile(replacement, await readFile(c.settings.file), { mode: 0o600 });
+          await rename(replacement, c.settings.file);
+          return true;
+        };
+      if (fault === "revoked-drift")
+        f.interaction.confirmPreviousRevoked = async () => {
+          const owner = (await f.previous.read())!;
+          owner.status = "connected";
+          await f.previous.write(owner);
+          return true;
+        };
+      if (fault === "new-approval-drift") f.interaction.confirm = drift;
+      const files = [f.previous.file, c.settings.file],
+        before = await Promise.all(files.map((file) => readFile(file)));
+      if (fault === "live-lock")
+        await c.settings.locked(async () => assert.rejects(f.run(), { code: "RUNTIME_BUSY" }));
+      else await assert.rejects(f.run());
+      assert.deepEqual(
+        f.calls,
+        ["new-approval-drift", "web-scope", "yes-declined"].includes(fault)
+          ? ["begin", "pairing-status"]
+          : [],
+      );
+      assert.equal((await f.next.read())?.credential, undefined);
+      assert.equal(f.adapter.starts, 0);
+      assert.equal(f.adapter.prepares, 0);
+      if (!["drift", "revoked-drift", "new-approval-drift"].includes(fault))
+        assert.deepEqual(await Promise.all(files.map((file) => readFile(file))), before);
+    } finally {
+      await f.close();
+    }
+  });
+
+test("should keep ordinary connect and local removal blocked for an UNKNOWN initial setup", async () => {
+  const f = await fixture();
+  try {
+    const c = await unappliedSetup(f),
+      before = await readFile(c.settings.file);
+    for (const command of ["connect", "revoke-local"])
+      await assert.rejects(
+        withSettingsDeviceLock(f.previous, command, async () =>
+          assert.fail("must remain idle-only"),
+        ),
+        { code: "RUNTIME_BUSY" },
+      );
+    await c.settings.locked(async () =>
+      assert.rejects(revokeConfiguredProfile(f.previous, c.settings), { code: "RUNTIME_BUSY" }),
+    );
+    assert.deepEqual(await readFile(c.settings.file), before);
+    assert.deepEqual(f.calls, []);
+  } finally {
+    await f.close();
+  }
+});
+
+for (const outcome of [
+  "401",
+  "403",
+  "404",
+  "network",
+  "revoked-declined",
+  "web-scope",
+  "ordinary",
+  "abort",
+] as const)
+  test(`should handle initially connected UNKNOWN setup and ${outcome} through the real CLI`, async (t) => {
+    const f = await fixture(true);
+    const opener = t.mock.method(childProcess, "execFile", (...args: unknown[]) => {
+      (args.at(-1) as (error: Error | null) => void)(null);
+      return {};
+    });
+    syncBuiltinESMExports();
+    try {
+      const c = await unappliedSetup(f),
+        owner = (await f.previous.read())!;
+      owner.status = "connected";
+      await f.previous.write(owner);
+      const profileBytes = await readFile(f.previous.file),
+        settingsBytes = await readFile(c.settings.file),
+        oldRequests = [...c.requests],
+        output: string[] = [],
+        calls: string[] = [],
+        confirmations: string[] = [];
+      for (const stream of [process.stdin, process.stdout]) {
+        const descriptor = Object.getOwnPropertyDescriptor(stream, "isTTY");
+        Object.defineProperty(stream, "isTTY", { configurable: true, value: true });
+        t.after(() => {
+          if (descriptor) Object.defineProperty(stream, "isTTY", descriptor);
+          else delete (stream as { isTTY?: boolean }).isTTY;
+        });
+      }
+      t.mock.method(process.stdout, "write", (message: string | Uint8Array) => {
+        output.push(String(message));
+        return true;
+      });
+      t.mock.method(Interface.prototype, "question", async (question: string) => {
+        confirmations.push(question);
+        if (question.includes("revoked")) {
+          await assert.rejects(
+            c.settings.locked(async () => {}),
+            { code: "RUNTIME_BUSY" },
+          );
+          return outcome === "revoked-declined" ? "cancel" : "revoked";
+        }
+        return "yes";
+      });
+      if (outcome === "web-scope") f.approvalScope.roomId = uuid();
+      t.mock.method(
+        globalThis,
+        "fetch",
+        async (url: string | URL | Request, init?: RequestInit) => {
+          const path = new URL(String(url)).pathname,
+            action = path.split("/").at(-1)!;
+          calls.push(path);
+          if (
+            action === "bindings" &&
+            new Headers(init?.headers).get("authorization") === `Bearer ${owner.credential}`
+          ) {
+            if (outcome === "abort") process.emit("SIGINT");
+            if (outcome === "network") throw new Error("fixture network unavailable");
+            return Response.json(
+              {
+                ok: false,
+                error: {
+                  code:
+                    outcome === "403"
+                      ? "FORBIDDEN"
+                      : outcome === "404"
+                        ? "NOT_FOUND"
+                        : "UNAUTHENTICATED",
+                },
+              },
+              { status: outcome === "403" ? 403 : outcome === "404" ? 404 : 401 },
+            );
+          }
+          if (path === "/api/runtime-settings/poll") {
+            queueMicrotask(() => process.emit("SIGINT"));
+            return Response.json({
+              ok: true,
+              data: {
+                protocol: 1,
+                deviceId: (await f.next.read())!.deviceId,
+                configRevision: 0,
+                catalog: null,
+                operation: null,
+                applied: null,
+                current: false,
+                currentBinding: null,
+              },
+            });
+          }
+          if (action === "heartbeat")
+            return Response.json({
+              ok: true,
+              data: {
+                protocol: 1,
+                state: "registered",
+                verification: "unverified",
+                lastSeenAt: new Date().toISOString(),
+              },
+            });
+          const data = await f.connector.client.call(
+            action as "begin",
+            JSON.parse(String(init?.body ?? "{}")),
+            new Headers(init?.headers).get("authorization")?.replace("Bearer ", ""),
+          );
+          return Response.json({ ok: true, data });
+        },
+      );
+      const command = [
+        "connect",
+        "--server",
+        f.scope.server,
+        "--state-dir",
+        f.stateDir,
+        "--profile",
+        outcome === "ordinary" ? f.previous.profile : f.next.profile,
+        "--organization-id",
+        f.scope.organizationId,
+        "--room-id",
+        f.scope.roomId,
+        "--device-alias",
+        "New Mac",
+      ];
+      if (outcome !== "ordinary")
+        command.push(
+          "--previous-profile",
+          f.previous.profile,
+          "--recovery-id",
+          f.recoveryId,
+          "--recovery-chain",
+          JSON.stringify({
+            version: 1,
+            baseProfile: f.baseProfile,
+            chain: [
+              {
+                previousProfile: f.baseProfile,
+                recoveryId: f.intermediateId,
+                profile: f.previous.profile,
+              },
+              {
+                previousProfile: f.previous.profile,
+                recoveryId: f.recoveryId,
+                profile: f.next.profile,
+              },
+            ],
+          }),
+        );
+      const timeout = setTimeout(() => process.emit("SIGINT"), 3000);
+      try {
+        if (outcome === "401" || outcome === "403") await main(command);
+        else await assert.rejects(main(command));
+      } finally {
+        clearTimeout(timeout);
+      }
+      assert.deepEqual(await readFile(c.settings.file), settingsBytes);
+      assert.deepEqual(c.requests, oldRequests);
+      if (outcome === "network") {
+        assert.deepEqual(await readFile(f.previous.file), profileBytes);
+        assert.deepEqual(calls, ["/api/connector/bindings"]);
+      } else assert.deepEqual(await f.previous.read(), { ...owner, status: "disconnected" });
+      if (outcome === "401" || outcome === "403") {
+        assert.equal(f.calls.filter((call) => call === "begin").length, 1);
+        assert.equal(f.calls.filter((call) => call === "exchange").length, 1);
+        assert.equal(confirmations.filter((question) => question.includes("revoked")).length, 1);
+        assert.equal(confirmations.filter((question) => question.includes("yes")).length, 1);
+        assert.match(output.join(""), /미완료 AI 설정과 목록 조회 결과는 확인 불가/);
+        assert.equal((await f.next.read())!.status, "connected");
+      } else {
+        assert.ok(!f.calls.includes("exchange"));
+        if (outcome !== "web-scope") assert.ok(!f.calls.includes("begin"));
+      }
+      assert.equal(f.adapter.starts, 0);
+      assert.equal(f.adapter.prepares, 0);
+    } finally {
+      opener.mock.restore();
+      syncBuiltinESMExports();
+      await f.close();
+    }
+  });
 
 for (const fault of [
   "live",

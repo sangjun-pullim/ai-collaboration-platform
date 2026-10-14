@@ -110,10 +110,12 @@ export function revokeLocalProfile(store: StateStore, runner: (agentId: string) 
 export async function withConfiguredProfileProtection<T>(
   profile: StateStore,
   settings: SettingsStore,
-  mutation: (owner: ConnectorState, metadata: { unresolvedCount: number }) => Promise<T>,
+  mutation: (
+    owner: ConnectorState,
+    metadata: { unresolvedCount: number; preservedUnappliedSetup?: true },
+  ) => Promise<T>,
   mode: "idle" | "fresh-approval" = "idle",
 ) {
-  await settings.assertIdle();
   const snapshot = await settings.read();
   const owner = await profile.read();
   if (!snapshot || !owner || settings.profile !== profile || !sameOwner(snapshot, owner))
@@ -121,6 +123,9 @@ export async function withConfiguredProfileProtection<T>(
   if (owner.pending || owner.registration) throw new RuntimeError("RUNTIME_BUSY");
   if (mode === "fresh-approval" && !isFreshApprovalEligible(owner))
     throw new RuntimeError("RUNTIME_BUSY");
+  const preservedUnappliedSetup =
+    mode === "fresh-approval" && isUnappliedInitialSetup(snapshot, owner);
+  if (!preservedUnappliedSetup) await settings.assertIdle();
   const pointers = [...snapshot.retained, ...(snapshot.current ? [snapshot.current] : [])].sort(
     (a, b) => a.generation.localeCompare(b.generation),
   );
@@ -145,7 +150,10 @@ export async function withConfiguredProfileProtection<T>(
           throw new RuntimeError("AUTHORITY_LOST");
         if (stableJson(await generationInventory(settings, pointers)) !== stableJson(generations))
           throw new RuntimeError("AUTHORITY_LOST");
-        return mutation(owner, { unresolvedCount });
+        return mutation(owner, {
+          unresolvedCount,
+          ...(preservedUnappliedSetup ? { preservedUnappliedSetup: true } : {}),
+        });
       });
     const pointer = pointers[index];
     const runtime = pointer.legacy
@@ -181,6 +189,56 @@ export async function withConfiguredProfileProtection<T>(
     });
   };
   return guard(0);
+}
+
+/** SettingsManager persists settings before calling prepare, even if no runtime is created.
+ * A metadata reservation alone proves neither catalog completion nor process termination.
+ * SettingsStore.read has already validated journal, receipt, root and catalog ownership.
+ */
+function isUnappliedInitialSetup(state: SettingsState, owner: ConnectorState) {
+  const journal = state.journal;
+  if (
+    !journal ||
+    journal.phase !== "UNKNOWN" ||
+    journal.receipt?.state !== "LOCAL_CONFIRMATION" ||
+    journal.operation.expectedConfigRevision !== 0 ||
+    journal.receipt.configRevision !== 0 ||
+    journal.receipt.runtime !== journal.operation.requested.runtime ||
+    journal.receipt.agentId !== null ||
+    journal.receipt.workspaceId !== null ||
+    journal.receipt.bindingEpoch !== null ||
+    (journal.operation.receipt &&
+      (journal.operation.receipt.state !== "LOCAL_CONFIRMATION" ||
+        journal.operation.receipt.agentId !== null ||
+        journal.operation.receipt.workspaceId !== null ||
+        journal.operation.receipt.bindingEpoch !== null)) ||
+    journal.settings !== null ||
+    journal.context !== null ||
+    journal.previous != null ||
+    (journal.applyBody && journal.applyBody.expectedEpoch !== null) ||
+    journal.commitBody !== undefined ||
+    state.current !== null ||
+    state.retained.length !== 0 ||
+    owner.mappings.length !== 0
+  )
+    return false;
+  const catalog = journal.catalogContext;
+  return (
+    !catalog ||
+    (journal.operation.requested.runtime === "claude" &&
+      catalog.provider === "claude" &&
+      catalog.ownership === "CONNECTOR_CREATED" &&
+      catalog.generation === journal.generation &&
+      stableJson(catalog.root) === stableJson(journal.root) &&
+      catalog.epoch === 1 &&
+      catalog.level === "L1" &&
+      catalog.ownedTurns.length === 0 &&
+      catalog.materialization?.state === "RESERVED" &&
+      catalog.materialization.initHash === null &&
+      (!journal.receipt.catalog ||
+        (journal.receipt.catalog.runtime === "claude" &&
+          catalog.materialization.version === journal.receipt.catalog.version)))
+  );
 }
 
 function protectedUnresolvedCount(record: RuntimeRecord, mode: "idle" | "fresh-approval") {

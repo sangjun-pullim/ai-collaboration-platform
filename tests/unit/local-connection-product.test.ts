@@ -11,12 +11,135 @@ import { StateStore } from "../../packages/local-connector/src/state-store.ts";
 import { Connector } from "../../packages/local-connector/src/cli.ts";
 import { CentralClient } from "../../packages/local-connector/src/central-client.ts";
 import { SettingsStore } from "../../packages/local-connector/src/settings/store.ts";
-import type { Operation } from "../../packages/local-connector/src/settings/contracts.ts";
+import { SettingsManager } from "../../packages/local-connector/src/settings/manager.ts";
+import { SettingsClient } from "../../packages/local-connector/src/settings/client.ts";
+import { RuntimeFilePolicy } from "../../packages/local-connector/src/runtime-file-policy.ts";
+import {
+  RuntimeError,
+  digest,
+  type Capabilities,
+} from "../../packages/local-connector/src/runtime-contracts.ts";
+import type {
+  Operation,
+  Receipt,
+  SettingsResponse,
+} from "../../packages/local-connector/src/settings/contracts.ts";
 import {
   localConnectionCommand,
   readConnectionSelection,
   nextConnectionSelection,
 } from "../../src/features/device-binding/local-connection-command.ts";
+
+/** Generate durable initial setup evidence without a provider process or settings replay. */
+async function persistUnappliedSetup(profile: StateStore, root: string) {
+  const owner = (await profile.read())!,
+    settings = new SettingsStore(profile),
+    operationId = randomUUID(),
+    policy = await RuntimeFilePolicy.select(root, []);
+  let response: SettingsResponse = {
+    protocol: 1,
+    deviceId: owner.deviceId!,
+    configRevision: 0,
+    catalog: null,
+    applied: null,
+    current: true,
+    currentBinding: null,
+    operation: {
+      operationId,
+      deviceId: owner.deviceId!,
+      expectedConfigRevision: 0,
+      state: "REQUESTED",
+      requested: {
+        operationId,
+        deviceId: owner.deviceId!,
+        expectedConfigRevision: 0,
+        runtime: "claude",
+      },
+      receipt: null,
+    },
+  };
+  const capabilities: Capabilities = {
+    runtime: "claude",
+    version: "2.1.287",
+    models: [
+      {
+        id: "fixture-claude",
+        model: "fixture-claude",
+        efforts: [],
+        defaultEffort: null,
+        isDefault: true,
+      },
+    ],
+    defaultSettings: { model: "fixture-claude", effort: null },
+    snapshotHash: digest("fixture-catalog"),
+    policy: "CONFIRMED",
+  };
+  let catalogs = 0;
+  const manager = new SettingsManager(
+    profile,
+    settings,
+    new SettingsClient(owner.server, async (_url, init) => {
+      const body = JSON.parse(String(init?.body));
+      if (body.state) {
+        const receipt = body as Receipt;
+        assert.equal(receipt.state, "LOCAL_CONFIRMATION");
+        response = {
+          ...response,
+          catalog: receipt.catalog,
+          operation: {
+            ...response.operation!,
+            state: receipt.state,
+            receipt: { ...receipt, catalog: null },
+          },
+        };
+      }
+      return Response.json({ ok: true, data: response });
+    }),
+    {
+      folder: async () => ({ status: "SELECTED", root: policy.root }),
+      confirm: async () => ({
+        confirmed: true,
+        repositoryAlias: "Repository",
+        files: [],
+        handoff: "",
+      }),
+      adapter: (_provider, reserve) => ({
+        capabilities: async (path, check) => {
+          check();
+          await reserve(path, capabilities.version, digest("fixture-policy"));
+          if (++catalogs === 2) throw new RuntimeError("UNKNOWN");
+          return capabilities;
+        },
+        prepare: async () => assert.fail("must not prepare a runtime"),
+        execute: async () => assert.fail("must not execute a question"),
+        validate: async () => assert.fail("must not validate a runtime"),
+        observe: async () => null,
+        interrupt: async () => false,
+        close: async () => {},
+      }),
+      runner: () => assert.fail("must not start a runner"),
+    },
+  );
+  assert.equal((await manager.run({ once: true })).state, "LOCAL_CONFIRMATION");
+  const journal = (await settings.read())!.journal!;
+  response.operation = {
+    ...response.operation!,
+    state: "APPLYING",
+    requested: {
+      ...response.operation!.requested,
+      localRootReference: journal.localRootReference,
+      repositoryAlias: "Repository",
+      sessionAlias: "Session",
+      expectedEpoch: null,
+      model: "fixture-claude",
+      effort: null,
+      snapshotHash: journal.receipt!.catalog!.snapshotHash,
+    },
+  };
+  assert.equal((await manager.run({ once: true })).state, "UNKNOWN");
+  assert.equal((await settings.read())!.journal!.settings, null);
+  assert.equal((await settings.read())!.journal!.context, null);
+}
 
 test(
   "should reconnect generated commands through the real bootstrap and CLI after unexecuted generations",
@@ -64,6 +187,7 @@ test(
     const calls: string[] = [];
     let operation: Operation | null = null;
     let rejectSettingsPoll = false;
+    let removedDevice: string | undefined;
     let stop: () => void = () => {};
     const date = (seconds: number) => new Date(Date.now() + seconds * 1000).toISOString();
     const server = createServer(async (req, res) => {
@@ -77,6 +201,15 @@ test(
         const action = req.url?.split("/").at(-1);
         for await (const part of req) void part;
         calls.push(req.url!);
+        if (
+          action === "bindings" &&
+          removedDevice &&
+          req.headers.authorization === `Bearer ${"a".repeat(64)}`
+        ) {
+          res.writeHead(401, { "Content-Type": "application/json" });
+          res.end(JSON.stringify({ ok: false, error: { code: "UNAUTHENTICATED" } }));
+          return;
+        }
         let data: Record<string, unknown> = { protocol: 1 };
         if (req.url === "/api/runtime-settings/poll") {
           if (rejectSettingsPoll) {
@@ -117,6 +250,7 @@ test(
     assert.ok(address && typeof address !== "string");
     const origin = `http://127.0.0.1:${address.port}`;
     for (const kind of [
+      "unapplied-connected",
       "unfinished-plain",
       "unfinished-lineage",
       "first",
@@ -153,7 +287,12 @@ test(
         });
       const settings = new SettingsStore(original);
       operation = null;
+      removedDevice = undefined;
       rejectSettingsPoll = kind === "auth-failure";
+      if (kind === "unapplied-connected") {
+        await persistUnappliedSetup(original, work);
+        removedDevice = (await original.read())!.deviceId;
+      }
       if (kind.startsWith("unfinished-")) {
         const operationId = randomUUID();
         operation = {
@@ -197,7 +336,8 @@ test(
       for (let retry = 0; retry < 2; retry++) {
         const before = await original.read(),
           bytes = before ? await readFile(original.file) : undefined,
-          settingsBytes = operation ? await readFile(settings.file) : undefined,
+          settingsBytes =
+            operation || kind === "unapplied-connected" ? await readFile(settings.file) : undefined,
           start = calls.length;
         const child = spawn(
           "/usr/bin/python3",
@@ -225,7 +365,20 @@ test(
         });
         assert.equal(code, 0, errors);
         const result = JSON.parse(output);
-        assert.equal(result.exitCode, 0, result.output);
+        const retained = await readdir(work);
+        const shutdown = await Promise.all(
+          retained.map(async (name) => {
+            try {
+              return {
+                directory: name,
+                proof: await readFile(join(work, name, "shutdown"), "utf8"),
+              };
+            } catch (error) {
+              return { directory: name, proofError: (error as NodeJS.ErrnoException).code };
+            }
+          }),
+        );
+        assert.equal(result.exitCode, 0, JSON.stringify({ kind, retry, ...result, shutdown }));
         assert.ok(calls.slice(start).includes("/api/runtime-settings/poll"), result.output);
         if (kind === "auth-failure") {
           assert.match(result.output, /서버.*인증.*거부/);
@@ -239,7 +392,10 @@ test(
         } else {
           assert.match(result.output, /AI.*폴더/);
         }
-        if (kind === "disconnected-future-intermediate" && retry === 0) {
+        if (
+          ["disconnected-future-intermediate", "unapplied-connected"].includes(kind) &&
+          retry === 0
+        ) {
           assert.ok(result.output.includes("revoked를 입력하세요:"));
           assert.ok(calls.slice(start).some((path) => path.endsWith("/begin")));
           assert.ok(calls.slice(start).some((path) => path.endsWith("/exchange")));
@@ -250,22 +406,36 @@ test(
               .slice(start)
               .some((path) => path.endsWith("/begin") || path.endsWith("/exchange")),
           );
-        if (kind !== "first" && bytes) assert.deepEqual(await readFile(original.file), bytes);
+        if (kind === "unapplied-connected") {
+          assert.deepEqual(await original.read(), { ...before!, status: "disconnected" });
+          if (retry) assert.deepEqual(await readFile(original.file), bytes);
+          assert.match(result.output, /미완료 AI 설정과 목록 조회 결과는 확인 불가/);
+          assert.equal((await settings.read())!.journal!.phase, "UNKNOWN");
+        } else if (kind !== "first" && bytes)
+          assert.deepEqual(await readFile(original.file), bytes);
         if (settingsBytes) {
           assert.deepEqual(await readFile(settings.file), settingsBytes);
-          assert.deepEqual(
-            calls.slice(start).filter((path) => path !== "/api/connector/heartbeat"),
-            ["/api/connector/bindings", "/api/runtime-settings/poll"],
-          );
+          if (kind !== "unapplied-connected")
+            assert.deepEqual(
+              calls.slice(start).filter((path) => path !== "/api/connector/heartbeat"),
+              [
+                ...(kind === "unfinished-lineage" ? ["/api/connector/bindings"] : []),
+                "/api/connector/bindings",
+                "/api/runtime-settings/poll",
+              ],
+            );
           assert.equal((await original.read())!.mappings.length, 0);
           assert.equal((await settings.read())!.current, null);
         }
         assert.deepEqual(await readdir(work), []);
       }
-      const selected =
-        kind === "expired" || kind === "disconnected-future-intermediate"
-          ? new StateStore(original.dir, selection.chain.at(-1)!.profile)
-          : original;
+      const selected = [
+        "expired",
+        "disconnected-future-intermediate",
+        "unapplied-connected",
+      ].includes(kind)
+        ? new StateStore(original.dir, selection.chain.at(-1)!.profile)
+        : original;
       assert.equal((await selected.read())?.status, "connected");
     }
   },
