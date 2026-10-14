@@ -281,6 +281,118 @@ test(
 );
 
 test(
+  "should collect the actual child exit after its interrupted wait outlives shutdown",
+  macOnly,
+  async (t) => {
+    const f = await connectionFixture(t, { behavior: "signal" });
+    // Scheduling can resume the shell trap only after the child has already exited.
+    // Keep that timing deterministic without changing the child or its shutdown proof.
+    await writeFile(
+      f.script,
+      (await readFile(f.script, "utf8")).replace(
+        /trap '([^'\n]+)' TERM/,
+        "trap '$1; /bin/sleep 0.05' TERM",
+      ),
+    );
+    const child = spawn("/bin/bash", ["--noprofile", "--norc", "-p", f.script, ...f.args], {
+      env: f.env,
+      stdio: ["ignore", "pipe", "pipe"],
+    });
+    t.after(() => {
+      if (child.exitCode === null) child.kill("SIGKILL");
+    });
+    const ended = new Promise<{ code: number | null; stderr: string }>((done) => {
+      let stderr = "";
+      child.stderr.on("data", (bytes) => (stderr += bytes));
+      child.on("exit", (code) => done({ code, stderr }));
+    });
+    for (let attempt = 0; attempt < 200; attempt++) {
+      try {
+        await readFile(f.runFile);
+        break;
+      } catch {
+        await delay(10);
+      }
+    }
+    await readFile(f.runFile);
+    await delay(30);
+    child.kill("SIGTERM");
+    const result = await ended;
+    const retained = await readdir(join(f.root, "work"));
+    const proof = await Promise.all(
+      retained.map((name) =>
+        readFile(join(f.root, "work", name, "shutdown"), "utf8").catch(
+          (error: NodeJS.ErrnoException) => error.code,
+        ),
+      ),
+    );
+    assert.equal(result.code, 0, JSON.stringify({ ...result, proof }));
+    assert.equal(await readFile(join(f.root, "stopped"), "utf8"), "stopped");
+    assert.deepEqual(retained, []);
+  },
+);
+
+test("should verify child shutdown after a terminal group interrupt", macOnly, async (t) => {
+  const f = await connectionFixture(t, { behavior: "interrupt" });
+  // Keep proof I/O pending after main settles so the terminal and forwarded INT
+  // exercise the completed-main window rather than depending on disk timing.
+  await writeFile(
+    f.script,
+    (await readFile(f.script, "utf8")).replace(
+      'await writeFile(proof, "VERIFIED\\n",',
+      'await new Promise(resolve => setTimeout(resolve, 50)); await writeFile(proof, "VERIFIED\\n",',
+    ),
+  );
+  const quote = (value: string) => "'" + value.replaceAll("'", "'\\''") + "'";
+  const child = spawn("/usr/bin/python3", [resolve("tests/helpers/local-connection-pty.py")], {
+    stdio: ["pipe", "pipe", "pipe"],
+  });
+  t.after(() => {
+    if (child.exitCode === null) child.kill("SIGKILL");
+  });
+  child.stdin.write(
+    JSON.stringify({
+      command: ["/bin/bash", "--noprofile", "--norc", "-p", f.script, ...f.args]
+        .map(quote)
+        .join(" "),
+      environment: { ...f.env, HOME: f.root },
+    }) + "\n",
+  );
+  const ended = new Promise<{ code: number | null; stdout: string; stderr: string }>((done) => {
+    let stdout = "",
+      stderr = "";
+    child.stdout.on("data", (bytes) => (stdout += bytes));
+    child.stderr.on("data", (bytes) => (stderr += bytes));
+    child.on("exit", (code) => done({ code, stdout, stderr }));
+  });
+  for (let attempt = 0; attempt < 200; attempt++) {
+    try {
+      await readFile(f.runFile);
+      break;
+    } catch {
+      await delay(10);
+    }
+  }
+  await readFile(f.runFile);
+  await delay(30);
+  child.stdin.write("stop\n");
+  const result = await ended;
+  assert.equal(result.code, 0, result.stderr);
+  const terminal = JSON.parse(result.stdout);
+  const retained = await readdir(join(f.root, "work"));
+  const proof = await Promise.all(
+    retained.map((name) =>
+      readFile(join(f.root, "work", name, "shutdown"), "utf8").catch(
+        (error: NodeJS.ErrnoException) => error.code,
+      ),
+    ),
+  );
+  assert.equal(terminal.exitCode, 0, JSON.stringify({ ...terminal, proof }));
+  assert.equal(await readFile(join(f.root, "stopped"), "utf8"), "stopped");
+  assert.deepEqual(retained, []);
+});
+
+test(
   "should block Perl preload code before the digest validation tool executes",
   macOnly,
   async (t) => {

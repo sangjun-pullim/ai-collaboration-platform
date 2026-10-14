@@ -200,8 +200,10 @@ download "$origin$code_path" "$work/connector.tar.gz" 16777216
 verify "$work/connector.tar.gz" "$code_sha"
 node_tool extract "$work/connector.tar.gz" "$work/code" || fail INVALID_ARCHIVE
 forward() { if [ -n "$child" ]; then /bin/kill "-$1" "$child" 2>/dev/null || true; fi; }
-trap 'forward INT' INT
-trap 'forward TERM' TERM
+wait_interrupted=0
+interrupt() { wait_interrupted=1; forward "$1"; }
+trap 'interrupt INT' INT
+trap 'interrupt TERM' TERM
 started=1
 "$node" --input-type=module -e '
 import {writeFile} from "node:fs/promises";
@@ -214,6 +216,11 @@ try {
   hint = module.connectionFailureHint;
   const {main} = module;
   await main(args);
+  // Main has completed every owned cleanup. A forwarded duplicate signal must
+  // not kill this process while its final shutdown proof is being written.
+  const completed = () => {};
+  process.on("SIGINT", completed);
+  process.on("SIGTERM", completed);
   await writeFile(proof, "VERIFIED\n", {flag:"wx",mode:0o600});
 } catch (error) {
   const code = typeof error?.code === "string" && /^[A-Z_]{1,40}$/.test(error.code) ? error.code : "UNAVAILABLE";
@@ -224,9 +231,12 @@ try {
 child=$!
 set +e
 while true; do
+  wait_interrupted=0
   wait "$child"
   result=$?
-  /bin/kill -0 "$child" 2>/dev/null || break
+  # A trap interrupts wait before it reports the child's actual exit, even if the
+  # child has finished by the time the trap returns. Reap that status explicitly.
+  [ "$wait_interrupted" -eq 1 ] || break
 done
 set -e
 child=""
