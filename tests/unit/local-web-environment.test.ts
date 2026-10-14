@@ -50,6 +50,7 @@ async function fixture(t: TestContext) {
       folderAutoRead: true,
       answerSources: true,
       sevenDayCredentials: true,
+      currentRepositoryGit: true,
     },
     status: {
       API_URL: "http://127.0.0.1:56321",
@@ -204,10 +205,14 @@ test("should resolve matching local public settings without forwarding inherited
 });
 
 test("should reject missing DB features before reading any gateway key", async (t) => {
-  const f = await fixture(t);
-  f.features.aiSettings = false;
-  await assert.rejects(f.resolve(f.execute), { code: "DATABASE_FEATURES_MISSING" });
-  assert.equal(f.calls.length, 2);
+  for (const feature of ["aiSettings", "currentRepositoryGit"] as const) {
+    await t.test(feature, async (t) => {
+      const f = await fixture(t);
+      f.features[feature] = false;
+      await assert.rejects(f.resolve(f.execute), { code: "DATABASE_FEATURES_MISSING" });
+      assert.equal(f.calls.length, 2);
+    });
+  }
 });
 
 test("should reject a gateway from another project before reading its key", async (t) => {

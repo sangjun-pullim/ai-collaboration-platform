@@ -70,6 +70,12 @@ Auth 계정은 Supabase의 `auth.users`가 소유한다. 제품은 이메일이�
 
 등록 binding을 가진 계정의 hard-delete/ban/soft-delete, 물리적 기기·조직 정리와 정상 소유자 유지를 실제 기기·Auth 통합에서 검사했다. 브라우저 검사와 독립 구현 리뷰도 완료했다. 검증 수치는 [진행 상태](planning/delivery-and-validation.md#현재-진행-상태), 상태 불변식은 [BUSINESS-LOGIC](BUSINESS-LOGIC.md)을 따른다.
 
+## 현재 연결의 Git 관찰
+
+[SQL020](../supabase/migrations/20261014002000-current-repository-git-report.sql)은 `runtime_settings_private.git_reports`에 agent별 최근 관찰 한 행을 둔다. workspace·binding epoch·설정 revision, branch·commit과 관찰/수신 시각을 보관한다. agent/workspace 삭제 시 FK로 정리하며 public·anon·authenticated의 테이블 직접 접근을 허용하지 않는다.
+
+기기 쓰기는 기존 설정 변경과 같은 scope·방 잠금 아래 현재 소유권과 설정을 확인한다. 현재 epoch/revision과 일치하지 않는 행은 방 조회에서 제외한다. 기존 등록 metadata와 질문 당시 자료는 변경하지 않는다. 입력·재전달·시계 범위는 [Git 보고 API](API-SPEC.md#현재-저장소의-git-보고)를 따른다.
+
 ## 내구 질문과 실행 조정
 
 [workflow migration](../supabase/migrations/20261001000600-durable-investigation-coordinator.sql)은 private 정본 아홉 테이블과 공개 event/run 두 projection을 추가한다. 소유한 로컬 DB에 적용했고 신규 권한·제약 및 기존 catalog 보존을 확인했다. 실제 통합·브라우저·독립 구현 리뷰와 기존 Auth·기기 회귀를 통과했다. 현재 검증 수치는 [진행 상태](planning/delivery-and-validation.md#현재-진행-상태)에 유지한다.

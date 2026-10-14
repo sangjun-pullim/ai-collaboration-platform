@@ -37,6 +37,8 @@ Mac의 임시 실행 코드는 다운로드 검증·실행 환경 검사만 맡�
 
 [연결 생존 통신](../packages/local-connector/src/settings/connection-heartbeat.ts)은 장기 실행 중인 `SettingsManager`가 소유한다. 기기 잠금과 연결 검증 뒤 첫 통신을 보내고, 각 요청이 끝난 뒤 30초 간격으로 기존 heartbeat를 호출한다. 설정 확인·AI 답변·새 입력 일시정지 동안에도 독립적으로 진행하며 AI 입력은 만들지 않는다. 한번에 한 요청만 실행하고 실패 뒤에도 다음 간격까지 기다린다. `once` 실행과 callback이 없는 소비자는 이 통신을 시작하지 않는다.
 
+현재 폴더의 Git 보고는 [git-report.ts](../packages/local-connector/src/settings/git-report.ts)가 담당한다. 기존 직렬 통신에서 heartbeat 성공 뒤 한 번 관찰하며 별도 timer나 AI 입력을 만들지 않는다. 현재 generation의 root만 사용하고 관찰 전후 설정·소유 맥락을 대조한다. 기존 source-snapshot의3초 제한·root/HEAD 확인·외부 Git 설정 제한을 재사용하며 파일 내용과 dirty 상태를 추가 탐색하지 않는다. Git 보고 실패는 heartbeat 성공·AI 준비 상태에 영향을 주지 않는다. 서버는 현재 epoch/revision을 재검사한다. 현재 관찰은 별도 private 행에 저장하고 과거 질문 자료를 덮어쓰지 않는다. [API 계약](API-SPEC.md#현재-저장소의-git-보고)을 따른다.
+
 배경 통신은 현재 프로필을 읽어 검증한 뒤 프로필 transaction 밖에서 네트워크를 기다린다. 프로필을 쓰지 않으므로 늦게 도착한 이전 인증 오류가 새 인증 정보를 변경하지 않는다. 종료 때 다음 호출을 막고 기존 10초 요청 상한 안에서 진행 중인 통신을 기다린 뒤 기기 잠금을 반환한다. AI 실행기·adapter의 종료 실패는 기존 처리대로 보존한다.
 
 웹은 요청별 세션으로 기존 본인 기기 목록만 조회한다. 유효한 인증과 조회 시각 기준 90초 미만의 통신을 확인한 활성 기기를 초록으로 표시한다. 답변 준비와 연결 통신은 별개이며, 마지막 조회 결과는 사용자가 직접 다시 확인할 때 갱신한다. 표시와 화면 높이 책임은 [프런트엔드 구조](FRONTEND-ARCHITECTURE.md#본인-pc의-연결-표시)를 따른다.

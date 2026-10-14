@@ -845,13 +845,18 @@ test("should keep private roots credentials and locators out of public storage a
         "Direct private read must fail",
       );
     const funcs = await f.stack.db.query(
-      "select p.prosecdef,p.proconfig from pg_proc p join pg_namespace n on n.oid=p.pronamespace where n.nspname='public' and (p.proname like 'connector_%' or p.proname like 'connection_%')",
+      "select p.proname,p.prosecdef,p.proconfig from pg_proc p join pg_namespace n on n.oid=p.pronamespace where n.nspname='public' and (p.proname like 'connector_%' or p.proname like 'connection_%')",
     );
     ensure(
-      funcs.rowCount === 14 &&
+      funcs.rowCount === 16 &&
         funcs.rows.every((r) => r.prosecdef && r.proconfig.includes('search_path=""')),
       "All connection RPCs must use empty definer search path",
     );
+    for (const name of ["connector_git_report", "connection_room_git_bindings"])
+      ensure(
+        funcs.rows.filter((r) => r.proname === name).length === 1,
+        "Connection RPC inventory must include each new Git RPC exactly once",
+      );
   }));
 test("should keep connector authentication separate from browser cookies and human actions", () =>
   deviceCase("boundaries", async (f) => {

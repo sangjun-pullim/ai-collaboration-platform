@@ -6,6 +6,7 @@ export const connectorActions = [
   "exchange",
   "rotate",
   "heartbeat",
+  "git-report",
   "workspace",
   "agent",
   "replace",
@@ -79,6 +80,14 @@ export const isBranch = (value: unknown): value is string =>
       !value.endsWith("/") &&
       !value.endsWith(".lock") &&
       !value.endsWith(".")));
+export const isGitCommit = (value: unknown): value is string =>
+  value === "unknown" ||
+  (typeof value === "string" && /^(?:[a-f0-9]{40}|[a-f0-9]{64})$/.test(value));
+export const isUtcTimestamp = (value: unknown): value is string =>
+  typeof value === "string" &&
+  /^\d{4}-\d\d-\d\dT\d\d:\d\d:\d\d\.\d{3}Z$/.test(value) &&
+  Number.isFinite(Date.parse(value)) &&
+  new Date(value).toISOString() === value;
 export type GitMetadata = { branch: string; commit: string; dirty: "unknown" };
 export type WorkspaceMetadata = {
   repositoryAlias: string;
@@ -115,6 +124,15 @@ const schemas: Record<
   },
   rotate: { operationId: isId, credentialHash: isHash },
   heartbeat: {},
+  "git-report": {
+    agentId: isId,
+    workspaceId: isId,
+    bindingEpoch: (value) => Number.isSafeInteger(value) && Number(value) > 0,
+    configRevision: (value) => Number.isSafeInteger(value) && Number(value) > 0,
+    branch: isBranch,
+    commit: isGitCommit,
+    observedAt: isUtcTimestamp,
+  },
   bindings: {},
   workspace: {
     operationId: isId,
@@ -309,6 +327,8 @@ export function projectResponse(
           }
         }),
     };
+  else if (action === "git-report")
+    schema = { protocol: (v) => v === protocol, reported: (v) => v === true };
   else if (action === "heartbeat")
     schema = {
       protocol: (v) => v === protocol,

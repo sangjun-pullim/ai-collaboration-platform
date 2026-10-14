@@ -7,12 +7,12 @@ import {
   ConnectionError,
   errorStatus,
   projectResponse,
-  projectBinding,
   projectDevice,
   type Body,
   type ConnectorAction,
   type HumanAction,
 } from "./contracts";
+import { projectRoomGitBindings } from "./room-git-report";
 const humanRpcs: Record<HumanAction, string> = {
   approve: "connection_approve",
   revoke: "connection_revoke",
@@ -24,6 +24,7 @@ const deviceRpcs: Record<ConnectorAction, string> = {
   exchange: "connector_exchange",
   rotate: "connector_rotate",
   heartbeat: "connector_heartbeat",
+  "git-report": "connector_git_report",
   workspace: "connector_workspace",
   agent: "connector_agent",
   replace: "connector_replace",
@@ -77,9 +78,8 @@ export async function ownedConnections(client: SupabaseClient) {
   };
 }
 export async function roomBindings(client: SupabaseClient, roomId: string) {
-  const data = await rpc(client, "connection_room_bindings", { p_room_id: roomId });
-  if (!Array.isArray(data)) throw new ConnectionError("UNAVAILABLE");
-  return data.map((b: unknown) => projectBinding(b));
+  const data = await rpc(client, "connection_room_git_bindings", { p_room_id: roomId });
+  return projectRoomGitBindings(data);
 }
 export function connectionFailure(error: unknown) {
   const code = error instanceof ConnectionError ? error.code : "UNAVAILABLE";
