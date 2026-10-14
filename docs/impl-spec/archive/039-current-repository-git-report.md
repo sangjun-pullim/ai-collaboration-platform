@@ -1,5 +1,5 @@
 ---
-status: active
+status: done
 date: 2026-10-14
 risk-surface: [auth, permission, db-schema, public-api]
 ---
@@ -73,9 +73,9 @@ risk-surface: [auth, permission, db-schema, public-api]
 - commit만 있으면 `브랜치 이름 미확인`으로 표시한다. detached라고 단정하지 않는다. Git 관찰 실패/nonGit/초기 저장소를 구별할 증거가 없으면 `Git 정보 확인 불가`, 보고 자체가 없으면 `Git 확인 대기`로 표시한다. dirty는 기존 `작업 상태 미확인`을 유지한다.
 - legacy 등록 값이 있더라도 최근 보고로 승격하지 않는다. 필요하면 `등록 당시 정보`로만 구분해 표시한다. AI 준비·질문 대상·과거 답변 자료와 별개다.
 
-### [ ] Step 4: 설치·검증·배포·기록
+### [x] Step 4: 설치·검증·배포·기록
 
-- 고정 목록 기반 로컬 설치 스크립트에 새 migration 및 기능 검사를 추가한다. 기존 SQL·원문 검사와 과거 migration은 변경하지 않는다. 클라우드 준비 스크립트는 사본만 만들며 DB에 적용하지 않는다. 운영자 역할의 에이전트는 [클라우드 배포 절차](../guides/cloud-deployment.md#supabase-준비)에 따라 준비한 동일 workdir로 Supabase CLI의 dry-run을 실행하고 프로젝트 `tcljbegdguixopfcaycs`와 미적용 목록(`20261014002000-current-repository-git-report.sql` 하나만 예상)을 대조한 후 실제 `db push`를 실행한다. 적용 후 migration 이력과 두 새 RPC·private table·실행 권한 설치를 읽기 조회로 검증한다. 검토하지 않은 미적용 SQL이 있으면 함께 적용하지 않는다. 준비/검사만 성공한 상태를 DB 적용 성공으로 표시하지 않는다.
+- 고정 목록 기반 로컬 설치 스크립트에 새 migration 및 기능 검사를 추가한다. 기존 SQL·원문 검사와 과거 migration은 변경하지 않는다. 클라우드 준비 스크립트는 사본만 만들며 DB에 적용하지 않는다. 운영자 역할의 에이전트는 [클라우드 배포 절차](../../guides/cloud-deployment.md#supabase-준비)에 따라 준비한 동일 workdir로 Supabase CLI의 dry-run을 실행하고 프로젝트 `tcljbegdguixopfcaycs`와 미적용 목록(`20261014002000-current-repository-git-report.sql` 하나만 예상)을 대조한 후 실제 `db push`를 실행한다. 적용 후 migration 이력과 두 새 RPC·private table·실행 권한 설치를 읽기 조회로 검증한다. 검토하지 않은 미적용 SQL이 있으면 함께 적용하지 않는다. 준비/검사만 성공한 상태를 DB 적용 성공으로 표시하지 않는다.
 - 기존 동작 실패를 먼저 재현하는 테스트를 추가하고 아래 필수 검사를 마친다. 독립 reviewer의 auth/permission/DB/API 검토를 받는다.
 - DB migration을 먼저 배포해도 구버전 웹/CLI가 기존 API로 계속 동작해야 한다. 새 웹과 연결 bundle 배포 뒤 최신 bundle/manifest를 확인한다. UI 보고는 연결 터미널을 정상 종료 후 같은 연결 명령으로 재실행하면 시작한다. 기기 삭제나 새 승인을 요구하지 않는다.
 - 현재 `tests/helpers/local-access-stack.ts:107`은 격리 Supabase 컨테이너 정확히6개와 Auth/HTTP 경로를 검사한다. 새 DB 통합·기존 device/workspace HTTP 회귀를 검증할 때만 이 기존 격리 fixture를 실행하며 보호 검사를 완화하지 않는다. 이 fixture의 프로젝트 ID는 현재 꺼 둔 `ai-collab-txxcvm61`과 같다. 별도 스택이라고 주장하지 않는다. 기존 소유 식별·loopback·workdir 검사가 일치하는 경우에만 이 프로젝트의 필요한 6개를 검증 직전에 한시적으로 재시작한다. 기존 데이터는 reset/삭제하지 않고 fixture가 만든 합성 사용자·행만 정리한다. 검사 성공/실패 모두 finally에서 이번에 시작한 컨테이너를 종료하고 프로젝트 실행 컨테이너0개를 확인한다. 다른 프로젝트 컨테이너는 시작/중지/삭제하지 않는다. 화면 검사는 합성 React fixture로 별도 실행한다. 메모리 부족이면 검증이 불완전하다고 보고하고 배포하지 않는다. 실제 AI 입력은 0회다.
@@ -117,4 +117,6 @@ risk-surface: [auth, permission, db-schema, public-api]
 
 2026-10-14 독립 Sol xhigh 계획 리뷰2: PASS(C0/H0/M0/L0). DB 실제 적용·설치 확인과 동일 프로젝트 컨테이너의 한시 검증·종료 보정을 확인했다. 영향 없는 첫 리뷰 결과를 재사용했다. 구현 승인 완료(2026-10-14).
 
-2026-10-14 독립 Sol xhigh 구현 리뷰1: PASS(C0/H0/M0/L0). 운영10개 파일과 테스트 보정 diff를 검토했다. 전체 웹641건·관련 connector187건·화면10건과 DB/API15건의 통과/재사용 근거를 확인했다. soft remove와 물리 삭제를 혼동한 테스트, 신규 RPC 개수 누락 테스트는 보정 및 실제 재검사로 해소했다. 남은 단계는 운영 적용·배포 확인·완료 기록이다.
+2026-10-14 독립 Sol xhigh 구현 리뷰1: PASS(C0/H0/M0/L0). 운영10개 파일과 테스트 보정 diff를 검토했다. 전체 웹641건·관련 connector187건·화면10건과 DB/API15건의 통과/재사용 근거를 확인했다. soft remove와 물리 삭제를 혼동한 테스트, 신규 RPC 개수 누락 테스트는 보정 및 실제 재검사로 해소했다. 리뷰 이후 운영 적용·배포 확인·완료 기록을 마쳤다.
+
+운영 완료: Supabase에 새20261014002000만 적용하고 이력21개·권한·기존 함수 보존을 확인했다. PR35의 main43e27d4가 Production READY이며 공개 HTTPS10건과 새 Git 보고 모듈이 포함된 배포 tar의 검증 빌드 동일성을 확인했다. 사용자 기기의 실제 새 Git 보고는 기존 터미널의 정상 재시작 뒤 확인한다.

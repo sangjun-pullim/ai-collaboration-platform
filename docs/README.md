@@ -62,6 +62,7 @@
 - [종료 미확인 직접 질문 정리](impl-spec/archive/035-unconfirmed-direct-question-retirement.md): 원래 대상 소유자가 미확인 요청을 이전 기록으로 보관하는 완료 기록. 진행·검증·배포는 개발·검증 상태 문서를 따른다.
 - [채팅 제목 통합과 메뉴의 내 AI 연결 표시](impl-spec/archive/036-compact-chat-header-and-navigation-status.md): 역할·방 상태를 제목에 합치고 연결 표시를 메뉴로 옮긴 완료 기록. 현재 화면·검증은 프론트엔드 구조와 개발·검증 상태를 따른다.
 - [실행하지 않은 명령을 포함한 Mac 재연결](impl-spec/archive/037-recovery-command-lineage.md): 실제 연결 기록 선택·기존 설정 재사용·기록 보존과 등록 직전 검증을 보완한 완료 기록. 검증·운영 반영은 개발·검증 상태를 따른다.
+- [현재 저장소의 브랜치·커밋 표시](impl-spec/archive/039-current-repository-git-report.md): 현재 설정 폴더의 Git 보고와 확인 시각을 추가한 완료 기록. 현재 API·화면과 검증 결과는 주제별 정본을 따른다.
 - [구현 계획 위치](impl-spec): 새 작업을 시작할 때 실행할 코드 수준 계획을 둔다. 현재 완료한 단계는 보관 폴더에서 찾는다.
 - [계획 보관](impl-spec/archive): 완료 계획과 대체된 구계획의 당시 결정·검증 기록. 현재 코드 상태는 구조 문서와 실행 결과로 확인한다.
 

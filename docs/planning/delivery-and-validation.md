@@ -33,7 +33,7 @@
 
 검증 전에 사라진 임시 이메일 template 파일을 저장소의 동일 fixture로 복원했다. 컨테이너 재생성·DB reset·볼륨 삭제 없이 기존6개 소유/loopback/workdir 검사를 유지했다. 사용자 웹4318은 보존하고 격리 검사 사본의 고정 포트만4418로 바꿨다. 모든 검사 실행의 finally에서 프로젝트 컨테이너를 중지했으며 마지막 실행 컨테이너0개를 확인했다. 다른 프로젝트 컨테이너와 개인 런타임 기록·`next-env.d.ts`는 유지했고 실제 제품 AI 입력은0회다.
 
-독립 Sol xhigh 구현 리뷰1이 PASS(C0/H0/M0/L0)였고 보정 테스트의 실제 재검사도 확인했다. 클라우드 사전 dry-run에서 기존20개 migration과 새 Git 보고 migration 하나를 대조한 뒤 `20261014002000`을 적용했다. 설치 이력21개·두 RPC의 실행 권한·private table 직접 접근 차단·기존 인증 발급 함수 보존을 확인했다. 웹 병합·배포 확인은 진행 중이다. 배포 뒤 기존 연결 터미널을 정상 종료하고 같은 명령으로 재실행해야 새 보고가 시작된다. 기기 제거·재승인은 필요하지 않으며, 사용자 PC의 새 보고 수신 전에는 실제 사용자 화면 확인 완료로 표시하지 않는다.
+독립 Sol xhigh 구현 리뷰1이 PASS(C0/H0/M0/L0)였고 보정 테스트의 실제 재검사도 확인했다. 클라우드 사전 dry-run에서 기존20개 migration과 새 Git 보고 migration 하나를 대조한 뒤 `20261014002000`을 적용했다. 설치 이력21개·두 RPC의 실행 권한·private table 직접 접근 차단·기존 인증 발급 함수 보존을 확인했다. [PR35](https://github.com/sangjun-pullim/ai-collaboration-platform/pull/35)의 main `43e27d4`를 운영 배포했고 공식 Vercel·GitHub 조회에서 Production READY와 같은 소스 SHA를 대조했다. 공개 HTTPS10건과 새 `settings/git-report.js`를 포함한 배포 tar의 검증 빌드 동일성을 확인했다. 완료한 [계획039](../impl-spec/archive/039-current-repository-git-report.md)는 보관한다. 배포 뒤 기존 연결 터미널을 정상 종료하고 같은 명령으로 재실행해야 새 보고가 시작된다. 기기 제거·재승인은 필요하지 않으며, 사용자 PC의 새 보고 수신 전에는 실제 사용자 화면 확인 완료로 표시하지 않는다.
 
 ### 저장소 검색 시간과 채팅 마크다운
 
