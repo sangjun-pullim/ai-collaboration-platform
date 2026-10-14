@@ -57,11 +57,43 @@ async function coldRead(root: string, path: string) {
 }
 const size = (value: unknown) => Buffer.byteLength(JSON.stringify(value));
 
+test("should allow a repository search beyond three seconds and reject at fifteen seconds", async (t) => {
+  let time = 0,
+    duration = 4000;
+  const f = await fixture(
+    () => {},
+    () => time,
+  );
+  await f.file("a.ts", "const evidence = 1;\n");
+  const original = fsPromises.opendir;
+  const mocked = t.mock.method(
+    fsPromises,
+    "opendir",
+    async (...args: Parameters<typeof original>) => {
+      const handle = await original(...args);
+      time += duration;
+      return handle;
+    },
+  );
+  syncBuiltinESMExports();
+  try {
+    assert.equal((await f.reader.search({ query: "evidence" })).matches.length, 1);
+    duration = 14999;
+    assert.equal((await f.reader.search({ query: "evidence" })).matches.length, 1);
+    duration = 15000;
+    await assert.rejects(f.reader.search({ query: "evidence" }), isRepositoryTimeLimit);
+  } finally {
+    mocked.mock.restore();
+    syncBuiltinESMExports();
+    await f.close();
+  }
+});
+
 test("should classify only the reader time limit and preserve same-code check failures", async () => {
   let time = 0;
   const f = await fixture(
     () => {
-      time += 500;
+      time += 3000;
     },
     () => time,
   );
@@ -93,7 +125,7 @@ test("should preserve a root verification failure that coincides with the search
   );
   const failure = new RuntimeError("SNAPSHOT_CHANGED");
   const mocked = t.mock.method(fsPromises, "opendir", async () => {
-    time = 3000;
+    time = 15000;
     throw failure;
   });
   syncBuiltinESMExports();
@@ -485,7 +517,7 @@ test("should preserve authority errors and refuse late successful I/O with handl
       async (...args: Parameters<typeof fsPromises.open>) => {
         opened = await original(...args);
         if (failure === "authority") lost = true;
-        else time = 3000;
+        else time = 15000;
         return opened;
       },
     );
@@ -552,7 +584,7 @@ test("should accumulate call and byte budgets including failed reads and exclude
   }
 });
 
-test("should accumulate active intervals without counting idle time", async (t) => {
+test("should allow active intervals beyond thirty seconds and stop at one hundred twenty seconds excluding idle time", async (t) => {
   let time = 0;
   const f = await fixture(
     () => {},
@@ -565,18 +597,18 @@ test("should accumulate active intervals without counting idle time", async (t) 
     "open",
     async (...args: Parameters<typeof fsPromises.open>) => {
       const handle = await original(...args);
-      time += 2000;
+      time += 10000;
       return handle;
     },
   );
   syncBuiltinESMExports();
   try {
-    for (let i = 0; i < 14; i++) {
+    for (let i = 0; i < 11; i++) {
       await f.reader.read({ path: "a.ts" });
       time += 100000;
     }
-    await assert.rejects(f.reader.read({ path: "a.ts" }), { code: "RUNTIME_CAPACITY" });
-    await assert.rejects(f.reader.list(), { code: "RUNTIME_CAPACITY" });
+    await assert.rejects(f.reader.read({ path: "a.ts" }), isRepositoryTimeLimit);
+    await assert.rejects(f.reader.list(), isRepositoryTimeLimit);
   } finally {
     mocked.mock.restore();
     syncBuiltinESMExports();
@@ -703,7 +735,7 @@ test("should count parallel active time once and retain concurrency during delay
           await finish;
           await close();
         });
-      } else time += 2000;
+      } else time += 10000;
       return handle;
     },
   );
@@ -711,13 +743,13 @@ test("should count parallel active time once and retain concurrency during delay
   try {
     const reads = Array.from({ length: 4 }, () => f.reader.read({ path: "a.ts" }));
     await all;
-    time = 2000;
+    time = 10000;
     release();
     await closing;
     await assert.rejects(f.reader.list(), { code: "RUNTIME_BUSY" });
     cleanup();
     await Promise.all(reads);
-    for (let i = 0; i < 13; i++) await f.reader.read({ path: "a.ts" });
+    for (let i = 0; i < 10; i++) await f.reader.read({ path: "a.ts" });
     await assert.rejects(f.reader.read({ path: "a.ts" }), { code: "RUNTIME_CAPACITY" });
   } finally {
     release();
@@ -752,7 +784,7 @@ test("should close streaming handles before preserving authority loss and delaye
           closed = true;
         });
         if (failure === "authority") lost = true;
-        else time = 3000;
+        else time = 15000;
         return handle;
       },
     );
