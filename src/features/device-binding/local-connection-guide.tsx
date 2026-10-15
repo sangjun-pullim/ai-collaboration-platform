@@ -95,6 +95,8 @@ export function LocalConnectionGuide({
   const [copied, setNotice] = useState<{ command: string; value: string } | null>(null);
   const commandField = useRef<HTMLTextAreaElement>(null);
   const preparingRef = useRef(false);
+  const [showOptions, setShowOptions] = useState(false);
+  const [showRaw, setShowRaw] = useState(false);
   const scopeKey = rooms.some((item) => item.roomId === roomId)
     ? connectionSelectionKey(origin, userId, roomId)
     : "";
@@ -311,18 +313,25 @@ export function LocalConnectionGuide({
       setNotice({ command, value: "명령을 복사했습니다. 내 Mac의 터미널에 붙여 넣어 실행하세요." });
     } catch {
       if (commandField.current) commandField.current.value = command;
-      commandField.current?.closest("details")?.setAttribute("open", "");
+      setShowRaw(true);
+      const panel = commandField.current?.closest<HTMLElement>("[data-command-panel]");
+      if (panel) panel.hidden = false;
       commandField.current?.focus();
       commandField.current?.select();
       setNotice({ command, value: "아래 명령을 선택했습니다. 직접 복사해 터미널에서 실행하세요." });
     }
   }
   return (
-    <section
-      className="space-y-4 rounded-xl border bg-white p-5"
-      aria-label="명령 한 번으로 내 Mac 연결"
-    >
+    <section className="space-y-4" aria-label="명령 한 번으로 내 Mac 연결">
       {showRoomSelection && <h3 className="font-semibold">Mac 연결</h3>}
+      <ol
+        className="grid gap-2 text-sm text-neutral-600 sm:grid-cols-3"
+        aria-label="터미널 연결 순서"
+      >
+        <li>① 아래 명령 복사</li>
+        <li>② Mac 터미널에서 실행</li>
+        <li>③ 안내에 따라 계정 확인</li>
+      </ol>
       <Button
         type="button"
         aria-label="연결 명령 복사"
@@ -336,16 +345,72 @@ export function LocalConnectionGuide({
             ? "새 명령 복사"
             : "연결 명령 복사"}
       </Button>
-      <p className="text-sm text-neutral-600">
-        {deviceAliasHint
-          ? `이 명령은 실행하는 Mac의 브라우저 저장 연결을 사용합니다. 선택한 ${deviceAliasHint}과 터미널의 공개 연결 ID를 확인하세요.`
-          : "복사한 명령을 내 Mac의 터미널에 붙여 넣어 실행하세요."}
+      <p className="text-xs text-neutral-500">
+        별도 앱 설치 없이 실행합니다. 연결 중에는 터미널을 열어 두세요.
       </p>
       {rooms.length === 0 && (
         <p className="text-sm">참가한 채팅방을 선택해야 연결 명령을 만들 수 있습니다.</p>
       )}
-      <details className="text-sm">
-        <summary className="cursor-pointer">기기 이름·새 승인으로 다시 연결</summary>
+      {blocked && (
+        <div role="alert" aria-label="연결 선택 확인 필요" className="text-sm">
+          <p>{blocked}</p>
+          <Button type="button" variant="outline" onClick={confirmSelection}>
+            현재 선택 다시 확인
+          </Button>
+        </div>
+      )}
+      {preparing === scopeKey && <p role="status">새 승인 명령을 준비하고 있습니다.</p>}
+      {issued?.scope === key && (
+        <SetupStatus
+          key={issued.value.requestId}
+          roomId={roomId}
+          requestId={issued.value.requestId}
+          onRetry={() => {
+            void copy(true);
+          }}
+        />
+      )}
+      {notice && (
+        <p role="status" aria-label="연결 명령 복사 결과" className="text-sm">
+          {notice}
+        </p>
+      )}
+      {error && (
+        <p role="alert" aria-label="연결 명령 준비 오류" className="text-sm">
+          {error}
+        </p>
+      )}
+      {!manifest && !error && (
+        <p role="status" aria-label="연결 명령 준비 상태" className="text-sm text-neutral-500">
+          연결 명령을 준비하고 있습니다.
+        </p>
+      )}
+      <div className="flex flex-wrap gap-1 border-t pt-3">
+        <Button
+          type="button"
+          variant="ghost"
+          size="sm"
+          aria-expanded={showOptions}
+          onClick={() => setShowOptions(!showOptions)}
+        >
+          연결 옵션
+        </Button>
+        <Button
+          type="button"
+          variant="ghost"
+          size="sm"
+          aria-expanded={showRaw}
+          onClick={() => setShowRaw(!showRaw)}
+        >
+          명령 직접 복사
+        </Button>
+      </div>
+      <section
+        hidden={!showOptions}
+        aria-label="연결 추가 옵션"
+        className="rounded-lg border bg-neutral-50 p-4 text-sm"
+      >
+        <h3 className="font-medium">연결 옵션</h3>
         <div className="mt-3 space-y-3">
           <div className="grid gap-3 sm:grid-cols-2">
             {showRoomSelection && (
@@ -421,49 +486,15 @@ export function LocalConnectionGuide({
             </div>
           )}
         </div>
-      </details>
-      {blocked && (
-        <div role="alert" aria-label="연결 선택 확인 필요" className="text-sm">
-          <p>{blocked}</p>
-          <Button type="button" variant="outline" onClick={confirmSelection}>
-            현재 선택 다시 확인
-          </Button>
-        </div>
-      )}
-      {preparing === scopeKey && <p role="status">새 승인 명령을 준비하고 있습니다.</p>}
-      {issued?.scope === key && (
-        <p className="text-xs text-neutral-500">
-          아래는 기기 인증 없이 받은 명령 시작 보고입니다. 선택한 기기의 등록·설정과 별도로
-          확인하세요.
-        </p>
-      )}
-      {issued?.scope === key && (
-        <SetupStatus
-          key={issued.value.requestId}
-          roomId={roomId}
-          requestId={issued.value.requestId}
-          onRetry={() => {
-            void copy(true);
-          }}
-        />
-      )}
-      {notice && (
-        <p role="status" aria-label="연결 명령 복사 결과" className="text-sm">
-          {notice}
-        </p>
-      )}
-      {error && (
-        <p role="alert" aria-label="연결 명령 준비 오류" className="text-sm">
-          {error}
-        </p>
-      )}
-      {!manifest && !error && (
-        <p role="status" aria-label="연결 명령 준비 상태" className="text-sm text-neutral-500">
-          연결 명령을 준비하고 있습니다.
-        </p>
-      )}
-      <details className="text-sm">
-        <summary className="cursor-pointer">명령 확인·직접 복사</summary>
+      </section>
+
+      <section
+        hidden={!showRaw}
+        data-command-panel
+        aria-label="명령 직접 복사 영역"
+        className="min-w-0 text-sm"
+      >
+        <h3 className="font-medium">명령 직접 복사</h3>
         {deviceAliasHint && (
           <p className="mt-2 break-all text-xs text-neutral-600">
             현재 설정 대상: {deviceAliasHint} ({deviceIdHint}). 명령은 이 방의 브라우저 저장 연결을
@@ -479,8 +510,7 @@ export function LocalConnectionGuide({
           rows={8}
           className="mt-2 w-full rounded-md border bg-neutral-50 p-3 font-mono text-xs"
         />
-      </details>
-      <p className="text-xs text-neutral-500">연결 후에도 Mac과 이 터미널을 열어 두세요.</p>
+      </section>
     </section>
   );
 }

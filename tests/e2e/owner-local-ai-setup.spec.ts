@@ -145,9 +145,7 @@ test("should distinguish owner Claude request application and readiness and answ
     await expect(
       requester.getByRole("button", { name: "Mac에서 폴더 선택", exact: true }),
     ).toHaveCount(0);
-    await requester
-      .getByRole("link", { name: "이 AI 채팅방에서 질문만 하기", exact: true })
-      .click();
+    await requester.getByRole("link", { name: "연결 없이 질문만 하기", exact: true }).click();
     await expect(requester).toHaveURL((url) => url.pathname === `/app/rooms/${scene.roomId}`);
     await owner.goto("/app/connections");
     await expect(
@@ -191,7 +189,7 @@ test("should distinguish owner Claude request application and readiness and answ
         selected.request().postDataJSON().effort === null &&
         selected.request().postDataJSON().model === "claude-product-synthetic",
     );
-    await form.getByText("요청한 설정 상세", { exact: true }).click();
+    await form.getByRole("button", { name: "설정 상세 · 도움말", exact: true }).click();
     await expect(form.getByLabel("요청한 설정", { exact: true })).toContainText(
       "Synthetic model name (claude-product-synthetic)",
     );
@@ -297,12 +295,9 @@ test("should show the observed Codex catalog and wait for PC cancellation cleanu
     await fixedStep("codex-cancel-request", async () => {
       await form.getByRole("button", { name: "설정 요청 취소", exact: true }).click();
       await expect(form).toContainText("취소 요청됨");
-      await form.getByText("AI·폴더 변경", { exact: true }).click();
+      await expect(form.getByRole("region", { name: "AI와 폴더 선택", exact: true })).toBeHidden();
       await expect(
-        form.getByRole("button", { name: "Mac에서 폴더 선택", exact: true }),
-      ).toBeVisible();
-      await expect(
-        form.getByRole("button", { name: "Mac에서 폴더 선택", exact: true }),
+        form.getByRole("button", { name: "Mac에서 폴더 선택", exact: true, includeHidden: true }),
       ).toBeDisabled();
     });
     const cancelled = await fixedStep("codex-cancel-drive", () =>

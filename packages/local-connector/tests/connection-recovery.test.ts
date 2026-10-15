@@ -904,6 +904,34 @@ test("should keep the old device owned through approval without holding its runt
   }
 });
 
+for (const intermediate of [false, true])
+  test(`should resume unfinished settings on an already approved recovery target with ${intermediate ? "multiple" : "one"} recovery generation`, async () => {
+    const f = await fixture(intermediate);
+    try {
+      await f.run();
+      const targetRuntime = new RuntimeStore(f.stateDir, f.next.profile, f.scope.agentId);
+      await targetRuntime.write(f.record);
+      const c = await unappliedSetup({ ...f, previous: f.next, runtime: targetRuntime }, false);
+      const owner = (await f.next.read())!;
+      owner.status = "connected";
+      await f.next.write(owner);
+      const before = await readFile(c.settings.file),
+        previous = await readFile(f.previous.file),
+        target = await readFile(f.next.file);
+      f.calls.length = 0;
+      f.interaction.confirmPreviousRevoked = async () =>
+        assert.fail("existing target must not approve a new device");
+      await f.run();
+      assert.deepEqual(await readFile(c.settings.file), before);
+      assert.deepEqual(await readFile(f.previous.file), previous);
+      assert.deepEqual(await readFile(f.next.file), target);
+      assert.equal(f.calls.filter((action) => ["begin", "exchange"].includes(action)).length, 0);
+      assert.equal(f.adapter.starts, 0);
+    } finally {
+      await f.close();
+    }
+  });
+
 async function configured(f: Awaited<ReturnType<typeof fixture>>) {
   const owner = (await f.previous.read())!,
     settings = new SettingsStore(f.previous);

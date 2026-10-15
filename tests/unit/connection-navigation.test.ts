@@ -504,12 +504,13 @@ test("should put executable Mac connection before unavailable AI controls for a 
   assert.equal(guide.props.showRoomSelection, false);
   assert.equal(nodes(tree).filter((node) => node.type === "settings-form").length, 0);
   const command = nodes(tree).find((node) => node.props.id === "mac-connection")!;
-  assert.equal(command.props.open, true);
+  assert.notEqual(command.props.hidden, true);
+  assert.equal(nodes(tree).filter((node) => node.type === "details").length, 0);
   const settings = nodes(tree).find((node) => node.props.id === "ai-settings")!;
   assert.ok(nodes(tree).indexOf(command) < nodes(tree).indexOf(settings));
   assert.equal(
-    nodes(tree).find((node) => node.props["aria-label"] === "기기 승인 안내")!.props.open,
-    false,
+    nodes(tree).find((node) => node.props["aria-label"] === "기기 승인 안내")!.props.hidden,
+    true,
   );
   const refresh = nodes(tree).find((node) => node.props["aria-label"] === "연결 상태 새로 확인")!;
   assert.equal(refresh.props.disabled, undefined);

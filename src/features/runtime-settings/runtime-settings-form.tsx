@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useSyncExternalStore } from "react";
+import { useEffect, useMemo, useState, useSyncExternalStore } from "react";
 import { Button } from "../../components/ui/button";
 import { Input } from "../../components/ui/input";
 import { Badge } from "../../components/ui/badge";
@@ -62,6 +62,8 @@ export function RuntimeSettingsForm({
   guidanceActive?: boolean;
   roomHref?: string;
 }) {
+  const [editing, setEditing] = useState(false);
+  const [showTechnical, setShowTechnical] = useState(false);
   const controller = useMemo(
     () =>
       new SettingsController(
@@ -176,14 +178,21 @@ export function RuntimeSettingsForm({
 
   function openConnectionCommand() {
     const section = document.getElementById("mac-connection");
-    section?.setAttribute("open", "");
+    if (section) section.hidden = false;
     section?.focus();
   }
 
   return (
     <section className="grid min-w-0 grid-cols-1 gap-3" aria-label={`${deviceAlias} AI 설정`}>
       <div className="flex flex-wrap items-center justify-between gap-2">
-        <h3 className="font-semibold">{deviceAlias}의 AI 설정</h3>
+        <h3 className="flex items-center gap-3 font-semibold">
+          <span
+            className={`flex h-7 w-7 items-center justify-center rounded-full text-sm ${phase === "applied" ? "bg-emerald-50 text-emerald-700" : "bg-neutral-900 text-white"}`}
+          >
+            {phase === "applied" ? "✓" : catalog ? "3" : "2"}
+          </span>
+          {phase === "applied" ? "AI 설정 완료" : catalog ? "모델과 답변 설정" : "AI와 폴더 선택"}
+        </h3>
         <Badge variant="secondary">
           {operation
             ? operation.state === "CANCELLED" && operation.receipt?.state === "CANCELLED"
@@ -259,8 +268,7 @@ export function RuntimeSettingsForm({
             </a>
           )}
           {phase === "cancellation" && (
-            <details>
-              <summary className="cursor-pointer">터미널을 닫았다면</summary>
+            <div>
               <p className="mt-2">
                 실행 중인 연결이 없는지 Mac에서 확인한 뒤{" "}
                 <a href="#mac-connection" onClick={openConnectionCommand} className="underline">
@@ -268,7 +276,7 @@ export function RuntimeSettingsForm({
                 </a>
                 을 실행하세요. 기기를 제거할 필요는 없습니다.
               </p>
-            </details>
+            </div>
           )}
         </div>
       )}
@@ -283,8 +291,20 @@ export function RuntimeSettingsForm({
           이전에 적용한 AI 연결이 현재 연결과 다릅니다. 자기 PC에서 연결 상태를 확인하세요.
         </p>
       )}
-      <details open={!catalog && !reservedOperationId && !appliedCurrent}>
-        <summary className="cursor-pointer text-sm">AI·폴더 변경</summary>
+      {appliedCurrent && !reservedOperationId && (
+        <Button
+          type="button"
+          variant="outline"
+          aria-expanded={editing}
+          onClick={() => setEditing(!editing)}
+        >
+          {editing ? "변경 닫기" : "AI·폴더 변경"}
+        </Button>
+      )}
+      <section
+        hidden={!!catalog || !!reservedOperationId || (!!appliedCurrent && !editing)}
+        aria-label="AI와 폴더 선택"
+      >
         <div className="grid gap-3 pt-2">
           <label className={field}>
             AI 프로그램
@@ -312,7 +332,10 @@ export function RuntimeSettingsForm({
               guidanceActive && connectionRecent && phase === "folder" ? "default" : "outline"
             }
             disabled={setupBlocked || !view.provider || !response?.current || !!reservedOperationId}
-            onClick={() => void controller.selectFolder()}
+            onClick={() => {
+              setEditing(false);
+              void controller.selectFolder();
+            }}
           >
             Mac에서 폴더 선택
           </Button>
@@ -328,67 +351,68 @@ export function RuntimeSettingsForm({
                     : "폴더와 공유 범위를 Mac에서 확인하면 3단계의 모델 선택을 사용할 수 있습니다."}
           </p>
         </div>
-      </details>
+      </section>
       {operation?.state === "LOCAL_CONFIRMATION" && response?.catalog?.policy === "unsupported" && (
         <p role="alert" className="text-sm text-amber-800">
           이 PC에서 프로그램의 모델과 추론 강도를 검증하지 못했습니다. 자기 PC에서 설치 버전,
           로그인과 실행 권한을 확인한 뒤 이 요청을 취소하세요. 웹에서 로그인을 대신하지 않습니다.
         </p>
       )}
-      <section aria-label="모델 선택과 채팅 시작" className="grid gap-3 border-t pt-3">
-        {catalog && <h3 className="font-semibold">모델과 공개 별칭</h3>}
+      <section aria-label="모델 선택과 채팅 시작" hidden={!catalog}>
         {catalog ? (
-          <div className="grid gap-4 rounded-md bg-neutral-50 p-4">
+          <div className="grid min-w-0 grid-cols-1 gap-4 rounded-lg bg-neutral-50 p-4">
             <p className="text-sm">공유 저장소: {operation!.receipt!.repositoryAlias}</p>
             <p className="text-xs text-neutral-500">
               PC에서 확인한 {catalog.runtime === "codex" ? "Codex" : "Claude"} {catalog.version}의
               모델만 표시합니다.
             </p>
-            <label className={field}>
-              모델
-              <select
-                className={select}
-                aria-label="모델"
-                value={draft?.model ?? ""}
-                disabled={setupBlocked || saved}
-                onChange={(event) => controller.setModel(event.target.value)}
-              >
-                <option value="" disabled>
-                  모델 선택
-                </option>
-                {catalog.models.map((item) => (
-                  <option key={item.id} value={item.model}>
-                    {modelLabel(item.model, catalog)}
-                  </option>
-                ))}
-              </select>
-            </label>
-            <p className="text-xs text-neutral-500">
-              추론 강도는 AI가 답을 검토하는 정도입니다. Mac에서 지원하는 값만 표시합니다.
-            </p>
-            {model && model.efforts.length > 0 ? (
+            <div className="grid min-w-0 gap-4 sm:grid-cols-2">
               <label className={field}>
-                추론 강도
+                모델
                 <select
                   className={select}
-                  aria-label="추론 강도"
-                  value={draft?.effort ?? ""}
+                  aria-label="모델"
+                  value={draft?.model ?? ""}
                   disabled={setupBlocked || saved}
-                  onChange={(event) => controller.setEffort(event.target.value)}
+                  onChange={(event) => controller.setModel(event.target.value)}
                 >
                   <option value="" disabled>
-                    추론 강도 선택
+                    모델 선택
                   </option>
-                  {model.efforts.map((effort) => (
-                    <option key={effort} value={effort}>
-                      {effort}
+                  {catalog.models.map((item) => (
+                    <option key={item.id} value={item.model}>
+                      {modelLabel(item.model, catalog)}
                     </option>
                   ))}
                 </select>
               </label>
-            ) : model ? (
-              <p className="text-sm">이 모델은 별도의 추론 강도 설정을 사용하지 않습니다.</p>
-            ) : null}
+              {model && model.efforts.length > 0 ? (
+                <label className={field}>
+                  추론 강도
+                  <select
+                    className={select}
+                    aria-label="추론 강도"
+                    value={draft?.effort ?? ""}
+                    disabled={setupBlocked || saved}
+                    onChange={(event) => controller.setEffort(event.target.value)}
+                  >
+                    <option value="" disabled>
+                      추론 강도 선택
+                    </option>
+                    {model.efforts.map((effort) => (
+                      <option key={effort} value={effort}>
+                        {effort}
+                      </option>
+                    ))}
+                  </select>
+                </label>
+              ) : model ? (
+                <p className="text-sm">이 모델은 별도의 추론 강도 설정을 사용하지 않습니다.</p>
+              ) : null}
+            </div>
+            <p className="text-xs text-neutral-500">
+              추론 강도는 AI가 답을 검토하는 정도입니다. Mac에서 지원하는 값만 표시합니다.
+            </p>
             <label className={field}>
               공개 세션 별칭
               <Input
@@ -442,59 +466,73 @@ export function RuntimeSettingsForm({
           후 새 설정을 시작하세요.
         </p>
       )}
-      {operation && (
-        <details className="grid gap-1 border-t pt-3 text-sm" aria-label="요청한 설정">
-          <summary className="cursor-pointer">요청한 설정 상세</summary>
-          <h4 className="font-medium">요청한 설정</h4>
-          <p>
-            {operation.requested.runtime === "codex" ? "Codex" : "Claude"}
-            {typeof operation.requested.model === "string"
-              ? ` · ${modelLabel(operation.requested.model, response?.catalog, operation.requested.runtime, operation.requested.snapshotHash)}`
-              : " · 모델 선택 전"}
-            {typeof operation.requested.effort === "string"
-              ? ` · ${operation.requested.effort}`
-              : ""}
+      <div className="border-t pt-3">
+        <Button
+          type="button"
+          size="sm"
+          variant="ghost"
+          aria-expanded={showTechnical}
+          onClick={() => setShowTechnical(!showTechnical)}
+        >
+          설정 상세 · 도움말
+        </Button>
+        <div hidden={!showTechnical} className="space-y-3 pt-3">
+          {operation && (
+            <section className="grid gap-1 text-sm" aria-label="요청한 설정">
+              <h4 className="font-medium">요청한 설정</h4>
+              <p>
+                {operation.requested.runtime === "codex" ? "Codex" : "Claude"}
+                {typeof operation.requested.model === "string"
+                  ? ` · ${modelLabel(operation.requested.model, response?.catalog, operation.requested.runtime, operation.requested.snapshotHash)}`
+                  : " · 모델 선택 전"}
+                {typeof operation.requested.effort === "string"
+                  ? ` · ${operation.requested.effort}`
+                  : ""}
+              </p>
+            </section>
+          )}
+          <p className="text-sm text-neutral-600">
+            연결 명령을 실행한 터미널을 계속 열어 두세요. 추가 관리 프로세스는 필요하지 않습니다.
           </p>
-        </details>
-      )}
-      <div className="grid gap-1 border-t pt-3 text-sm" aria-label="PC에 적용된 설정">
-        <h4 className="font-medium">PC에 적용된 설정</h4>
-        {applied ? (
-          <>
-            <p>
-              {applied.runtime === "codex" ? "Codex" : "Claude"} ·{" "}
-              {modelLabel(applied.model, response?.catalog, applied.runtime, applied.snapshotHash)}
-              {applied.effort !== null ? ` · ${applied.effort}` : ""}
-            </p>
-            <p>
-              {applied.repositoryAlias} · {applied.sessionAlias}
-            </p>
-            <p className="text-neutral-600">
-              {appliedCurrent ? "PC 설정 적용이 확인되었습니다." : "이전 연결에 적용된 설정입니다."}{" "}
-              AI 응답 준비는 AI 채팅방의 질문 대상 선택에서 확인하세요.
-            </p>
-          </>
-        ) : (
-          <p className="text-neutral-600">
-            아직 PC 적용 확인이 없습니다. 기기 등록과 서버 저장만으로 AI 응답 준비가 완료되지는
-            않습니다.
+          <p className="text-sm text-neutral-600">
+            수동 pair·exchange 연결만 같은 프로필로 <code>manage --profile &lt;profile&gt;</code>을
+            실행하세요.
           </p>
-        )}
+        </div>
       </div>
-      <details className="text-sm text-neutral-600">
-        <summary className="cursor-pointer">Mac에서 확인할 내용</summary>
-        <p className="mt-2">
-          연결 명령을 실행한 터미널을 계속 열어 두세요. 추가 관리 프로세스를 실행할 필요가 없습니다.
-          새 폴더의 필요한 코드 자동 탐색과 답·근거 경로 기록을 해당 Mac에서 승인합니다.
-        </p>
-      </details>
-      <details className="text-sm text-neutral-600">
-        <summary className="cursor-pointer">수동 연결의 AI 설정 실행 방법</summary>
-        <p className="mt-2">
-          수동 pair·exchange로 연결했다면 자기 PC에서 <code>manage --profile &lt;profile&gt;</code>
-          을 실행하세요. 프로필은 해당 기기 연결에 사용한 이름입니다.
-        </p>
-      </details>
+      <div hidden={!applied} aria-label="PC에 적용된 설정">
+        <div className="grid gap-1 rounded-lg bg-neutral-50 p-4 text-sm">
+          <h4 className="font-medium">PC에 적용된 설정</h4>
+          {applied ? (
+            <>
+              <p>
+                {applied.runtime === "codex" ? "Codex" : "Claude"} ·{" "}
+                {modelLabel(
+                  applied.model,
+                  response?.catalog,
+                  applied.runtime,
+                  applied.snapshotHash,
+                )}
+                {applied.effort !== null ? ` · ${applied.effort}` : ""}
+              </p>
+              <p>
+                {applied.repositoryAlias} · {applied.sessionAlias}
+              </p>
+              <p className="text-neutral-600">
+                {appliedCurrent
+                  ? "PC 설정 적용이 확인되었습니다."
+                  : "이전 연결에 적용된 설정입니다."}{" "}
+                AI 응답 준비는 AI 채팅방의 질문 대상 선택에서 확인하세요.
+              </p>
+            </>
+          ) : (
+            <p className="text-neutral-600">
+              아직 PC 적용 확인이 없습니다. 기기 등록과 서버 저장만으로 AI 응답 준비가 완료되지는
+              않습니다.
+            </p>
+          )}
+        </div>
+      </div>
     </section>
   );
 }

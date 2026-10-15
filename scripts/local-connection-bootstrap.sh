@@ -284,16 +284,18 @@ verify "$work/connector.tar.gz" "$code_sha"
 node_tool extract "$work/connector.tar.gz" "$work/code" || fail INVALID_ARCHIVE
 forward() { if [ -n "$child" ]; then /bin/kill "-$1" "$child" 2>/dev/null || true; fi; }
 wait_interrupted=0
-interrupt() { wait_interrupted=1; forward "$1"; }
+stop_requested=0
+interrupt() { wait_interrupted=1; stop_requested=1; forward "$1"; }
 trap 'interrupt INT' INT
 trap 'interrupt TERM' TERM
 report_startup CONNECTING null
 started=1
 "$node" --input-type=module -e '
 import {writeFile} from "node:fs/promises";
+import {dirname,join} from "node:path";
 import {pathToFileURL} from "node:url";
 // Keep argv[1] separate from the imported CLI entry so its direct-run guard stays idle.
-const [, entry, proof, origin, ticket, attempt, initialSequence, ...args] = process.argv.slice(1);
+const [, entry, proof, origin, ticket, attempt, initialSequence, codeSha256, ...args] = process.argv.slice(1);
 let hint;
 try {
   const module = await import(pathToFileURL(entry).href);
@@ -309,6 +311,24 @@ try {
 } catch (error) {
   const code = typeof error?.code === "string" && /^[A-Z_]{1,40}$/.test(error.code) ? error.code : "UNAVAILABLE";
   process.stderr.write(JSON.stringify({state:"disconnected",error:code}) + "\n");
+  try {
+    // Persist only bounded code locations, never the raw error, arguments or local data.
+    const base = pathToFileURL(entry).href.slice(0, -"src/cli.js".length);
+    const frames = [];
+    for (const line of String(error?.stack ?? "").slice(0, 16384).split("\n")) {
+      const index = line.indexOf(base);
+      if (index < 0) continue;
+      const match = /^(src\/(?:[a-z0-9-]+\/)*[a-z0-9-]+\.js):(\d{1,9}):(\d{1,9})\)?$/.exec(line.slice(index + base.length).trim());
+      if (match) frames.push({file:match[1],line:Number(match[2]),column:Number(match[3])});
+      if (frames.length === 8) break;
+    }
+    const diagnostic = join(dirname(proof), "connection-diagnostic.json");
+    await writeFile(diagnostic, JSON.stringify({version:1,failedAt:new Date().toISOString(),pid:process.pid,
+      nodeVersion:process.version,codeSha256,error:code,frames}) + "\n", {flag:"wx",mode:0o600});
+    process.stdout.write("연결 실패 진단 파일: " + diagnostic + "\n");
+  } catch {
+    process.stderr.write("연결 실패 진단 파일을 저장하지 못했습니다. 위 오류 코드와 보존된 실행 폴더를 확인하세요.\n");
+  }
   if (ticket) {
     const reasons = new Set(["FORBIDDEN","CONFLICT","RUNTIME_BUSY","SNAPSHOT_CHANGED","POLICY_UNCONFIRMED","CONTEXT_UNCONFIRMED","CLEANUP_INCOMPLETE","UNAUTHENTICATED","UNAVAILABLE","PROVIDER_UNAVAILABLE"]);
     try { await fetch(origin+"/api/connection-setup/startup-report", {method:"POST",redirect:"error",signal:AbortSignal.timeout(2000),
@@ -317,7 +337,7 @@ try {
   }
   process.stdout.write((typeof hint === "function" ? hint(error) : "내 AI 연결에서 이전 연결 취소 여부와 연결 명령을 확인하세요.") + "\n");
   process.exitCode = 1;
-}' ai-collab-bootstrap "$work/code/src/cli.js" "$work/shutdown" "$origin" "$ticket" "$attempt" "$sequence" connect --server "$origin" --profile "$profile" --device-alias "$device_alias" --organization-id "$organization" --room-id "$room" "$@" <&0 &
+}' ai-collab-bootstrap "$work/code/src/cli.js" "$work/shutdown" "$origin" "$ticket" "$attempt" "$sequence" "$code_sha" connect --server "$origin" --profile "$profile" --device-alias "$device_alias" --organization-id "$organization" --room-id "$room" "$@" <&0 &
 child=$!
 set +e
 while true; do
@@ -329,6 +349,13 @@ while true; do
   [ "$wait_interrupted" -eq 1 ] || break
 done
 set -e
+# A terminal interrupt can leave Bash reporting the signal status after main has
+# finished its verified cleanup. Normalize only an owned, fully exited child
+# with that exact proof; errors or an unconfirmed shutdown remain failures.
+if [ "$stop_requested" -eq 1 ] && { [ "$result" -eq 130 ] || [ "$result" -eq 143 ]; } &&
+   ! /bin/kill -0 "$child" 2>/dev/null && node_tool shutdown "$work/shutdown"; then
+  result=0
+fi
 child=""
 if [ "$result" -eq 0 ] && node_tool shutdown "$work/shutdown"; then
   verified=1

@@ -104,11 +104,16 @@ async function connectionsFromRoom(page: Page, roomId: string) {
   }
 }
 async function openApproval(page: Page) {
-  const phase = page.locator('details[aria-label="Mac 연결 단계"]');
-  if ((await phase.getAttribute("open")) === null) await phase.locator(":scope > summary").click();
-  const approval = phase.locator('details[aria-label="기기 승인 안내"]');
-  if ((await approval.getAttribute("open")) === null)
-    await approval.locator(":scope > summary").click();
+  const input = page.getByRole("button", { name: "터미널에 연결 코드가 표시됐나요?", exact: true });
+  if (
+    !(await page.getByLabel("기기 연결 코드", { exact: true }).isVisible()) &&
+    !(await input.isVisible())
+  )
+    await page.getByRole("button", { name: "다시 연결", exact: true }).click();
+  if (!(await page.getByLabel("기기 연결 코드", { exact: true }).isVisible()))
+    await page
+      .getByRole("button", { name: "터미널에 연결 코드가 표시됐나요?", exact: true })
+      .click();
 }
 async function connect(page: Page, id: string, name: string, roomId: string) {
   const p = await broker<{ name: string; code: string }>("pair", { id, name });
@@ -122,7 +127,7 @@ async function connect(page: Page, id: string, name: string, roomId: string) {
   await page.getByRole("button", { name: "기기 승인", exact: true }).click();
   await expect(page.getByRole("status", { name: "기기 연결 결과" })).toContainText("승인을 완료");
   await expect(page.getByLabel("기기 연결 코드", { exact: true })).toHaveValue("");
-  await page.getByText("연결 문제 해결", { exact: true }).click();
+  await page.getByRole("button", { name: "기기 관리 · 연결 기록", exact: true }).click();
   await broker("register", { id, name });
   const device = page
     .locator("main li")
@@ -156,11 +161,11 @@ test("should retain an explicitly confirmed recovery command across reload and b
     const command = page.getByRole("textbox", { name: "로컬 연결 명령", exact: true });
     const copy = page.getByRole("button", { name: "연결 명령 복사", exact: true });
     await expect(copy).toBeEnabled();
-    await page.getByText("명령 확인·직접 복사", { exact: true }).click();
+    await page.getByRole("button", { name: "명령 직접 복사", exact: true }).click();
     await copy.click();
     await expect(command).not.toHaveValue("");
     const defaultCommand = await command.inputValue();
-    await page.getByText("기기 이름·새 승인으로 다시 연결", { exact: true }).click();
+    await page.getByRole("button", { name: "연결 옵션", exact: true }).click();
     await page.getByRole("button", { name: "새 승인으로 다시 연결", exact: true }).click();
     await expect(copy).toBeDisabled();
     const prepare = page.getByRole("button", { name: "새 승인 명령 준비", exact: true });
@@ -179,7 +184,7 @@ test("should retain an explicitly confirmed recovery command across reload and b
     expect(selected).not.toBe(defaultCommand);
     await page.reload();
     await expect(copy).toBeEnabled();
-    await page.getByText("명령 확인·직접 복사", { exact: true }).click();
+    await page.getByRole("button", { name: "명령 직접 복사", exact: true }).click();
     await expect(command).toHaveValue("");
     await copy.click();
     await expect(command).not.toHaveValue("");
@@ -192,7 +197,7 @@ test("should retain an explicitly confirmed recovery command across reload and b
     const other = await a.newPage();
     await other.goto(`/app/connections?room=${scope.roomId}`);
     await expect(other.getByRole("button", { name: "연결 명령 복사", exact: true })).toBeEnabled();
-    await other.getByText("기기 이름·새 승인으로 다시 연결", { exact: true }).click();
+    await other.getByRole("button", { name: "연결 옵션", exact: true }).click();
     await other.getByRole("button", { name: "새 승인으로 다시 연결", exact: true }).click();
     await other
       .getByRole("checkbox", { name: "이전 연결의 터미널 실행을 종료했습니다", exact: true })
@@ -251,11 +256,13 @@ test("should approve an owned connection and display only public unverified bind
     await expect(op.getByRole("button", { name: "기기 승인", exact: true })).toHaveCount(0);
     await connectionsFromRoom(op, scope.roomId);
     await openApproval(op);
-    await op.getByText("연결 문제 해결", { exact: true }).click();
+    await op.getByRole("button", { name: "기기 관리 · 연결 기록", exact: true }).click();
     await expect(
       op.getByText("승인할 수 있는 참가 방이 없습니다.", { exact: false }),
     ).toBeVisible();
-    await expect(op.getByText("연결 문제 해결", { exact: true })).toBeVisible();
+    await expect(
+      op.getByRole("button", { name: "기기 관리 · 연결 기록", exact: true }),
+    ).toBeVisible();
     await expect(op.getByText("연결된 기기가 없습니다.", { exact: false })).toBeVisible();
     await expect(op.getByRole("button", { name: "기기 승인", exact: true })).toHaveCount(0);
     await expect(op.getByRole("combobox", { name: "AI를 제공할 채팅방", exact: true })).toHaveCount(
@@ -305,8 +312,8 @@ test("should revoke a connection and require fresh approval after membership rem
     await connect(ap, owner.id, own, scope.roomId);
     await connect(bp, member.id, target, scope.roomId);
     await connectionsFromRoom(bp, scope.roomId);
-    await bp.getByText("연결 문제 해결", { exact: true }).click();
-    const currentConnections = bp.getByText("연결 문제 해결", { exact: true }).locator("..");
+    await bp.getByRole("button", { name: "기기 관리 · 연결 기록", exact: true }).click();
+    const currentConnections = bp.getByRole("region", { name: "연결 문제 해결", exact: true });
     const removedCard = currentConnections
       .getByRole("listitem")
       .filter({ hasText: `기기 ${target}` });
@@ -331,16 +338,9 @@ test("should revoke a connection and require fresh approval after membership rem
     await expect(
       currentConnections.getByText("연결된 기기가 없습니다.", { exact: false }),
     ).toBeVisible();
-    await expect(
-      bp.locator("details").filter({ has: bp.locator("summary", { hasText: "연결 기록 확인" }) }),
-    ).toHaveCount(0);
+    await expect(bp.getByRole("region", { name: "이전 연결 기록", exact: true })).toHaveCount(0);
     await bp.getByRole("button", { name: "연결 기록 확인", exact: true }).click();
-    const history = bp
-      .locator("details")
-      .filter({ has: bp.locator("summary", { hasText: "연결 기록 확인" }) });
-    await expect(history).not.toHaveAttribute("open", "");
-    await expect(history.getByText(`기기 ${target}`, { exact: true })).toBeHidden();
-    await history.locator("summary").click();
+    const history = bp.getByRole("region", { name: "이전 연결 기록", exact: true });
     await expect(history.getByText("제거됨 · 새 승인 필요", { exact: true })).toBeVisible();
     await expect(history.getByLabel("공개 연결 ID", { exact: true })).toHaveText(removedId);
     await expect(history.getByRole("button")).toHaveCount(0);
@@ -389,20 +389,17 @@ test("should revoke a connection and require fresh approval after membership rem
         401,
     );
     await bp.goto("/app/connections");
-    await bp.getByText("연결 문제 해결", { exact: true }).click();
+    await bp.getByRole("button", { name: "기기 관리 · 연결 기록", exact: true }).click();
     await expect(history).toHaveCount(0);
     await bp.getByRole("button", { name: "연결 기록 확인", exact: true }).click();
-    await expect(history).not.toHaveAttribute("open", "");
-    await expect(history.getByText("제거됨 · 새 승인 필요", { exact: true })).toBeHidden();
     await expect(
       currentConnections.getByText("취소됨 · 새 승인 필요", { exact: true }),
     ).toBeVisible();
-    await history.locator("summary").click();
     await expect(history.getByText("제거됨 · 새 승인 필요", { exact: true })).toBeVisible();
     await expect(history.getByLabel("공개 연결 ID", { exact: true })).toHaveText(removedId);
     await expect(history.getByRole("button")).toHaveCount(0);
-    await history.locator("summary").click();
-    await expect(history.getByText("제거됨 · 새 승인 필요", { exact: true })).toBeHidden();
+    await bp.getByRole("button", { name: "연결 기록 확인", exact: true }).click();
+    await expect(history).toHaveCount(0);
     await revealRoomActions(bp);
     const appListReturn = bp.getByRole("link", { name: "채팅방 목록으로", exact: true });
     await expect(appListReturn).toHaveAttribute("href", "/app");
@@ -454,14 +451,10 @@ test("should expose a valid room command and require explicit approval after a p
       if (request.method() === "POST" && request.url().endsWith("/api/connections/approve"))
         approvals++;
     });
-    await page.goto(`/app/connections#code=${code}&room=${scope.roomId}`);
-    await expect(page).toHaveURL(/\/app\/connections$/);
-    await expect(page.getByLabel("기기 연결 코드", { exact: true })).toHaveValue(code);
-    await expect(page.getByRole("checkbox")).not.toBeChecked();
-    await page.getByText("Mac 연결 명령·다시 연결", { exact: true }).click();
+    await page.goto(`/app/connections?room=${scope.roomId}`);
     const guide = page.getByRole("region", { name: "명령 한 번으로 내 Mac 연결" });
     await expect(guide.getByRole("button", { name: "연결 명령 복사", exact: true })).toBeEnabled();
-    await guide.getByText("명령 확인·직접 복사", { exact: true }).click();
+    await guide.getByRole("button", { name: "명령 직접 복사", exact: true }).click();
     const issuedResponse = page.waitForResponse(
       (response) =>
         response.url().endsWith("/api/connection-setup/issue") &&
@@ -483,6 +476,12 @@ test("should expose a valid room command and require explicit approval after a p
     expect(approvals).toBe(0);
     await guide.getByRole("button", { name: "연결 명령 복사", exact: true }).click();
     await expect(guide.getByRole("status", { name: "연결 명령 복사 결과" })).toBeVisible();
+    await page.goto(`/app/connections#code=${code}&room=${scope.roomId}`);
+    await expect(page).toHaveURL(/\/app\/connections$/);
+    await expect(page.getByLabel("기기 연결 코드", { exact: true })).toHaveValue(code);
+    await expect(page.getByRole("checkbox")).not.toBeChecked();
+    await expect(guide).toBeHidden();
+    expect(approvals).toBe(0);
     await page.getByRole("checkbox").check();
     await page.goto(`/app/connections#code=${code}&room=00000000-0000-4000-8000-000000000099`);
     await expect(page).toHaveURL(/\/app\/connections$/);
@@ -670,9 +669,7 @@ test("should preserve the owned status snapshot and chat draft across explicit r
       ap.getByRole("heading", { name: "내 AI 연결", level: 1, exact: true }),
     ).toBeVisible();
     await expect(bar).toBeVisible();
-    const settingsEnd = ap
-      .getByRole("region", { name: "본인 기기 AI 설정", exact: true })
-      .getByRole("link", { name: "이 AI 채팅방에서 질문만 하기", exact: true });
+    const settingsEnd = ap.getByRole("button", { name: "기기 관리 · 연결 기록", exact: true });
     await settingsEnd.scrollIntoViewIfNeeded();
     await expect(settingsEnd).toBeVisible();
     await expect(settingsEnd).toBeInViewport({ ratio: 1 });
@@ -788,8 +785,8 @@ test("should renew an expired command and display first-attempt failure without 
     await expect(status).toContainText("복사한 명령 실행 중");
     await report("11111111-1111-4111-8111-111111111111", 2, "FAILED", "UNAVAILABLE");
     await expect(status).toContainText("이번 명령 실행을 시작하지 못했습니다");
-    await expect(status).toContainText("기존 기기의 등록·설정은 이 보고로 바뀌지 않습니다");
-    await page.getByRole("button", { name: "새 명령으로 다시 확인", exact: true }).click();
+    await expect(status).toContainText("기기 연결 확인과 별도");
+    await page.getByRole("button", { name: "새 명령 복사", exact: true }).click();
     await expect.poll(() => issued).toBe(3);
     expect(
       await page.evaluate(() =>
