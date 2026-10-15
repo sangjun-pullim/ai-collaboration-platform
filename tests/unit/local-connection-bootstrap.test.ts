@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { execFile, spawn } from "node:child_process";
-import { readFile, readdir, writeFile } from "node:fs/promises";
+import { readFile, readdir, writeFile, stat } from "node:fs/promises";
 import { join, resolve } from "node:path";
 import test from "node:test";
 import { createHash } from "node:crypto";
@@ -334,65 +334,97 @@ test(
   },
 );
 
-test("should verify child shutdown after a terminal group interrupt", macOnly, async (t) => {
-  const f = await connectionFixture(t, { behavior: "interrupt" });
-  // Keep proof I/O pending after main settles so the terminal and forwarded INT
-  // exercise the completed-main window rather than depending on disk timing.
-  await writeFile(
-    f.script,
-    (await readFile(f.script, "utf8")).replace(
-      'await writeFile(proof, "VERIFIED\\n",',
-      'await new Promise(resolve => setTimeout(resolve, 50)); await writeFile(proof, "VERIFIED\\n",',
-    ),
-  );
-  const quote = (value: string) => "'" + value.replaceAll("'", "'\\''") + "'";
-  const child = spawn("/usr/bin/python3", [resolve("tests/helpers/local-connection-pty.py")], {
-    stdio: ["pipe", "pipe", "pipe"],
-  });
-  t.after(() => {
-    if (child.exitCode === null) child.kill("SIGKILL");
-  });
-  child.stdin.write(
-    JSON.stringify({
-      command: ["/bin/bash", "--noprofile", "--norc", "-p", f.script, ...f.args]
-        .map(quote)
-        .join(" "),
-      environment: { ...f.env, HOME: f.root },
-    }) + "\n",
-  );
-  const ended = new Promise<{ code: number | null; stdout: string; stderr: string }>((done) => {
-    let stdout = "",
-      stderr = "";
-    child.stdout.on("data", (bytes) => (stdout += bytes));
-    child.stderr.on("data", (bytes) => (stderr += bytes));
-    child.on("exit", (code) => done({ code, stdout, stderr }));
-  });
-  for (let attempt = 0; attempt < startupPollAttempts; attempt++) {
-    try {
+for (const [reportedExit, proofMode] of [
+  [0, "valid"],
+  [130, "valid"],
+  [143, "valid"],
+  [130, "missing"],
+  [143, "corrupt"],
+  [1, "valid"],
+] as const)
+  test(
+    `should verify child shutdown after a terminal group interrupt with exit ${reportedExit} and ${proofMode} proof`,
+    macOnly,
+    async (t) => {
+      const f = await connectionFixture(t, { behavior: "interrupt" });
+      // Keep proof I/O pending after main settles so the terminal and forwarded INT
+      // exercise the completed-main window rather than depending on disk timing.
+      await writeFile(
+        f.script,
+        (await readFile(f.script, "utf8")).replace(
+          'await writeFile(proof, "VERIFIED\\n",',
+          `process.exitCode = ${reportedExit}; await new Promise(resolve => setTimeout(resolve, 50)); await writeFile(proof, "VERIFIED\\n",`,
+        ),
+      );
+      if (proofMode !== "valid") {
+        const source = await readFile(f.script, "utf8");
+        const marker = 'await writeFile(proof, "VERIFIED\\n", {flag:"wx",mode:0o600});';
+        assert.ok(source.includes(marker));
+        await writeFile(
+          f.script,
+          source.replace(
+            marker,
+            proofMode === "missing"
+              ? ""
+              : 'await writeFile(proof, "CORRUPT\\n", {flag:"wx",mode:0o600});',
+          ),
+        );
+      }
+      const quote = (value: string) => "'" + value.replaceAll("'", "'\\''") + "'";
+      const child = spawn("/usr/bin/python3", [resolve("tests/helpers/local-connection-pty.py")], {
+        stdio: ["pipe", "pipe", "pipe"],
+      });
+      t.after(() => {
+        if (child.exitCode === null) child.kill("SIGKILL");
+      });
+      child.stdin.write(
+        JSON.stringify({
+          command: ["/bin/bash", "--noprofile", "--norc", "-p", f.script, ...f.args]
+            .map(quote)
+            .join(" "),
+          environment: { ...f.env, HOME: f.root },
+        }) + "\n",
+      );
+      const ended = new Promise<{ code: number | null; stdout: string; stderr: string }>((done) => {
+        let stdout = "",
+          stderr = "";
+        child.stdout.on("data", (bytes) => (stdout += bytes));
+        child.stderr.on("data", (bytes) => (stderr += bytes));
+        child.on("exit", (code) => done({ code, stdout, stderr }));
+      });
+      for (let attempt = 0; attempt < startupPollAttempts; attempt++) {
+        try {
+          await readFile(f.runFile);
+          break;
+        } catch {
+          await delay(10);
+        }
+      }
       await readFile(f.runFile);
-      break;
-    } catch {
-      await delay(10);
-    }
-  }
-  await readFile(f.runFile);
-  await delay(30);
-  child.stdin.write("stop\n");
-  const result = await ended;
-  assert.equal(result.code, 0, result.stderr);
-  const terminal = JSON.parse(result.stdout);
-  const retained = await readdir(join(f.root, "work"));
-  const proof = await Promise.all(
-    retained.map((name) =>
-      readFile(join(f.root, "work", name, "shutdown"), "utf8").catch(
-        (error: NodeJS.ErrnoException) => error.code,
-      ),
-    ),
+      await delay(30);
+      child.stdin.write("stop\n");
+      const result = await ended;
+      assert.equal(result.code, 0, result.stderr);
+      const terminal = JSON.parse(result.stdout);
+      const retained = await readdir(join(f.root, "work"));
+      const proof = await Promise.all(
+        retained.map((name) =>
+          readFile(join(f.root, "work", name, "shutdown"), "utf8").catch(
+            (error: NodeJS.ErrnoException) => error.code,
+          ),
+        ),
+      );
+      const success = proofMode === "valid" && reportedExit !== 1;
+      assert.equal(
+        terminal.exitCode,
+        success ? 0 : reportedExit,
+        JSON.stringify({ ...terminal, proof }),
+      );
+      assert.equal(await readFile(join(f.root, "stopped"), "utf8"), "stopped");
+      if (success) assert.deepEqual(retained, []);
+      else assert.equal(retained.length, 1);
+    },
   );
-  assert.equal(terminal.exitCode, 0, JSON.stringify({ ...terminal, proof }));
-  assert.equal(await readFile(join(f.root, "stopped"), "utf8"), "stopped");
-  assert.deepEqual(retained, []);
-});
 
 test(
   "should block Perl preload code before the digest validation tool executes",
@@ -630,3 +662,57 @@ for (const [status, reason] of [
       assert.equal(reports.at(-1).report.reason, reason);
     },
   );
+
+test(
+  "should retain a private bounded failure diagnostic with artifact identity and source frames",
+  macOnly,
+  async (t) => {
+    const f = await connectionFixture(t, { behavior: "failure" });
+    let output = "";
+    await assert.rejects(f.run(), (error: Error & { stdout?: string; stderr?: string }) => {
+      output = `${error.stdout ?? ""}\n${error.stderr ?? ""}`;
+      return true;
+    });
+    const directories = await readdir(join(f.root, "work"));
+    assert.equal(directories.length, 1);
+    const file = join(f.root, "work", directories[0], "connection-diagnostic.json");
+    const bytes = await readFile(file, "utf8"),
+      record = JSON.parse(bytes);
+    assert.equal(record.version, 1);
+    assert.equal(record.error, "UNAVAILABLE");
+    assert.equal(record.codeSha256, f.manifest.code.sha256);
+    assert.match(record.nodeVersion, /^v24\./);
+    assert.ok(Number.isFinite(Date.parse(record.failedAt)));
+    assert.ok(Number.isInteger(record.pid) && record.pid > 0);
+    assert.ok(record.frames.some((frame: { file: string }) => frame.file === "src/cli.js"));
+    assert.ok(record.frames.length <= 8);
+    assert.ok(Buffer.byteLength(bytes) < 4096);
+    assert.equal((await stat(file)).mode & 0o777, 0o600);
+    assert.ok(!bytes.includes("private-marker"));
+    assert.ok(!bytes.includes(f.root));
+    assert.ok(!bytes.includes(f.args[0]));
+    assert.ok(!bytes.includes(f.args[1]));
+    assert.ok(output.includes(file));
+    assert.ok(!output.includes("private-marker"));
+  },
+);
+
+test(
+  "should retain verified files on exit 130 without an owned stop request",
+  macOnly,
+  async (t) => {
+    const f = await connectionFixture(t);
+    const source = await readFile(f.script, "utf8");
+    await writeFile(
+      f.script,
+      source.replace(
+        'await writeFile(proof, "VERIFIED\\n",',
+        'process.exitCode = 130; await writeFile(proof, "VERIFIED\\n",',
+      ),
+    );
+    await assert.rejects(f.run(), (error: Error & { code?: number }) => error.code === 130);
+    const dirs = await readdir(join(f.root, "work"));
+    assert.equal(dirs.length, 1);
+    assert.equal(await readFile(join(f.root, "work", dirs[0], "shutdown"), "utf8"), "VERIFIED\n");
+  },
+);

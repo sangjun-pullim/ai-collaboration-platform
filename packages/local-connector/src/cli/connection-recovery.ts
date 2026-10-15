@@ -14,7 +14,7 @@ import {
   withConfiguredProfileProtection,
   withLocalProfileProtection,
 } from "./remove-local-profile.ts";
-import { readConnectSettingsOwner, withSettingsDeviceLock } from "./settings-lock.ts";
+import { readConnectSettingsOwner } from "./settings-lock.ts";
 import { parseCliOptions, parseRecoveryChain } from "./parse-options.ts";
 import type { ConnectInput, ConnectInteraction } from "./connect-command.ts";
 import { serviceOrigin } from "../central-client.ts";
@@ -758,9 +758,16 @@ export async function prepareRecovery(
       )
         throw new RuntimeError("AUTHORITY_LOST");
       // All old runtime/session/profile protections have returned before acquiring the new device.
-      await withSettingsDeviceLock(connector.store, "connect", async () => {
+      const targetSettings = new SettingsStore(connector.store);
+      await targetSettings.locked(async () => {
         check();
-        const current = await connector.store.read();
+        // An approved recovery target resumes the same manager as an ordinary connection.
+        // Keep its unfinished journal intact; the manager owns cancellation and recovery.
+        const current = await readConnectSettingsOwner(targetSettings, {
+          server: connector.client.origin,
+          organizationId: input.organizationId,
+          roomId: input.roomId,
+        });
         if (
           current?.deviceId !== next?.deviceId ||
           current?.server !== next?.server ||
