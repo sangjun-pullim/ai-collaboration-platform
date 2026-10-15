@@ -671,7 +671,7 @@ test("should discover a terminal registration and show the approved room AI sett
   props.devices[0].lastSeenAt = new Date(time + 1).toISOString();
   for (const tick of timers.values()) tick();
   assert.equal(refreshed, beforeHeartbeat, "same-ID heartbeat should end the independent recheck");
-  assert.match(textContent(render()), /선택한 기기의 최근 통신이 확인되었습니다/);
+  assert.match(textContent(render()), /Mac과 통신하고 있습니다/);
   time += 300001;
   for (const tick of timers.values()) tick();
   assert.equal(refreshed, beforeHeartbeat);
@@ -702,9 +702,14 @@ function formTree(
   onModel: (model: string) => void = () => {},
   props: Record<string, unknown> = {},
   onPoll: () => Promise<void> = async () => {},
+  hooks?: {
+    useState: (initial: unknown) => [unknown, (value: unknown) => void];
+    selectFolder: () => void;
+  },
 ) {
   const component = loadUI("src/features/runtime-settings/runtime-settings-form.tsx", {
     react: {
+      useState: hooks?.useState ?? ((initial: unknown) => [initial, () => {}]),
       useMemo: (factory: () => unknown) => factory(),
       useEffect() {},
       useSyncExternalStore: (_subscribe: unknown, snapshot: () => unknown) => snapshot(),
@@ -719,6 +724,7 @@ function formTree(
       selectionSaved,
       SettingsController: class {
         setModel = onModel;
+        selectFolder = hooks?.selectFolder ?? (() => {});
         poll = onPoll;
         getSnapshot = () => view;
         subscribe() {}
@@ -870,7 +876,10 @@ test("should restrict setup to a live owned device in the selected room and pres
     return ui(props);
   }
   const first = render();
-  assert.equal(nodes(first).find((node) => node.props.id === "mac-connection")!.props.open, true);
+  assert.equal(
+    nodes(first).find((node) => node.props.id === "mac-connection")!.props.hidden,
+    false,
+  );
   assert.equal(
     nodes(first).find((node) => node.type === "settings-form")!.props.connectionRecent,
     false,
@@ -880,8 +889,8 @@ test("should restrict setup to a live owned device in the selected room and pres
   props.devices[0].lastSeenAt = new Date().toISOString() as unknown as null;
   const connected = render();
   assert.equal(
-    nodes(connected).find((node) => node.props.id === "mac-connection")!.props.open,
-    false,
+    nodes(connected).find((node) => node.props.id === "mac-connection")!.props.hidden,
+    true,
   );
   assert.equal(
     nodes(connected).find((node) => node.type === "settings-form")!.props.connectionRecent,
@@ -940,7 +949,7 @@ test("should restrict setup to a live owned device in the selected room and pres
       (node) =>
         node.type === "link" &&
         node.props.href === "/app/rooms/second-room" &&
-        textContent(node) === "질문만 하기",
+        textContent(node) === "연결 없이 질문만 하기",
     ),
     true,
   );
@@ -1062,15 +1071,15 @@ test("should keep the active connector and put manage only inside closed manual 
   const tree = formTree(formView());
   const manual = nodes(tree).find(
     (node) =>
-      node.type === "details" &&
+      node.props.hidden === true &&
       nodes(node).some(
         (child) => child.type === "code" && textContent(child).includes("manage --profile"),
       ),
   )!;
   assert.ok(manual);
-  assert.equal(manual.props.open, undefined);
+  assert.equal(manual.props.hidden, true);
   const outside = nodes(tree).filter((node) => node.type === "p" && !nodes(manual).includes(node));
-  assert.ok(outside.some((node) => textContent(node).includes("터미널을 계속 열어")));
+  assert.ok(textContent(manual).includes("터미널을 계속 열어"));
   assert.ok(outside.every((node) => !textContent(node).includes("manage --profile")));
 });
 
@@ -1230,8 +1239,8 @@ test("should consume pairing fragments without auto-approval and preserve succes
   assert.equal(confirmation.checked, false);
   assert.equal(nodes(tree).find((node) => node.type === "connection-guide")!.props.roomId, roomId);
   assert.equal(
-    nodes(tree).find((node) => node.props["aria-label"] === "기기 승인 안내")!.props.open,
-    true,
+    nodes(tree).find((node) => node.props["aria-label"] === "기기 승인 안내")!.props.hidden,
+    false,
   );
   assert.equal(
     nodes(tree).find((node) => node.props["aria-label"] === "기기 승인")!.props.variant,
@@ -1378,7 +1387,11 @@ test("should prepare a room-specific command and expose it when clipboard permis
   const manifest = { version: 1, bootstrap: { sha256: "verified-digest" } },
     options: unknown[] = [];
   const field = {
-    closest: () => ({ setAttribute: (name: string) => calls.push(name) }),
+    closest: () => ({
+      set hidden(_value: boolean) {
+        calls.push("reveal");
+      },
+    }),
     focus: () => calls.push("focus"),
     select: () => calls.push("select"),
   };
@@ -1483,7 +1496,7 @@ test("should prepare a room-specific command and expose it when clipboard permis
     nodes(((cursor = 0), ui(props))).find((node) => node.type === "textarea")?.props.value,
     "verified-connection-command",
   );
-  assert.deepEqual(calls, ["open", "focus", "select"]);
+  assert.deepEqual(calls, ["reveal", "focus", "select"]);
   cursor = 0;
   assert.ok(
     nodes(ui(props)).some(
@@ -1901,6 +1914,7 @@ test("should label ticket-only execution separately without turning a valid devi
   let requested: unknown;
   const exports = loadUI("src/features/connection-setup/setup-status.tsx", {
     react: {
+      useState: (initial: unknown) => [initial, () => {}],
       useMemo: (factory: () => unknown) => factory(),
       useEffect() {},
       useSyncExternalStore: (_subscribe: unknown, get: () => unknown) => get(),
@@ -1923,7 +1937,7 @@ test("should label ticket-only execution separately without turning a valid devi
   const command = renderProgress(progress.props);
   assert.equal(command.props["aria-label"], "복사한 명령의 실행 상태");
   assert.match(textContent(command), /이번 명령 실행을 시작하지 못했습니다/);
-  assert.match(textContent(command), /기존 기기의 등록·설정은 이 보고로 바뀌지 않습니다/);
+  assert.match(textContent(command), /기기 연결 확인과 별도/);
   assert.doesNotMatch(textContent(command), /연결 시작에 실패했습니다/);
   assert.deepEqual(JSON.parse(JSON.stringify(requested)), {
     roomId: rootId,
@@ -1936,4 +1950,65 @@ test("should label ticket-only execution separately without turning a valid devi
     { connectionRecent: true },
   );
   assert.doesNotMatch(textContent(valid), /연결 시작에 실패|RUNTIME_BUSY/);
+});
+
+test("should return to the applied summary after explicitly changing and reapplying a folder", () => {
+  const applied = {
+    ...localReceipt("APPLIED"),
+    ...binding,
+    model: "model-one",
+    sessionAlias: "내 AI",
+    snapshotHash: catalog().snapshotHash,
+  };
+  let view = formView({ response: response({ applied }), reservedOperationId: null, draft: null });
+  const states: unknown[] = [];
+  let cursor = 0,
+    requests = 0;
+  const hooks = {
+    useState(initial: unknown): [unknown, (value: unknown) => void] {
+      const index = cursor++;
+      if (!(index in states)) states[index] = initial;
+      return [
+        states[index],
+        (value) => {
+          states[index] = value;
+        },
+      ];
+    },
+    selectFolder() {
+      requests++;
+      view = formView({
+        response: response({ applied, operation: operation("REQUESTED") }),
+        draft: null,
+      });
+    },
+  };
+  const render = () => {
+    cursor = 0;
+    return formTree(view, undefined, {}, undefined, hooks);
+  };
+  const panel = (tree: UINode) =>
+    nodes(tree).find((n) => n.props["aria-label"] === "AI와 폴더 선택")!;
+  const click = (tree: UINode, label: string) => {
+    const button = nodes(tree).find((n) => n.type === "button" && textContent(n) === label)!;
+    assert.ok(button);
+    assert.ok(!button.props.disabled);
+    (button.props.onClick as () => void)();
+  };
+  assert.equal(panel(render()).props.hidden, true);
+  click(render(), "AI·폴더 변경");
+  assert.equal(panel(render()).props.hidden, false);
+  click(render(), "Mac에서 폴더 선택");
+  assert.equal(requests, 1);
+  assert.equal(panel(render()).props.hidden, true);
+  view = formView({ response: confirmed(), draft: null });
+  assert.equal(panel(render()).props.hidden, true);
+  view = formView({
+    response: response({ applied: { ...applied, configRevision: 1 }, configRevision: 1 }),
+    reservedOperationId: null,
+    draft: null,
+  });
+  assert.equal(panel(render()).props.hidden, true);
+  assert.ok(nodes(render()).some((n) => n.type === "button" && textContent(n) === "AI·폴더 변경"));
+  assert.equal(requests, 1);
 });

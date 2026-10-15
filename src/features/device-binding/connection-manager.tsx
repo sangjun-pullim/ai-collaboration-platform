@@ -114,6 +114,9 @@ export function ConnectionManager({
   const approvalSection = useRef<HTMLElement>(null);
   const pendingApprovalFocus = useRef(false);
   const [showRecords, setShowRecords] = useState(false);
+  const [showManagement, setShowManagement] = useState(false);
+  const [showCommand, setShowCommand] = useState(false);
+  const [showApproval, setShowApproval] = useState(false);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<ConnectionErrorCode | null>(null);
   const [notice, setNotice] = useState("");
@@ -251,6 +254,8 @@ export function ConnectionManager({
     pendingRegistration.current = null;
     setRegistrationRoomId(null);
     setRoomId(value);
+    setShowCommand(false);
+    setShowApproval(false);
     setSettingsDeviceId("");
     setPairingCode("");
     setNotice("");
@@ -341,13 +346,16 @@ export function ConnectionManager({
       }
     >
       <div role="region" aria-label="AI 연결 설정 내용" className="min-h-0 flex-1 overflow-y-auto">
-        <div className="mx-auto grid w-full min-w-0 grid-cols-1 max-w-[960px] gap-4 px-4 py-4 md:px-6">
-          <p className="text-sm text-neutral-600">
-            내 AI를 제공할 때만 연결하세요.{" "}
-            <Link href={roomId ? `/app/rooms/${roomId}` : "/app"} className="underline">
-              질문만 하기
-            </Link>
-          </p>
+        <div className="mx-auto grid w-full min-w-0 grid-cols-1 max-w-[880px] gap-6 px-4 py-8 md:px-8">
+          <div className="space-y-2">
+            <h1 className="text-2xl font-semibold tracking-tight">내 AI를 채팅방에 연결</h1>
+            <p className="text-sm text-neutral-600">
+              내 Mac의 Claude 또는 Codex가 선택한 폴더를 읽고 답합니다.{" "}
+              <Link href={roomId ? `/app/rooms/${roomId}` : "/app"} className="underline">
+                연결 없이 질문만 하기
+              </Link>
+            </p>
+          </div>
           <div className="grid min-w-0 grid-cols-1 gap-3 sm:grid-cols-2">
             {rooms.length > 0 && (
               <label className={styles.field}>
@@ -388,45 +396,68 @@ export function ConnectionManager({
               </label>
             )}
           </div>
-          <details
-            open={!settingsDevice || !!pairingCode || awaitingRegistration}
-            className="grid min-w-0 grid-cols-1 gap-3 rounded-xl border p-4"
+          <section
+            className="min-w-0 space-y-4 rounded-xl border bg-white p-5 sm:p-6"
             aria-label="Mac 연결 단계"
           >
-            <summary className="cursor-pointer text-sm">Mac 연결</summary>
             <div className="flex flex-wrap items-center justify-between gap-2">
-              <h2 className="font-semibold">1. Mac 연결</h2>
-              <Button
-                type="button"
-                variant="ghost"
-                size="sm"
-                aria-label="연결 상태 새로 확인"
-                onClick={() => router.refresh()}
-              >
-                다시 확인
-              </Button>
+              <h2 className="flex items-center gap-3 font-semibold">
+                <span
+                  className={`flex h-7 w-7 items-center justify-center rounded-full text-sm ${recent ? "bg-emerald-50 text-emerald-700" : "bg-neutral-900 text-white"}`}
+                >
+                  {recent ? "✓" : "1"}
+                </span>
+                Mac 연결
+              </h2>
+              <div className="flex items-center gap-2">
+                {recent && <span className="text-sm text-emerald-700">최근 통신 확인</span>}
+                {recent && (
+                  <Button
+                    type="button"
+                    variant="ghost"
+                    size="sm"
+                    aria-expanded={showCommand}
+                    onClick={() => setShowCommand(!showCommand)}
+                  >
+                    다시 연결
+                  </Button>
+                )}
+                <Button
+                  type="button"
+                  variant="ghost"
+                  size="sm"
+                  aria-label="연결 상태 새로 확인"
+                  onClick={() => router.refresh()}
+                >
+                  상태 확인
+                </Button>
+              </div>
             </div>
-            <p role="status" aria-label="Mac 연결 상태" className="text-sm text-neutral-600">
+            <p
+              hidden={recent && !pairingCode && !awaitingRegistration && !showCommand}
+              role="status"
+              aria-label="Mac 연결 상태"
+              className="text-sm text-neutral-600"
+            >
               {pairingCode
                 ? "다음: 내 계정과 선택한 방을 확인하고 기기를 승인하세요."
                 : awaitingRegistration
                   ? "다음: 실행 중인 터미널에서 내 계정과 방을 확인하고 yes를 입력하세요."
                   : recent
-                    ? "선택한 기기의 최근 통신이 확인되었습니다. 명령의 시작 보고와 별도로 아래에서 AI를 설정하세요."
-                    : "최근 통신을 확인하지 못했습니다. 다음: Mac에서 연결 명령을 실행하고 이 화면을 새로 확인하세요."}
+                    ? "Mac과 통신하고 있습니다. 아래에서 AI와 폴더를 설정하세요."
+                    : "Mac에서 연결 명령을 실행하세요. 실행한 터미널은 계속 열어 두세요."}
             </p>
             {!recent && settingsDevice?.lastSeenAt && (
               <p className="text-xs text-neutral-500">
                 마지막 수신: {new Date(settingsDevice.lastSeenAt).toLocaleString("ko-KR")}
               </p>
             )}
-            <details
+            <div
               tabIndex={-1}
               id="mac-connection"
-              open={!recent && !pairingCode && !awaitingRegistration}
+              hidden={(recent && !showCommand) || !!pairingCode || awaitingRegistration}
               className="text-sm"
             >
-              <summary className="cursor-pointer text-sm">Mac 연결 명령·다시 연결</summary>
               <LocalConnectionGuide
                 origin={origin}
                 userId={userId}
@@ -453,9 +484,12 @@ export function ConnectionManager({
                   router.refresh();
                 }}
               />
-            </details>
-            <details open={!!pairingCode} className="text-sm" aria-label="기기 승인 안내">
-              <summary className="cursor-pointer text-sm">웹에서 새 기기 승인</summary>
+            </div>
+            <div
+              hidden={!pairingCode && !showApproval}
+              className="rounded-lg border bg-neutral-50 p-4 text-sm"
+              aria-label="기기 승인 안내"
+            >
               <section
                 ref={approvalSection}
                 tabIndex={-1}
@@ -502,26 +536,27 @@ export function ConnectionManager({
                   </p>
                 )}
               </section>
-            </details>
-            <details className="text-sm">
-              <summary className="cursor-pointer">기존 수동 연결을 사용하는 경우</summary>
-              <p className="mt-2 text-neutral-600">
-                기존 pair 명령의 코드를 위에서 승인한 뒤, 자기 PC에서 계정·방을 확인하고 exchange를
-                실행하세요. 같은 프로필로 manage를 실행하면 아래 AI 설정을 사용할 수 있습니다.
-              </p>
-            </details>
-          </details>
+            </div>
+            {!pairingCode && !awaitingRegistration && (!recent || showCommand) && (
+              <Button
+                type="button"
+                variant="link"
+                size="sm"
+                aria-expanded={showApproval}
+                onClick={() => setShowApproval(!showApproval)}
+              >
+                {showApproval ? "코드 입력 닫기" : "터미널에 연결 코드가 표시됐나요?"}
+              </Button>
+            )}
+          </section>
           <section
             id="ai-settings"
             ref={settingsSection}
             tabIndex={-1}
-            className="grid min-w-0 grid-cols-1 gap-3 rounded-xl border p-4"
+            className="grid min-w-0 grid-cols-1 gap-4 rounded-xl border bg-white p-5 sm:p-6"
             aria-label="본인 기기 AI 설정"
           >
-            <h2 className="font-semibold">AI 설정</h2>
-            <p className="text-sm text-neutral-600">
-              Claude 또는 Codex를 고르고 Mac에서 폴더를 확인하세요.
-            </p>
+            <h2 className="sr-only">AI와 답변 설정</h2>
             {settingsDevice ? (
               <>
                 {settingsDevice && (
@@ -543,11 +578,6 @@ export function ConnectionManager({
                   : "Mac 연결과 기기 등록을 마치면 AI와 폴더를 선택할 수 있습니다."}
               </p>
             )}
-            {roomId && (
-              <Link href={`/app/rooms/${roomId}`} className="text-sm underline">
-                이 AI 채팅방에서 질문만 하기
-              </Link>
-            )}
           </section>
           {error && (
             <p role="alert" aria-label="기기 연결 오류" tabIndex={-1} ref={alert}>
@@ -561,41 +591,62 @@ export function ConnectionManager({
               {notice}
             </p>
           )}
-          <details className={styles.panel}>
-            <summary className="cursor-pointer text-sm">연결 문제 해결</summary>
-            <Button variant="outline" onClick={() => setShowRecords(!showRecords)}>
-              연결 기록 확인
+          <div className="border-t pt-4">
+            <Button
+              type="button"
+              variant="ghost"
+              aria-expanded={showManagement}
+              onClick={() => setShowManagement(!showManagement)}
+            >
+              기기 관리 · 연결 기록
             </Button>
-            {currentDevices.length ? (
-              <ul className={styles.list}>
-                {currentDevices.map((device) => (
-                  <ConnectionCard
-                    key={device.deviceId}
-                    device={device}
-                    busy={busy}
-                    onAction={(action, deviceId) => void send(action, { deviceId })}
-                  />
-                ))}
-              </ul>
-            ) : (
-              <p>연결된 기기가 없습니다. 로컬 프로그램에서 새 코드를 만들고 승인하세요.</p>
-            )}
-          </details>
-          {showRecords && removedDevices.length > 0 && (
-            <details className={styles.panel}>
-              <summary className="cursor-pointer text-sm">연결 기록 확인</summary>
-              <ul className={styles.list}>
-                {removedDevices.map((device) => (
-                  <ConnectionCard
-                    key={device.deviceId}
-                    device={device}
-                    busy={busy}
-                    onAction={(action, deviceId) => void send(action, { deviceId })}
-                  />
-                ))}
-              </ul>
-            </details>
-          )}
+            <section
+              hidden={!showManagement}
+              aria-label="연결 문제 해결"
+              className="mt-3 space-y-4 rounded-xl border p-5"
+            >
+              <h2 className="font-semibold">등록한 기기 관리</h2>
+              <p className="text-sm text-neutral-600">
+                기기를 제거하면 다시 승인해야 합니다. 연결이 끊겼다면 먼저 위의 연결 명령을 다시
+                실행하세요.
+              </p>
+              <Button variant="outline" onClick={() => setShowRecords(!showRecords)}>
+                연결 기록 확인
+              </Button>
+              {currentDevices.length ? (
+                <ul className={styles.list}>
+                  {currentDevices.map((device) => (
+                    <ConnectionCard
+                      key={device.deviceId}
+                      device={device}
+                      busy={busy}
+                      onAction={(action, deviceId) => void send(action, { deviceId })}
+                    />
+                  ))}
+                </ul>
+              ) : (
+                <p>연결된 기기가 없습니다. 로컬 프로그램에서 새 코드를 만들고 승인하세요.</p>
+              )}
+              {showRecords && removedDevices.length > 0 && (
+                <section aria-label="이전 연결 기록" className="border-t pt-4">
+                  <h3 className="text-sm font-semibold">제거된 기기 기록</h3>
+                  <ul className={styles.list}>
+                    {removedDevices.map((device) => (
+                      <ConnectionCard
+                        key={device.deviceId}
+                        device={device}
+                        busy={busy}
+                        onAction={(action, deviceId) => void send(action, { deviceId })}
+                      />
+                    ))}
+                  </ul>
+                </section>
+              )}
+              <p className="text-xs text-neutral-500">
+                수동 pair·exchange 연결은 해당 Mac에서 같은 프로필로 manage를 실행하세요.
+              </p>
+            </section>
+          </div>
         </div>
       </div>
     </ChatShell>

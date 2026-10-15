@@ -11,7 +11,8 @@ const reasons: Record<SetupReason, string> = {
   FAILED: "폴더 선택에 실패했습니다.",
   SHARING_UNCONFIRMED: "공유 확인이 완료되지 않았습니다.",
   PROVIDER_UNAVAILABLE: "AI 프로그램 준비에 실패했습니다. Mac의 프로그램 상태를 확인하세요.",
-  RUNTIME_BUSY: "기존 실행이 사용 중입니다. 같은 연결의 터미널을 확인하세요.",
+  RUNTIME_BUSY:
+    "이전 연결 또는 AI 설정이 정리되지 않았습니다. 터미널의 오류와 연결 실패 진단 파일을 확인하세요.",
   SNAPSHOT_CHANGED: "모델 목록이 변경되었습니다. 같은 요청의 정리 완료를 확인하세요.",
   POLICY_UNCONFIRMED: "공유 정책 확인이 필요합니다.",
   CONTEXT_UNCONFIRMED: "이전 실행 확인이 필요합니다.",
@@ -19,7 +20,8 @@ const reasons: Record<SetupReason, string> = {
   FORBIDDEN: "이 방의 참가 권한과 연결한 계정을 확인하세요. 같은 계정과 방으로 연결을 재개하세요.",
   CONFLICT:
     "연결이나 승인 상태가 변경되었습니다. 같은 연결의 상태를 확인한 뒤 새 명령을 복사하세요.",
-  UNAUTHENTICATED: "Mac의 기기 인증을 확인하세요.",
+  UNAUTHENTICATED:
+    "기기 인증을 확인할 수 없습니다. 연결 옵션에서 새 승인으로 다시 연결을 선택하세요.",
   UNAVAILABLE: "Mac에서 서버 통신을 확인하지 못했습니다.",
 };
 function startupReason(reason: string | null): string | null {
@@ -50,7 +52,7 @@ function commandSummary(inspection: SetupInspection | null, now: number): string
     return "복사한 명령이 만료되었습니다. 새 명령을 복사하세요.";
   switch (inspection?.startup?.stage) {
     case "FAILED":
-      return "이번 명령 실행을 시작하지 못했습니다. Mac의 터미널 원인을 확인하세요.";
+      return "이번 명령 실행을 시작하지 못했습니다.";
     case "CONNECTING":
       return "복사한 명령 실행 중 · 웹 승인과 Mac 확인을 기다립니다";
     case "DOWNLOADING":
@@ -131,9 +133,13 @@ export function SetupProgress({
     <div
       role={embedded ? undefined : "status"}
       aria-label={commandOnly ? "복사한 명령의 실행 상태" : "현재 연결 진행"}
-      className="space-y-2 text-sm"
+      className={`space-y-2 rounded-lg p-3 text-sm ${observation?.stage === "FAILED" || error ? "border border-amber-200 bg-amber-50" : "bg-neutral-50"}`}
     >
-      {commandOnly && <p className="font-medium">복사한 명령의 실행 상태</p>}
+      {commandOnly && (
+        <p className="text-xs font-medium text-neutral-500">
+          명령 실행 보고 · 기기 연결 확인과 별도
+        </p>
+      )}
       <p>
         {error
           ? "서버에서 상태를 확인하지 못했습니다. 같은 요청의 상태를 다시 확인하세요."
@@ -143,16 +149,10 @@ export function SetupProgress({
               ? setupSummary(inspection, now)
               : fallback}
       </p>
-      {commandOnly && (
-        <p className="text-xs text-neutral-500">
-          이 보고는 실행 기기의 인증을 확인하지 않습니다. 기존 기기의 등록·설정은 이 보고로 바뀌지
-          않습니다. 선택한 기기의 상태는 AI 설정에서 확인하세요.
-        </p>
-      )}
+
       {observation && (
         <p className="text-xs text-neutral-500">
-          마지막 보고: {new Date(observation.receivedAt).toLocaleString("ko-KR")}. 아직 결과가
-          도착하지 않았다면 Mac의 터미널을 확인하세요.
+          마지막 보고: {new Date(observation.receivedAt).toLocaleString("ko-KR")}
         </p>
       )}
       {!commandOnly && inspection?.settings?.reason && <p>{reasons[inspection.settings.reason]}</p>}
@@ -164,7 +164,7 @@ export function SetupProgress({
         (inspection?.startup?.stage === "FAILED" ||
           (inspection?.expiresAt && Date.parse(inspection.expiresAt) <= now)) && (
           <Button variant="outline" onClick={onRetry}>
-            새 명령으로 다시 확인
+            새 명령 복사
           </Button>
         )}
       {(manual || error || observation?.stage === "FAILED") && (

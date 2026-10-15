@@ -379,10 +379,10 @@ test("should keep copy first and command identity stable when guidance becomes s
     assert.equal(copy.props.variant, "default");
     assert.ok(nodes(tree).indexOf(copy) < nodes(tree).findIndex((node) => node.type === "input"));
     const details = nodes(tree).find(
-      (node) => node.type === "details" && text(node).includes(userId),
+      (node) => node.props["aria-label"] === "명령 직접 복사 영역" && text(node).includes(userId),
     )!;
     assert.ok(details);
-    assert.equal(details.props.open, undefined);
+    assert.equal(details.props.hidden, true);
     await f.click("연결 명령 복사");
     const initial = f.value();
     (f.props as Record<string, unknown>).prominent = false;
@@ -447,6 +447,25 @@ test("should renew expired launch tracking without changing the saved recovery g
     assert.equal(f.uuids(), issued + 1);
     assert.equal(f.saved.size, 0);
     assert.equal(f.copies.length, 2);
+  } finally {
+    f.close();
+  }
+});
+
+test("should keep advanced recovery and raw command out of the default connection task", async () => {
+  const f = fixture();
+  try {
+    await f.settle();
+    const tree = f.render();
+    assert.equal(nodes(tree).filter((n) => n.type === "details").length, 0);
+    const advanced = nodes(tree).find((n) => n.props["aria-label"] === "연결 추가 옵션")!;
+    assert.ok(advanced);
+    assert.equal(advanced.props.hidden, true);
+    await f.click("연결 옵션");
+    assert.equal(
+      nodes(f.render()).find((n) => n.props["aria-label"] === "연결 추가 옵션")!.props.hidden,
+      false,
+    );
   } finally {
     f.close();
   }
