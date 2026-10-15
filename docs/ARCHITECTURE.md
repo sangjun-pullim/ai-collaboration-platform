@@ -17,6 +17,8 @@ sources:
 
 루트 Next.js 웹은 `experiments/local-ai-runtime/`의 독립 TypeScript 실험을 import하거나 실행하지 않는다. 실제 웹 route·state·검사 범위는 [FRONTEND-ARCHITECTURE](FRONTEND-ARCHITECTURE.md), 중앙 모델과 HTTP 계약은 [DB-SCHEMA](DB-SCHEMA.md)·[API-SPEC](API-SPEC.md), 공급자 실험 증거는 [로컬 AI 연결 조사](research/local-ai-connection-research.md#이번에-실제-확인한-로컬-증거)를 따른다. 그림의 Realtime와 두 PC의 실제 provider 연결은 후속 수용 범위다.
 
+연결 시작 설명서와 진행 관찰은 `connection-setup` 모듈이 담당한다. 짧은 조회 키는 기존 bootstrap의 검증·승인 흐름으로 이어지며 실행 권한을 대신하지 않는다. Mac의 `SetupObserver`는 설정 관리자의 실제 단계만 별도 보고하고 네트워크 실패가 설정 실행을 막지 않도록 제한한다. 실행·취소 완료의 정본은 기존 settings receipt다. [관찰 API](API-SPEC.md#연결-시작과-진행-관찰)를 따른다.
+
 ## 웹 입장과 대화의 구현 경계
 
 실제 웹은 회사 코드·표시 이름 입장과 AI 채팅방 목록을 기본 진입으로 사용한다. shadcn/ui·Tailwind가 화면 구성과 접근 가능한 Dialog·Sheet를 제공한다. 모의 체험은 `/demo`에 둔다. `ChatShell`은 탐색·배치만 맡는다. `RoomChatController`가 공개 이력·조회·요청·미확정 저장과 취소를 소유하고, `useRoomChat`이 React의 구독과 화면 수명에 연결한다. `InvestigationView`는 입력 초안·대상과 epoch 선택·스크롤을 소유한다. 표시용 Timeline·Composer·고급 제어에 별도 HTTP·storage·polling을 만들지 않는다.
