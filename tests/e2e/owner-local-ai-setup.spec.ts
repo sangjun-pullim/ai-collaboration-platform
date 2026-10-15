@@ -15,6 +15,41 @@ function check(value: unknown): asserts value {
   if (!value)
     throw new Error("Owned settings browser assertion failed; private diagnostics withheld");
 }
+const brokerActions = [
+  "setup",
+  "code",
+  "record-intent",
+  "drive-folder",
+  "drive-cancel",
+  "drive-apply",
+  "drive-ready",
+  "drive-question",
+  "stale-capability",
+  "report-setup",
+] as const;
+async function fixedStep<T>(
+  stage:
+    | "codex-folder"
+    | "codex-catalog"
+    | "codex-cancel-request"
+    | "codex-cancel-drive"
+    | "codex-new-settings"
+    | "guided-folder-request"
+    | "guided-folder-report"
+    | "guided-sharing-report"
+    | "guided-model-report"
+    | "guided-failure-report",
+  work: () => Promise<T>,
+): Promise<T> {
+  return test.step(stage, async () => {
+    try {
+      return await work();
+    } catch {
+      process.stderr.write(`SETTINGS_CHECK_STAGE ${stage}\n`);
+      throw new Error("Owned settings fixed step failed");
+    }
+  });
+}
 async function broker<T>(action: string, body: unknown): Promise<T> {
   const endpoint = process.env.LOCAL_SETTINGS_FIXTURE_URL,
     token = process.env.LOCAL_SETTINGS_FIXTURE_TOKEN;
@@ -36,6 +71,8 @@ async function broker<T>(action: string, body: unknown): Promise<T> {
     body: JSON.stringify(body),
     signal: AbortSignal.timeout(30000),
   });
+  if (!response.ok && brokerActions.includes(action as (typeof brokerActions)[number]))
+    process.stderr.write(`SETTINGS_BROKER_STAGE ${action}\n`);
   check(response.ok);
   return response.json() as Promise<T>;
 }
@@ -136,18 +173,19 @@ test("should distinguish owner Claude request application and readiness and answ
         response.url().endsWith("/api/runtime-settings/select-runtime") &&
         response.request().method() === "POST",
     );
-    await form.getByRole("button", { name: "모델 선택 확인", exact: true }).click();
+    await form.getByLabel("공개 세션 별칭", { exact: true }).fill("브라우저 Claude AI");
+    await form.getByRole("button", { name: "설정 저장", exact: true }).click();
     const selected = await selection;
     check(
       selected.status() === 200 &&
         selected.request().postDataJSON().effort === null &&
         selected.request().postDataJSON().model === "claude-product-synthetic",
     );
+    await form.getByText("요청한 설정 상세", { exact: true }).click();
     await expect(form.getByLabel("요청한 설정", { exact: true })).toContainText(
       "Synthetic model name (claude-product-synthetic)",
     );
-    await form.getByLabel("공개 세션 별칭", { exact: true }).fill("브라우저 Claude AI");
-    await form.getByRole("button", { name: "PC에 설정 적용", exact: true }).click();
+
     await expect(form).toContainText("PC 적용 기다림");
     await expect(form.getByLabel("PC에 적용된 설정", { exact: true })).toContainText(
       "아직 PC 적용 확인이 없습니다.",
@@ -218,17 +256,21 @@ test("should show the observed Codex catalog and wait for PC cancellation cleanu
     await login(owner, scene, "owner");
     await login(requester, scene, "requester");
     await owner.goto("/app/connections");
-    const form = await folder(owner, scene, "codex");
-    await expect(
-      form.getByRole("option", {
-        name: "Synthetic model name (owned-synthetic)",
-        exact: true,
-      }),
-    ).toHaveAttribute("value", "owned-synthetic");
-    await form.getByRole("combobox", { name: "모델", exact: true }).selectOption("owned-synthetic");
-    await expect(form.getByRole("combobox", { name: "추론 강도", exact: true })).toBeVisible();
-    await form.getByRole("combobox", { name: "추론 강도", exact: true }).selectOption("high");
-    await expect(form).toContainText("Codex 0.159.1");
+    const form = await fixedStep("codex-folder", () => folder(owner, scene, "codex"));
+    await fixedStep("codex-catalog", async () => {
+      await expect(
+        form.getByRole("option", {
+          name: "Synthetic model name (owned-synthetic)",
+          exact: true,
+        }),
+      ).toHaveAttribute("value", "owned-synthetic");
+      await form
+        .getByRole("combobox", { name: "모델", exact: true })
+        .selectOption("owned-synthetic");
+      await expect(form.getByRole("combobox", { name: "추론 강도", exact: true })).toBeVisible();
+      await form.getByRole("combobox", { name: "추론 강도", exact: true }).selectOption("high");
+      await expect(form).toContainText("Codex 0.159.1");
+    });
     await requester.goto("/app/connections");
     await expect(
       requester.getByRole("combobox", { name: "설정할 본인 기기", exact: true }),
@@ -242,20 +284,42 @@ test("should show the observed Codex catalog and wait for PC cancellation cleanu
       return response.status;
     }, scene.deviceId);
     check(refused === 403 || refused === 404);
-    await form.getByRole("button", { name: "설정 요청 취소", exact: true }).click();
-    await expect(form).toContainText("취소 요청됨");
-    await expect(
-      form.getByRole("button", { name: "Mac에서 폴더 선택", exact: true }),
-    ).toBeDisabled();
-    const cancelled = await broker<{ state: string }>("drive-cancel", { scene: scene.id });
-    check(cancelled.state === "CANCELLED");
-    await expect(settings(owner)).toContainText("취소 · PC 정리 완료", { timeout: 15000 });
-    await expect(
-      settings(owner).getByRole("button", { name: "Mac에서 폴더 선택", exact: true }),
-    ).toBeEnabled();
-    await expect(settings(owner).getByLabel("PC에 적용된 설정", { exact: true })).toContainText(
-      "아직 PC 적용 확인이 없습니다.",
+    await fixedStep("codex-cancel-request", async () => {
+      await form.getByRole("button", { name: "설정 요청 취소", exact: true }).click();
+      await expect(form).toContainText("취소 요청됨");
+      await form.getByText("AI·폴더 변경", { exact: true }).click();
+      await expect(
+        form.getByRole("button", { name: "Mac에서 폴더 선택", exact: true }),
+      ).toBeVisible();
+      await expect(
+        form.getByRole("button", { name: "Mac에서 폴더 선택", exact: true }),
+      ).toBeDisabled();
+    });
+    const cancelled = await fixedStep("codex-cancel-drive", () =>
+      broker<{ state: string }>("drive-cancel", { scene: scene.id }),
     );
+    check(cancelled.state === "CANCELLED");
+    await fixedStep("codex-new-settings", async () => {
+      await expect(settings(owner)).toContainText("취소 · PC 정리 완료", { timeout: 15000 });
+      await expect(
+        settings(owner).getByRole("button", { name: "Mac에서 폴더 선택", exact: true }),
+      ).toBeEnabled();
+      await expect(settings(owner).getByLabel("PC에 적용된 설정", { exact: true })).toContainText(
+        "아직 PC 적용 확인이 없습니다.",
+      );
+      const next = owner.waitForResponse(
+        (response) =>
+          response.url().endsWith("/api/runtime-settings/select-folder") &&
+          response.request().method() === "POST",
+      );
+      await settings(owner)
+        .getByRole("combobox", { name: "AI 프로그램", exact: true })
+        .selectOption("claude");
+      await settings(owner).getByRole("button", { name: "Mac에서 폴더 선택", exact: true }).click();
+      const result = await next;
+      check(result.status() === 200 && (await result.json()).data.operation.state === "REQUESTED");
+      await expect(settings(owner)).toContainText("PC 확인 기다림");
+    });
   } finally {
     await requesterContext.close();
     await ownerContext.close();
@@ -298,7 +362,7 @@ test("should reject a stale capability selection through the real endpoint and k
         item.url().endsWith("/api/runtime-settings/select-runtime") &&
         item.request().method() === "POST",
     );
-    await form.getByRole("button", { name: "모델 선택 확인", exact: true }).click();
+    await form.getByRole("button", { name: "설정 저장", exact: true }).click();
     check((await response).status() === 409);
     await expect(form.getByRole("alert")).toContainText(
       "설정이나 연결이 변경되었거나 AI가 사용 중입니다.",
@@ -306,7 +370,7 @@ test("should reject a stale capability selection through the real endpoint and k
     await expect(form.getByLabel("공개 세션 별칭", { exact: true })).toHaveValue(
       "보존할 공개 별칭",
     );
-    await expect(form.getByRole("button", { name: "PC에 설정 적용", exact: true })).toBeDisabled();
+    await expect(form.getByRole("button", { name: "설정 저장", exact: true })).toBeEnabled();
   } finally {
     await ownerContext.close();
   }
@@ -334,20 +398,149 @@ test("should display only the approved automatic receipt and echo mode only on a
         response.url().endsWith("/api/runtime-settings/select-runtime") &&
         response.request().method() === "POST",
     );
-    await form.getByRole("button", { name: "모델 선택 확인", exact: true }).click();
-    check(!Object.hasOwn((await selection).request().postDataJSON(), "readMode"));
     await form.getByLabel("공개 세션 별칭", { exact: true }).fill("자동 탐색 AI");
     const apply = owner.waitForResponse(
       (response) =>
         response.url().endsWith("/api/runtime-settings/apply") &&
         response.request().method() === "POST",
     );
-    await form.getByRole("button", { name: "PC에 설정 적용", exact: true }).click();
+    await form.getByRole("button", { name: "설정 저장", exact: true }).click();
+    check(!Object.hasOwn((await selection).request().postDataJSON(), "readMode"));
     check((await apply).request().postDataJSON().readMode === "AUTO_CODE");
     const applied = await broker<{ state: string }>("drive-apply", { scene: scene.id });
     check(applied.state === "APPLIED");
     await owner.reload();
     await expect(settings(owner)).toContainText("필요한 코드 자동 탐색");
+  } finally {
+    await ownerContext.close();
+  }
+});
+
+test("should show native phase hints and finish one save without implying AI readiness", async ({
+  browser,
+}, info) => {
+  const scene = await broker<Scene>("setup", {
+    viewport: info.project.name.includes("mobile") ? "mobile" : "desktop",
+    scenario: "guided",
+  });
+  const ownerContext = await context(browser, info);
+  try {
+    const owner = await ownerContext.newPage();
+    await login(owner, scene, "owner");
+    await owner.goto("/app/connections");
+    const form = settings(owner),
+      actions: string[] = [];
+    owner.on("request", (request) => {
+      if (/\/runtime-settings\/(select-runtime|apply)$/.test(request.url()))
+        actions.push(request.url().split("/").at(-1)!);
+    });
+    await form.getByRole("combobox", { name: "AI 프로그램", exact: true }).selectOption("claude");
+    await fixedStep("guided-folder-request", async () => {
+      const requested = owner.waitForResponse(
+        (response) =>
+          response.url().endsWith("/api/runtime-settings/select-folder") &&
+          response.request().method() === "POST",
+      );
+      await form.getByRole("button", { name: "Mac에서 폴더 선택", exact: true }).click();
+      const response = await requested;
+      check(
+        response.status() === 200 && (await response.json()).data.operation.state === "REQUESTED",
+      );
+      await expect(form).toContainText("PC 확인 기다림");
+    });
+    await fixedStep("guided-folder-report", async () => {
+      await broker("report-setup", { scene: scene.id, stage: "FOLDER_SELECTION", reason: null });
+      await expect(form.getByLabel("현재 연결 진행", { exact: true })).toContainText(
+        "Mac에서 폴더를 선택하세요",
+      );
+    });
+    await fixedStep("guided-sharing-report", async () => {
+      await broker("report-setup", {
+        scene: scene.id,
+        stage: "SHARING_CONFIRMATION",
+        reason: "SHARING_UNCONFIRMED",
+      });
+      await expect(form.getByLabel("현재 연결 진행", { exact: true })).toContainText(
+        "공유 확인이 완료되지 않았습니다",
+      );
+    });
+    await fixedStep("guided-model-report", async () => {
+      await broker("report-setup", { scene: scene.id, stage: "MODEL_DISCOVERY", reason: null });
+      await expect(form.getByLabel("현재 연결 진행", { exact: true })).toContainText(
+        "사용 가능한 모델 확인 중",
+      );
+    });
+    await fixedStep("guided-failure-report", async () => {
+      await broker("report-setup", {
+        scene: scene.id,
+        stage: "FAILED",
+        reason: "PROVIDER_UNAVAILABLE",
+      });
+      await expect(form.getByLabel("현재 연결 진행", { exact: true })).toContainText(
+        "AI 프로그램 준비에 실패했습니다",
+      );
+    });
+    await broker("drive-folder", { scene: scene.id });
+    await expect(form.getByRole("combobox", { name: "모델", exact: true })).toBeVisible();
+    await form.getByLabel("공개 세션 별칭", { exact: true }).fill("한 번 저장 AI");
+    await form.getByRole("button", { name: "설정 저장", exact: true }).click();
+    await expect.poll(() => actions).toEqual(["select-runtime", "apply"]);
+    await broker("drive-apply", { scene: scene.id });
+    await expect(form.getByLabel("PC에 적용된 설정", { exact: true })).toContainText(
+      "한 번 저장 AI",
+    );
+    await expect(form.getByLabel("PC에 적용된 설정", { exact: true })).toContainText(
+      "AI 응답 준비는 AI 채팅방",
+    );
+    expect(
+      await owner.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth),
+    ).toBe(true);
+  } finally {
+    await ownerContext.close();
+  }
+});
+test("should observe lost selection and require explicit save continue after reload", async ({
+  browser,
+}, info) => {
+  const scene = await broker<Scene>("setup", {
+    viewport: info.project.name.includes("mobile") ? "mobile" : "desktop",
+    scenario: "lost-save",
+  });
+  const ownerContext = await context(browser, info);
+  try {
+    const owner = await ownerContext.newPage();
+    await login(owner, scene, "owner");
+    await owner.goto("/app/connections");
+    const form = await folder(owner, scene, "claude");
+    let applies = 0;
+    owner.on("request", (r) => {
+      if (r.url().endsWith("/runtime-settings/apply")) applies++;
+    });
+    await owner.route("**/api/runtime-settings/select-runtime", async (route) => {
+      const body = route.request().postDataJSON();
+      await broker("record-intent", {
+        scene: scene.id,
+        actor: "owner",
+        action: "select-runtime",
+        operationId: body.operationId,
+        deviceId: scene.deviceId,
+      });
+      await route.fetch();
+      await route.abort("failed");
+    });
+    await form.getByLabel("공개 세션 별칭", { exact: true }).fill("응답 확인 AI");
+    await form.getByRole("button", { name: "설정 저장", exact: true }).click();
+    await expect(form.getByRole("button", { name: "설정 저장", exact: true })).toHaveText(
+      "저장 계속",
+    );
+    expect(applies).toBe(0);
+    await owner.reload();
+    await expect(
+      settings(owner).getByRole("button", { name: "설정 저장", exact: true }),
+    ).toHaveText("저장 계속");
+    expect(applies).toBe(0);
+    await settings(owner).getByRole("button", { name: "설정 저장", exact: true }).click();
+    await expect.poll(() => applies).toBe(1);
   } finally {
     await ownerContext.close();
   }

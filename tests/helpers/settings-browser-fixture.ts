@@ -5,6 +5,13 @@ import { timingSafeEqual, randomUUID } from "node:crypto";
 import { pathToFileURL } from "node:url";
 import { WorkflowFixture } from "./workflow-fixture.js";
 import { ClaudeProductFixture } from "./claude-product-fixture.js";
+import { SettingsClient } from "../../packages/local-connector/src/settings/client.ts";
+import {
+  setupStages,
+  setupReasons,
+  type SetupStage,
+  type SetupReason,
+} from "../../packages/local-connector/src/settings/setup-contracts.ts";
 import { secret } from "./device-binding-fixture.js";
 import { assertOwnedStack, ensure, productEnvironment } from "./local-access-stack.js";
 import { authBrowserChildEnvironment } from "./auth-browser-artifact-policy.js";
@@ -38,6 +45,14 @@ export async function runSettingsBrowserParent() {
       res.writeHead(403).end();
       return;
     }
+    let diagnosticStage:
+      | "VALIDATE_REQUEST"
+      | "OBSERVATION_VALIDATE"
+      | "OBSERVATION_LIST"
+      | "OBSERVATION_INSPECT"
+      | "OBSERVATION_REPORT"
+      | "CANCEL_MANAGER"
+      | "FOLDER_MANAGER" = "VALIDATE_REQUEST";
     try {
       await assertOwnedStack(workflow.stack.config);
       let raw = "";
@@ -51,11 +66,16 @@ export async function runSettingsBrowserParent() {
         exact(input, ["viewport", "scenario"]);
         ensure(
           ["desktop", "mobile"].includes(String(input.viewport)) &&
-            ["answer", "cancel", "stale", "automatic"].includes(String(input.scenario)),
+            ["answer", "cancel", "stale", "automatic", "guided", "lost-save"].includes(
+              String(input.scenario),
+            ),
           "Unknown fixed browser scene",
         );
         const sceneName = `${input.viewport}-${input.scenario}`;
-        ensure(!sceneNames.has(sceneName) && sceneNames.size < 8, "Browser scene already reserved");
+        ensure(
+          !sceneNames.has(sceneName) && sceneNames.size < 12,
+          "Browser scene already reserved",
+        );
         sceneNames.add(sceneName);
         const id = randomUUID(),
           fixture = await ClaudeProductFixture.open(workflow, `browser-${fixtures.size}`);
@@ -86,6 +106,42 @@ export async function runSettingsBrowserParent() {
           exact(input, ["scene", "actor"]);
           ensure(input.actor === "owner" || input.actor === "requester", "Unknown browser actor");
           data = workflow.stack.entryForBrowser(fixture.scene[input.actor]);
+        } else if (req.url === "/report-setup") {
+          diagnosticStage = "OBSERVATION_VALIDATE";
+          exact(input, ["scene", "stage", "reason"]);
+          ensure(
+            setupStages.includes(input.stage as SetupStage) &&
+              (input.reason === null || setupReasons.includes(input.reason as SetupReason)),
+            "Unknown public observation",
+          );
+          diagnosticStage = "OBSERVATION_LIST";
+          const current = fixture.settings.accepted(
+            await fixture.human(fixture.scene.owner, "list", {
+              deviceId: fixture.scene.responder.deviceId!,
+            }),
+          );
+          ensure(current.operation, "No owned current settings operation");
+          const identity = {
+            deviceId: current.deviceId,
+            operationId: current.operation.operationId,
+            configRevision: current.operation.expectedConfigRevision,
+          };
+          const client = new SettingsClient(workflow.stack.config.app);
+          const secret = fixture.scene.responder.credential!;
+          diagnosticStage = "OBSERVATION_INSPECT";
+          const last = await client.observe("settings-inspect", identity, secret);
+          diagnosticStage = "OBSERVATION_REPORT";
+          await client.observe(
+            "settings-report",
+            {
+              ...identity,
+              sequence: last.sequence + 1,
+              stage: input.stage as SetupStage,
+              reason: input.reason as SetupReason | null,
+            },
+            secret,
+          );
+          data = {};
         } else if (req.url === "/record-intent") {
           exact(input, ["scene", "actor", "action", "operationId", "deviceId"]);
           ensure(input.actor === "owner" || input.actor === "requester", "Unknown browser actor");
@@ -127,6 +183,7 @@ export async function runSettingsBrowserParent() {
           ensure(count < limit, "Owned browser action limit");
           actionCounts.set(countKey, count + 1);
           if (req.url === "/drive-folder" || req.url === "/drive-cancel") {
+            diagnosticStage = req.url === "/drive-cancel" ? "CANCEL_MANAGER" : "FOLDER_MANAGER";
             const status = await fixture.driveFolder();
             data = { state: status.state, ready: status.ready };
           } else if (req.url === "/drive-apply") {
@@ -175,6 +232,7 @@ export async function runSettingsBrowserParent() {
       res.setHeader("Content-Type", "application/json");
       res.end(JSON.stringify(data));
     } catch {
+      process.stderr.write(`SETTINGS_BROKER_CHECK ${diagnosticStage}\n`);
       res
         .writeHead(500)
         .end('{"error":"Owned settings broker action failed; private diagnostics withheld"}');
@@ -182,6 +240,13 @@ export async function runSettingsBrowserParent() {
   });
   const failures: Error[] = [];
   try {
+    const installed = await workflow.stack.db.query(
+      "select to_regprocedure('public.connection_setup_device(text,jsonb,text)') is not null installed",
+    );
+    ensure(
+      installed.rows[0].installed,
+      "Parent must explicitly install SQL021 on the isolated browser stack",
+    );
     await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
     const child = spawn(
       process.execPath,

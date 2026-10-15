@@ -102,6 +102,9 @@ export function ConnectionManager({
   const pendingFragment = useRef<{ hash: string } | null>(null);
   const approvedPairings = useRef(new Set<string>());
   const pendingRegistration = useRef<{
+    kind: "registration" | "communication";
+    communicationDeviceId: string | null;
+    lastSeen: Map<string, string | null>;
     roomId: string;
     deviceIds: Set<string>;
     deadline: number;
@@ -110,6 +113,7 @@ export function ConnectionManager({
   const settingsEntryHandled = useRef(false);
   const approvalSection = useRef<HTMLElement>(null);
   const pendingApprovalFocus = useRef(false);
+  const [showRecords, setShowRecords] = useState(false);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<ConnectionErrorCode | null>(null);
   const [notice, setNotice] = useState("");
@@ -157,7 +161,6 @@ export function ConnectionManager({
         if (confirmation.current) confirmation.current.checked = false;
         if (pairing) {
           setRoomId(pairing.roomId);
-          setSettingsDeviceId("");
           pendingApprovalFocus.current = true;
         }
         setPairingCode(pairing?.code ?? "");
@@ -182,7 +185,7 @@ export function ConnectionManager({
       setNow(time);
       const pending = pendingRegistration.current;
       if (!pending) return;
-      const registered = devices.some(
+      const registeredDevices = devices.filter(
         (device) =>
           device.roomId === pending.roomId &&
           !pending.deviceIds.has(device.deviceId) &&
@@ -190,17 +193,45 @@ export function ConnectionManager({
           device.expiresAt !== null &&
           Date.parse(device.expiresAt) > time,
       );
-      if (registered || time >= pending.deadline) {
+      const registered = registeredDevices.length > 0;
+      // A heartbeat recheck is independent of where the copied command actually runs.
+      const communication =
+        pending.kind === "communication" &&
+        devices.some(
+          (device) =>
+            device.roomId === pending.roomId &&
+            device.deviceId === pending.communicationDeviceId &&
+            device.state === "active" &&
+            device.expiresAt !== null &&
+            Date.parse(device.expiresAt) > time &&
+            device.lastSeenAt !== null &&
+            pending.lastSeen.has(device.deviceId) &&
+            Date.parse(device.lastSeenAt) >
+              Date.parse(pending.lastSeen.get(device.deviceId) ?? "1970-01-01"),
+        );
+      if (
+        registeredDevices.length === 1 &&
+        !devices.some(
+          (device) =>
+            device.deviceId === settingsDeviceId &&
+            device.state === "active" &&
+            device.roomId === pending.roomId &&
+            device.expiresAt !== null &&
+            Date.parse(device.expiresAt) > time,
+        )
+      )
+        setSettingsDeviceId(registeredDevices[0].deviceId);
+      if (registered || communication || time >= pending.deadline) {
         pendingRegistration.current = null;
         setRegistrationRoomId(null);
-        if (!registered)
+        if (pending.kind === "registration" && !registered)
           setNotice(
-            "기기 등록을 확인하지 못했습니다. 터미널 상태를 확인한 뒤 연결 명령을 다시 실행하세요.",
+            "새 기기 등록 결과가 아직 도착하지 않았습니다. 기존 기기의 등록·설정은 유지됩니다. 승인한 연결의 터미널 상태를 확인하세요.",
           );
       } else if (document.visibilityState === "visible") router.refresh();
-    }, 5000);
+    }, 2500);
     return () => clearInterval(timer);
-  }, [devices, router]);
+  }, [devices, router, settingsDeviceId]);
   const availableDevices = devices.filter(
     (device) =>
       device.state === "active" &&
@@ -209,13 +240,16 @@ export function ConnectionManager({
       Date.parse(device.expiresAt) > now,
   );
   const settingsDevice =
-    availableDevices.find((device) => device.deviceId === settingsDeviceId) ?? availableDevices[0];
+    availableDevices.find((device) => device.deviceId === settingsDeviceId) ??
+    (availableDevices.length === 1 ? availableDevices[0] : undefined);
   const recent =
     !!settingsDevice &&
     connectionSnapshot({ devices: [settingsDevice], rooms }, new Date(now).toISOString()).state ===
       "connected";
   const awaitingRegistration = registrationRoomId === roomId;
   function changeRoom(value: string) {
+    pendingRegistration.current = null;
+    setRegistrationRoomId(null);
     setRoomId(value);
     setSettingsDeviceId("");
     setPairingCode("");
@@ -279,12 +313,14 @@ export function ConnectionManager({
     ) {
       approvedPairings.current.add(`${room.roomId}:${String(fields.get("code"))}`);
       pendingRegistration.current = {
+        kind: "registration",
+        communicationDeviceId: null,
+        lastSeen: new Map(devices.map((device) => [device.deviceId, device.lastSeenAt])),
         roomId: room.roomId,
         deviceIds: new Set(devices.map((device) => device.deviceId)),
         deadline: Date.now() + 5 * 60 * 1000,
       };
       setRegistrationRoomId(room.roomId);
-      setSettingsDeviceId("");
       form.reset();
       setPairingCode("");
     }
@@ -340,6 +376,9 @@ export function ConnectionManager({
                   disabled={busy}
                   onChange={(event) => setSettingsDeviceId(event.target.value)}
                 >
+                  {availableDevices.length > 1 && !settingsDevice && (
+                    <option value="">기기를 선택하세요</option>
+                  )}
                   {availableDevices.map((device) => (
                     <option key={device.deviceId} value={device.deviceId}>
                       {device.deviceAlias}
@@ -349,7 +388,12 @@ export function ConnectionManager({
               </label>
             )}
           </div>
-          <section className="grid gap-3 rounded-xl border p-4" aria-label="Mac 연결 단계">
+          <details
+            open={!settingsDevice || !!pairingCode || awaitingRegistration}
+            className="grid gap-3 rounded-xl border p-4"
+            aria-label="Mac 연결 단계"
+          >
+            <summary className="cursor-pointer text-sm">Mac 연결</summary>
             <div className="flex flex-wrap items-center justify-between gap-2">
               <h2 className="font-semibold">1. Mac 연결</h2>
               <Button
@@ -368,7 +412,7 @@ export function ConnectionManager({
                 : awaitingRegistration
                   ? "다음: 실행 중인 터미널에서 내 계정과 방을 확인하고 yes를 입력하세요."
                   : recent
-                    ? "Mac의 최근 통신이 확인되었습니다. 아래에서 AI를 설정하세요."
+                    ? "선택한 기기의 최근 통신이 확인되었습니다. 명령의 시작 보고와 별도로 아래에서 AI를 설정하세요."
                     : "최근 통신을 확인하지 못했습니다. 다음: Mac에서 연결 명령을 실행하고 이 화면을 새로 확인하세요."}
             </p>
             {!recent && settingsDevice?.lastSeenAt && (
@@ -393,6 +437,21 @@ export function ConnectionManager({
                 prominent={!recent && !pairingCode && !awaitingRegistration}
                 deviceAliasHint={settingsDevice?.deviceAlias}
                 deviceIdHint={settingsDevice?.deviceId}
+                onLaunch={() => {
+                  setNotice("");
+                  if (registrationRoomId !== roomId)
+                    pendingRegistration.current = {
+                      kind: "communication",
+                      communicationDeviceId: settingsDevice?.deviceId ?? null,
+                      lastSeen: new Map(
+                        devices.map((device) => [device.deviceId, device.lastSeenAt]),
+                      ),
+                      roomId,
+                      deviceIds: new Set(devices.map((device) => device.deviceId)),
+                      deadline: Date.now() + 5 * 60 * 1000,
+                    };
+                  router.refresh();
+                }}
               />
             </details>
             <details open={!!pairingCode} className="text-sm" aria-label="기기 승인 안내">
@@ -451,7 +510,7 @@ export function ConnectionManager({
                 실행하세요. 같은 프로필로 manage를 실행하면 아래 AI 설정을 사용할 수 있습니다.
               </p>
             </details>
-          </section>
+          </details>
           <section
             id="ai-settings"
             ref={settingsSection}
@@ -459,11 +518,11 @@ export function ConnectionManager({
             className="grid gap-3 rounded-xl border p-4"
             aria-label="본인 기기 AI 설정"
           >
-            <h2 className="font-semibold">2. AI와 폴더 선택</h2>
+            <h2 className="font-semibold">AI 설정</h2>
             <p className="text-sm text-neutral-600">
               Claude 또는 Codex를 고르고 Mac에서 폴더를 확인하세요.
             </p>
-            {availableDevices.length ? (
+            {settingsDevice ? (
               <>
                 {settingsDevice && (
                   <RuntimeSettingsForm
@@ -479,8 +538,9 @@ export function ConnectionManager({
               </>
             ) : (
               <p className="text-sm text-neutral-600">
-                Mac 연결과 기기 등록을 마치면 AI와 폴더를 선택할 수 있습니다. 먼저 1단계를
-                완료하세요.
+                {availableDevices.length > 1
+                  ? "위에서 설정할 본인 기기를 선택하세요. 연결 명령은 실행하는 Mac의 저장 연결을 사용합니다."
+                  : "Mac 연결과 기기 등록을 마치면 AI와 폴더를 선택할 수 있습니다."}
               </p>
             )}
             {roomId && (
@@ -489,14 +549,6 @@ export function ConnectionManager({
               </Link>
             )}
           </section>
-          {!settingsDevice && (
-            <section className={styles.panel} aria-label="모델 선택과 채팅 시작">
-              <h2 className="font-semibold">3. 모델 선택과 채팅 시작</h2>
-              <p className="text-sm text-neutral-600">
-                AI와 폴더를 확인한 뒤 모델을 선택하고 설정을 적용하세요.
-              </p>
-            </section>
-          )}
           {error && (
             <p role="alert" aria-label="기기 연결 오류" tabIndex={-1} ref={alert}>
               {messages[error]}
@@ -510,7 +562,10 @@ export function ConnectionManager({
             </p>
           )}
           <details className={styles.panel}>
-            <summary className="cursor-pointer text-sm">내 연결 관리</summary>
+            <summary className="cursor-pointer text-sm">연결 문제 해결</summary>
+            <Button variant="outline" onClick={() => setShowRecords(!showRecords)}>
+              연결 기록 확인
+            </Button>
             {currentDevices.length ? (
               <ul className={styles.list}>
                 {currentDevices.map((device) => (
@@ -526,9 +581,9 @@ export function ConnectionManager({
               <p>연결된 기기가 없습니다. 로컬 프로그램에서 새 코드를 만들고 승인하세요.</p>
             )}
           </details>
-          {removedDevices.length > 0 && (
+          {showRecords && removedDevices.length > 0 && (
             <details className={styles.panel}>
-              <summary className="cursor-pointer text-sm">이전 연결 기록</summary>
+              <summary className="cursor-pointer text-sm">연결 기록 확인</summary>
               <ul className={styles.list}>
                 {removedDevices.map((device) => (
                   <ConnectionCard

@@ -514,5 +514,45 @@ test("should put executable Mac connection before unavailable AI controls for a 
   const refresh = nodes(tree).find((node) => node.props["aria-label"] === "연결 상태 새로 확인")!;
   assert.equal(refresh.props.disabled, undefined);
   (refresh.props.onClick as () => void)();
-  assert.ok(nodes(tree).find((node) => node.props["aria-label"] === "모델 선택과 채팅 시작"));
+  assert.equal(
+    nodes(tree).find((node) => node.props["aria-label"] === "모델 선택과 채팅 시작"),
+    undefined,
+  );
+});
+
+test("should hide removed records by default and require explicit selection among multiple devices", () => {
+  const device = (deviceId: string, state: string) => ({
+    deviceId,
+    deviceAlias: "검사 Mac",
+    roomId: writableId,
+    organizationId,
+    state,
+    lastSeenAt: null,
+    expiresAt: new Date(Date.now() + 3600000).toISOString(),
+  });
+  const tree = manager({
+    devices: [
+      device(organizationId, "removed"),
+      device(writableId, "active"),
+      device(observerId, "active"),
+    ],
+  });
+  assert.equal(nodes(tree).filter((node) => node.type === "settings-form").length, 0);
+  assert.equal(
+    nodes(tree).filter(
+      (node) => node.type === "select" && node.props["aria-label"] === "설정할 본인 기기",
+    )[0].props.value,
+    "",
+  );
+  assert.equal(
+    nodes(tree).some(
+      (node) =>
+        node.type === "summary" &&
+        (node.props.children === "이전 연결 기록" || node.props.children === "연결 기록 확인"),
+    ),
+    false,
+  );
+  assert.ok(
+    nodes(tree).some((node) => node.type === "button" && node.props.children === "연결 기록 확인"),
+  );
 });

@@ -202,3 +202,30 @@ test("should consume only a valid fragment for an accessible room", () => {
   ])
     assert.equal(consumeConnectionFragment(hash, [{ roomId }]), null);
 });
+
+test("should keep short launch length invariant across recovery generations", async () => {
+  let selection = await readConnectionSelection(null, "https://example.com", userId, roomId);
+  const lengths: number[] = [];
+  for (let n = 0; n <= 32; n++) {
+    if ([0, 1, 10, 32].includes(n)) {
+      const command = await localConnectionCommand({
+        origin: "https://example.com",
+        userId,
+        roomId,
+        organizationId,
+        deviceAlias: "내 Mac",
+        manifest: manifest(),
+        selection,
+        launch: { key: "c".repeat(64), payloadHash: "d".repeat(64) },
+      });
+      lengths.push(command.length);
+      assert.ok(!command.includes(selection.baseProfile));
+    }
+    if (n < 32)
+      selection = await nextConnectionSelection(
+        selection,
+        `12345678-1234-4123-8123-${String(n).padStart(12, "0")}`,
+      );
+  }
+  assert.equal(new Set(lengths).size, 1);
+});

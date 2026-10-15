@@ -12,6 +12,7 @@ type Features = {
   answerSources: boolean;
   sevenDayCredentials: boolean;
   currentRepositoryGit: boolean;
+  connectionSetup: boolean;
 };
 type Execute = (args: string[], input?: string) => Promise<string>;
 type Result = { status: string; features: Features; modelInputs: number; migrations?: string[] };
@@ -22,6 +23,7 @@ const missing: Features = {
   answerSources: false,
   sevenDayCredentials: false,
   currentRepositoryGit: false,
+  connectionSetup: false,
 };
 const present: Features = {
   aiSettings: true,
@@ -30,6 +32,7 @@ const present: Features = {
   answerSources: true,
   sevenDayCredentials: true,
   currentRepositoryGit: true,
+  connectionSetup: true,
 };
 
 type CatalogState = {
@@ -104,6 +107,7 @@ const migrationNames = [
   "20261009001700-runtime-model-display-names.sql",
   "20261012001800-seven-day-device-credentials.sql",
   "20261014002000-current-repository-git-report.sql",
+  "20261015002100-connection-setup-observation.sql",
 ];
 
 async function fixture(t: TestContext) {
@@ -134,6 +138,9 @@ async function fixture(t: TestContext) {
     sourceSummaryAfter: { ...fixedSourceSummary },
     commitBindingBefore: undefined as CommitBindingState | undefined,
     commitBindingAfter: { ...fixedCommitBinding },
+    setupBefore: true,
+    setupAfter: true,
+    setupPartial: false,
     gitReportBefore: true,
     gitReportAfter: true,
     gitReportPartial: false,
@@ -177,6 +184,9 @@ async function fixture(t: TestContext) {
                 (f.applied ? f.gitReportAfter : f.before.aiSettings && f.gitReportBefore),
             }
           : {}),
+        setupAbsent: !f.setupPartial && !f.applied && (!f.before.aiSettings || !f.setupBefore),
+        setupFixed:
+          !f.setupPartial && (f.applied ? f.setupAfter : f.before.aiSettings && f.setupBefore),
         catalogPrevious: false,
         ...(f.applied
           ? f.catalogAfter
@@ -869,7 +879,7 @@ test("should add only the current repository Git migration to a corrected stack 
   f.gitReportBefore = false;
   const result = await f.run(true, f.execute);
   assert.equal(result.status, "APPLIED");
-  assert.deepEqual(result.migrations, [migrationNames.at(-1)]);
+  assert.deepEqual(result.migrations, [migrationNames[9]]);
   assert.equal(result.features.currentRepositoryGit, true);
   const writes = f.calls.filter((c) => c.input.startsWith("BEGIN;"));
   assert.equal(writes.length, 1);
@@ -899,4 +909,22 @@ test("should refuse partial Git installation and failed Git feature confirmation
       );
     });
   }
+});
+
+test("should apply only missing connection setup observations after the existing upgrade", async (t) => {
+  const f = await fixture(t);
+  f.before = { ...present, connectionSetup: false };
+  f.setupBefore = false;
+  f.catalogBefore = { ...fixedCatalog };
+  f.sourceSummaryBefore = { ...fixedSourceSummary };
+  f.commitBindingBefore = { ...fixedCommitBinding };
+  const result = await f.run(true, f.execute);
+  assert.deepEqual(result.migrations, ["20261015002100-connection-setup-observation.sql"]);
+});
+test("should reject partial connection setup installation", async (t) => {
+  const f = await fixture(t);
+  f.before = { ...present, connectionSetup: false };
+  f.setupPartial = true;
+  await assert.rejects(f.run(true, f.execute));
+  assert.equal(f.applied, false);
 });

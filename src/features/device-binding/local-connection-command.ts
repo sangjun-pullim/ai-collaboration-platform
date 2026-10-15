@@ -163,6 +163,7 @@ export async function localConnectionCommand(input: {
   deviceAlias: string;
   manifest: unknown;
   selection?: unknown;
+  launch?: { key: string; payloadHash: string };
 }): Promise<string> {
   const origin = connectionOrigin(input.origin);
   if (!isId(input.organizationId) || !isAlias(input.deviceAlias))
@@ -174,6 +175,8 @@ export async function localConnectionCommand(input: {
     input.userId,
     input.roomId,
   );
+  if (input.launch && (!isHash(input.launch.key) || !isHash(input.launch.payloadHash)))
+    throw new Error("INVALID_CONNECTION_LAUNCH");
   const generation = selection.chain.at(-1);
   const profile = generation?.profile ?? selection.baseProfile;
   // -p disables inherited shell functions/startup hooks without changing user IDs.
@@ -186,19 +189,27 @@ status=$(ulimit -f 128; /usr/bin/curl --disable --fail --silent --show-error --p
 [ "$(/usr/bin/wc -c < "$file")" -le 131072 ]
 digest=$(/usr/bin/shasum -a 256 "$file")
 [ "\${digest%% *}" = "$3" ]
-/bin/bash --noprofile --norc -p "$file" "$1" "$4" "$5" "$6" "$7"${generation ? ' "$8" "$9" "${10}"' : ""}`;
-  const args = [
-    origin,
-    manifest.bootstrap.path,
-    manifest.bootstrap.sha256,
-    profile,
-    input.deviceAlias,
-    input.organizationId,
-    input.roomId,
-    ...(generation
-      ? [generation.previousProfile, generation.recoveryId, JSON.stringify(selection)]
-      : []),
-  ];
+/bin/bash --noprofile --norc -p "$file" "$1" ${input.launch ? '--setup-ticket "$4" "$5"' : '"$4" "$5" "$6" "$7"' + (generation ? ' "$8" "$9" "${10}"' : "")}`;
+  const args = input.launch
+    ? [
+        origin,
+        manifest.bootstrap.path,
+        manifest.bootstrap.sha256,
+        input.launch.key,
+        input.launch.payloadHash,
+      ]
+    : [
+        origin,
+        manifest.bootstrap.path,
+        manifest.bootstrap.sha256,
+        profile,
+        input.deviceAlias,
+        input.organizationId,
+        input.roomId,
+        ...(generation
+          ? [generation.previousProfile, generation.recoveryId, JSON.stringify(selection)]
+          : []),
+      ];
   return `(builtin unset ${preloadVariables.join(" ")}; /bin/bash --noprofile --norc -p -c ${quote(launcher)} ai-collab ${args.map(quote).join(" ")})`;
 }
 

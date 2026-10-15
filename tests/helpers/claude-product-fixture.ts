@@ -554,11 +554,14 @@ export class ClaudeProductFixture {
   private currentLaunchContext?: OwnedContext;
   manager() {
     const fetcher: typeof fetch = async (url, init) => {
-      ensure(
-        String(url).startsWith(`${this.workflow.stack.config.app}/api/runtime-settings/`) &&
-          init?.method === "POST",
-        "Unexpected settings transport",
+      const settings = String(url).startsWith(
+        `${this.workflow.stack.config.app}/api/runtime-settings/`,
       );
+      const observation =
+        String(url).startsWith(`${this.workflow.stack.config.app}/api/connection-setup/`) &&
+        ["settings-inspect", "settings-report"].includes(String(url).split("/").at(-1)!);
+      ensure((settings || observation) && init?.method === "POST", "Unexpected settings transport");
+      if (observation) return fetch(url, init);
       const action = String(url).split("/").at(-1)!;
       await this.recordSettings(
         action,

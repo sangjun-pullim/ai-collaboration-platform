@@ -739,3 +739,31 @@ for (const labelled of [false, true]) {
     }
   });
 }
+
+test("should preserve the exact durable cancellation receipt across UNKNOWN delivery recovery", async () => {
+  const f = await fixture();
+  try {
+    const j = f.state.journal!;
+    j.phase = "CANCEL_INTENT";
+    j.receipt = f.receipt("CANCELLED");
+    await f.store.write(f.state);
+    const durable = structuredClone(j.receipt);
+    j.phase = "UNKNOWN";
+    j.reason = "UNAVAILABLE";
+    await f.store.write(f.state);
+    assert.deepEqual((await f.store.read())!.journal!.receipt, durable);
+    for (const state of ["FAILED", "UNKNOWN"] as const) {
+      const changed = structuredClone(f.state);
+      changed.journal!.receipt!.state = state;
+      await assert.rejects(() => f.store.write(changed), unsafe);
+    }
+    const changed = structuredClone(f.state);
+    changed.journal!.receipt!.sessionAlias = "Changed candidate";
+    await assert.rejects(() => f.store.write(changed), unsafe);
+    j.phase = "CANCELLED";
+    await f.store.write(f.state);
+    assert.deepEqual((await f.store.read())!.journal!.receipt, durable);
+  } finally {
+    await f.close();
+  }
+});

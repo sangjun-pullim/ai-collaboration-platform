@@ -43,7 +43,14 @@ function fixture(saved = new Map<string, string>(), extra: Record<string, unknow
     revision = 0,
     uuids = 0;
   let queued: (() => void)[] = [];
-  const faults = { read: false, write: false, preparing: undefined as Promise<void> | undefined };
+  const faults = {
+    clipboard: false,
+    lifetime: 1800000,
+    issue: undefined as Promise<void> | undefined,
+    read: false,
+    write: false,
+    preparing: undefined as Promise<void> | undefined,
+  };
   const storage = {
     getItem(key: string) {
       if (faults.read) throw Error("denied");
@@ -68,6 +75,7 @@ function fixture(saved = new Map<string, string>(), extra: Record<string, unknow
   runInNewContext(source, {
     exports,
     AbortController,
+    AbortSignal,
     TextDecoder,
     Uint8Array,
     setTimeout,
@@ -80,6 +88,7 @@ function fixture(saved = new Map<string, string>(), extra: Record<string, unknow
     navigator: {
       clipboard: {
         writeText: async (value: string) => {
+          if (faults.clipboard) throw new Error("clipboard unavailable");
           copies.push(value);
         },
       },
@@ -136,6 +145,21 @@ function fixture(saved = new Map<string, string>(), extra: Record<string, unknow
           ) => {
             await faults.preparing;
             return command.nextConnectionSelection(...args);
+          },
+        };
+      if (name === "../connection-setup/setup-status") return { SetupStatus: "setup-status" };
+      if (name === "../connection-setup/setup-controller")
+        return {
+          requestSetup: async (_action: string, body: { requestId: string }) => {
+            await faults.issue;
+            return {
+              requestId: body.requestId,
+              created: true,
+              reissueRequired: false,
+              expiresAt: new Date(Date.now() + faults.lifetime).toISOString(),
+              key: "c".repeat(64),
+              payloadHash: "d".repeat(64),
+            };
           },
         };
       if (name.endsWith("/button")) return { Button: "button" };
@@ -209,7 +233,7 @@ test("should create recovery only after explicit confirmation and reuse it acros
   const f = fixture();
   try {
     await f.settle();
-    assert.ok(f.value());
+    assert.equal(f.value(), "");
     assert.equal(f.uuids(), 0);
     await f.click("새 승인으로 다시 연결");
     assert.equal(f.value(), "");
@@ -218,11 +242,11 @@ test("should create recovery only after explicit confirmation and reuse it acros
     await f.choose();
     await f.click("새 승인 명령 준비");
     await f.settle();
+    await f.click("연결 명령 복사");
     const first = f.value();
     await f.click("연결 명령 복사");
-    await f.click("연결 명령 복사");
     assert.deepEqual(f.copies, [first, first]);
-    assert.equal(f.uuids(), 1);
+    assert.equal(f.uuids(), 2);
     const key = command.connectionSelectionKey(f.props.origin, userId, roomId);
     const selected = await command.readConnectionSelection(
       f.saved.get(key)!,
@@ -233,8 +257,10 @@ test("should create recovery only after explicit confirmation and reuse it acros
     const refreshed = fixture(f.saved);
     try {
       await refreshed.settle();
+      assert.equal(refreshed.value(), "");
+      await refreshed.click("연결 명령 복사");
       assert.equal(refreshed.value(), first);
-      assert.equal(refreshed.uuids(), 0);
+      assert.equal(refreshed.uuids(), 1);
     } finally {
       refreshed.close();
     }
@@ -297,6 +323,8 @@ for (const fault of ["read", "write", "malformed", "tabs", "preparing"] as const
       if (fault === "tabs") {
         await f.click("현재 선택 다시 확인");
         await f.settle();
+        assert.equal(f.value(), "");
+        await f.click("연결 명령 복사");
         assert.ok(f.value());
       }
     } finally {
@@ -313,26 +341,26 @@ test("should keep recovery selection isolated when the origin user or authorized
     await f.choose();
     await f.click("새 승인 명령 준비");
     await f.settle();
-    const recovered = f.value(),
-      original = [...f.saved.entries()];
+    await f.click("연결 명령 복사");
+    const original = [...f.saved.entries()];
     f.props.userId = "33333333-3333-4333-8333-333333333333";
     f.render();
     assert.equal(f.value(), "");
     await f.settle();
-    assert.notEqual(f.value(), recovered);
+    assert.equal(f.value(), "");
     f.props.origin = "https://other.example";
     f.render();
     assert.equal(f.value(), "");
     await f.settle();
-    assert.notEqual(f.value(), recovered);
+    assert.equal(f.value(), "");
     f.props.roomId = "44444444-4444-4444-8444-444444444444";
     f.props.rooms[0].roomId = f.props.roomId;
     f.render();
     assert.equal(f.value(), "");
     await f.settle();
-    assert.notEqual(f.value(), recovered);
+    assert.equal(f.value(), "");
     assert.deepEqual([...f.saved.entries()], original);
-    assert.equal(f.uuids(), 1);
+    assert.equal(f.uuids(), 2);
   } finally {
     f.close();
   }
@@ -355,13 +383,70 @@ test("should keep copy first and command identity stable when guidance becomes s
     )!;
     assert.ok(details);
     assert.equal(details.props.open, undefined);
+    await f.click("연결 명령 복사");
     const initial = f.value();
     (f.props as Record<string, unknown>).prominent = false;
     await f.settle();
     assert.equal(f.button("연결 명령 복사").props.variant, "outline");
     assert.equal(f.value(), initial);
     await f.click("연결 명령 복사");
-    assert.deepEqual(f.copies, [initial]);
+    assert.deepEqual(f.copies, [initial, initial]);
+  } finally {
+    f.close();
+  }
+});
+
+test("should discard an issue result after changing room and never persist its key", async () => {
+  const f = fixture();
+  try {
+    await f.settle();
+    let release!: () => void;
+    f.faults.issue = new Promise((resolve) => {
+      release = resolve;
+    });
+    const copying = (f.button("연결 명령 복사").props.onClick as () => Promise<void>)();
+    f.props.roomId = "44444444-4444-4444-8444-444444444444";
+    f.props.rooms[0].roomId = f.props.roomId;
+    f.render();
+    release();
+    await copying;
+    await f.settle();
+    assert.equal(f.copies.length, 0);
+    assert.equal(f.value(), "");
+    assert.equal(f.saved.size, 0);
+  } finally {
+    f.close();
+  }
+});
+test("should retain direct copy after clipboard rejection without making recovery", async () => {
+  const f = fixture();
+  try {
+    await f.settle();
+    f.faults.clipboard = true;
+    await f.click("연결 명령 복사");
+    assert.ok(f.value());
+    assert.equal(f.saved.size, 0);
+    assert.equal(f.copies.length, 0);
+  } finally {
+    f.close();
+  }
+});
+
+test("should renew expired launch tracking without changing the saved recovery generation", async () => {
+  const f = fixture();
+  try {
+    await f.settle();
+    f.faults.lifetime = -1;
+    await f.click("연결 명령 복사");
+    await f.settle();
+    assert.ok(f.button("새 명령 복사"));
+    const issued = f.uuids();
+    f.faults.lifetime = 1800000;
+    await f.click("새 명령 복사");
+    await f.settle();
+    assert.equal(f.uuids(), issued + 1);
+    assert.equal(f.saved.size, 0);
+    assert.equal(f.copies.length, 2);
   } finally {
     f.close();
   }

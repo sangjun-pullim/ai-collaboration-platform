@@ -1,3 +1,4 @@
+import type { SetupInspection } from "../connection-setup/setup-controller.ts";
 import {
   SettingsError,
   isId,
@@ -26,6 +27,12 @@ export type SettingsView = {
   busy: HumanAction | null;
   error: ErrorCode | null;
   reservedOperationId: string | null;
+  setupInspection?: SetupInspection | null;
+  setupError?: boolean;
+  setupCheckedAt?: number;
+  pollManual?: boolean;
+  saveError?: ErrorCode | null;
+  applyUnconfirmed?: boolean;
 };
 
 export function confirmedCatalog(response: CurrentResponse | null): Capability | null {
@@ -68,10 +75,31 @@ export function selectionSaved(view: SettingsView): boolean {
 
 function released(response: CurrentResponse): boolean {
   const op = response.operation;
+  const receipt = op?.receipt;
+  if (
+    !op ||
+    !receipt ||
+    op.deviceId !== response.deviceId ||
+    receipt.operationId !== op.operationId
+  )
+    return false;
+  if (op.state === "CANCELLED" && receipt.state === "CANCELLED")
+    return (
+      receipt.configRevision === op.expectedConfigRevision &&
+      response.configRevision === op.expectedConfigRevision
+    );
+  const binding = response.currentBinding;
   return (
-    !!op &&
-    ((op.state === "APPLIED" && op.receipt?.state === "APPLIED") ||
-      (op.state === "CANCELLED" && op.receipt?.state === "CANCELLED"))
+    op.state === "APPLIED" &&
+    receipt.state === "APPLIED" &&
+    response.current &&
+    !!binding &&
+    receipt.configRevision === op.expectedConfigRevision + 1 &&
+    receipt.configRevision === response.configRevision &&
+    receipt.agentId === binding.agentId &&
+    receipt.workspaceId === binding.workspaceId &&
+    receipt.bindingEpoch === binding.bindingEpoch &&
+    receipt.runtime === binding.runtime
   );
 }
 
@@ -100,6 +128,10 @@ export class SettingsController {
     reservedOperationId: null,
   };
   private listeners = new Set<() => void>();
+  private saveInFlight = false;
+  private applyAttempts = new Set<string>();
+  private pollStartedAt = 0;
+  private visible = true;
   private active = false;
   private generation = 0;
   private pollInFlight = false;
@@ -114,6 +146,8 @@ export class SettingsController {
     private readonly request: SettingsRequest,
     private readonly interval = 2500,
     private readonly uuid: () => string = () => crypto.randomUUID(),
+    private readonly defaultAlias = "",
+    private readonly observe?: (signal: AbortSignal) => Promise<SetupInspection>,
   ) {}
 
   getSnapshot = () => this.view;
@@ -130,6 +164,7 @@ export class SettingsController {
   start() {
     if (this.active) return;
     this.active = true;
+    this.pollStartedAt = Date.now();
     this.generation++;
     this.update({ busy: null });
     this.schedule(0);
@@ -143,13 +178,32 @@ export class SettingsController {
     this.mutationAbort?.abort();
   }
 
+  setVisible(visible: boolean) {
+    this.visible = visible;
+    if (!visible) {
+      this.clearTimer();
+      this.pollAbort?.abort();
+    } else this.schedule(0);
+  }
+
   private clearTimer() {
     if (this.timer !== null) clearTimeout(this.timer);
     this.timer = null;
   }
 
   private schedule(delay = this.interval) {
-    if (!this.active || this.timer !== null || this.pollInFlight || this.view.busy) return;
+    if (this.active && Date.now() - this.pollStartedAt >= 300000) this.update({ pollManual: true });
+    if (this.view.response && !this.view.reservedOperationId && !this.view.busy) return;
+    if (
+      !this.active ||
+      !this.visible ||
+      Date.now() - this.pollStartedAt >= 300000 ||
+      this.timer !== null ||
+      this.pollInFlight ||
+      this.view.busy ||
+      this.saveInFlight
+    )
+      return;
     this.timer = setTimeout(() => {
       this.timer = null;
       void this.poll();
@@ -157,7 +211,8 @@ export class SettingsController {
   }
 
   async poll() {
-    if (!this.active || this.pollInFlight || this.view.busy) return;
+    if (!this.active || !this.visible || this.pollInFlight || this.view.busy || this.saveInFlight)
+      return;
     this.clearTimer();
     this.pollInFlight = true;
     const generation = this.generation;
@@ -167,7 +222,29 @@ export class SettingsController {
       const body: Body = { deviceId: this.deviceId };
       if (this.view.reservedOperationId) body.operationId = this.view.reservedOperationId;
       const response = await this.request("list", body, abort.signal);
-      if (this.active && generation === this.generation) this.adopt(response);
+      if (this.active && generation === this.generation && !abort.signal.aborted) {
+        this.adopt(response);
+        // Diagnostic observation follows the authoritative list, never overlaps it.
+        if (this.observe && this.view.reservedOperationId) {
+          try {
+            const setupInspection = await this.observe(abort.signal);
+            if (this.active && generation === this.generation && !abort.signal.aborted) {
+              if (
+                setupInspection.device?.deviceId !== this.deviceId ||
+                (setupInspection.settings &&
+                  (setupInspection.settings.operationId !==
+                    this.view.response?.operation?.operationId ||
+                    setupInspection.settings.configRevision !== this.view.response?.configRevision))
+              )
+                throw new SettingsError("CONFLICT");
+              this.update({ setupInspection, setupError: false, setupCheckedAt: Date.now() });
+            }
+          } catch {
+            if (this.active && generation === this.generation && !abort.signal.aborted)
+              this.update({ setupError: true });
+          }
+        }
+      }
     } catch (error) {
       if (this.active && generation === this.generation) this.failure(error);
     } finally {
@@ -225,6 +302,9 @@ export class SettingsController {
     }
     const catalog = confirmedCatalog(response);
     const previous = this.view.response;
+    const newOperation =
+      !!response.operation && response.operation.operationId !== previous?.operation?.operationId;
+    const clearSave = released(response) || newOperation;
     const sameSelection =
       previous?.operation?.operationId === response.operation?.operationId &&
       previous?.configRevision === response.configRevision &&
@@ -242,11 +322,14 @@ export class SettingsController {
       sessionAlias:
         typeof response.operation?.requested.sessionAlias === "string"
           ? response.operation.requested.sessionAlias
-          : this.view.sessionAlias,
+          : this.view.sessionAlias || response.applied?.sessionAlias || this.defaultAlias,
       reservedOperationId: released(response)
         ? null
         : (response.operation?.operationId ?? this.view.reservedOperationId),
-      error: null,
+      ...(clearSave
+        ? { applyUnconfirmed: false, saveError: null, setupInspection: null, setupError: false }
+        : {}),
+      error: clearSave ? null : (this.view.saveError ?? null),
     });
   }
 
@@ -256,7 +339,7 @@ export class SettingsController {
   }
 
   setModel(model: string) {
-    if (this.view.busy || selectionSaved(this.view)) return;
+    if (this.view.busy || this.saveInFlight || selectionSaved(this.view)) return;
     const catalog = confirmedCatalog(this.view.response);
     const item = catalog?.models.find((item) => item.model === model);
     if (!catalog || !item) return;
@@ -271,7 +354,8 @@ export class SettingsController {
   }
 
   setEffort(effort: string) {
-    if (this.view.busy || selectionSaved(this.view) || !this.view.draft) return;
+    if (this.view.busy || this.saveInFlight || selectionSaved(this.view) || !this.view.draft)
+      return;
     const draft = { ...this.view.draft, effort };
     const catalog = confirmedCatalog(this.view.response);
     try {
@@ -282,26 +366,36 @@ export class SettingsController {
   }
 
   setSessionAlias(sessionAlias: string) {
-    if (this.view.busy || this.view.response?.operation?.state !== "LOCAL_CONFIRMATION") return;
-    this.update({ sessionAlias });
+    if (
+      this.view.busy ||
+      this.saveInFlight ||
+      this.view.response?.operation?.state !== "LOCAL_CONFIRMATION"
+    )
+      return;
+    this.update({
+      sessionAlias,
+      ...(!this.view.applyUnconfirmed ? { saveError: null, error: null } : {}),
+    });
   }
 
-  private async mutate(action: HumanAction, body: Body) {
-    if (!this.active || this.view.busy) return;
+  private async mutate(action: HumanAction, body: Body): Promise<boolean> {
+    if (!this.active || this.view.busy) return false;
     validateBody(action, body);
     this.generation++;
+    this.pollStartedAt = Date.now();
     this.clearTimer();
     this.pollAbort?.abort();
     const generation = this.generation;
     const abort = new AbortController();
     this.mutationAbort = abort;
-    this.update({ busy: action, error: null });
+    this.update({ busy: action, error: null, pollManual: false });
     let received = false;
     try {
       const response = await this.request(action, body, abort.signal);
       received = true;
       if (this.active && generation === this.generation)
         this.adopt(response, body.operationId as string);
+      return this.active && generation === this.generation;
     } catch (error) {
       if (this.active && generation === this.generation) {
         if (
@@ -321,6 +415,7 @@ export class SettingsController {
           this.update({ reservedOperationId: null });
         this.failure(error);
       }
+      return false;
     } finally {
       if (this.mutationAbort === abort) this.mutationAbort = null;
       if (this.active && generation === this.generation) {
@@ -349,7 +444,85 @@ export class SettingsController {
     });
   }
 
+  async save() {
+    const { response, draft, sessionAlias } = this.view;
+    const catalog = confirmedCatalog(response);
+    if (
+      !this.active ||
+      this.saveInFlight ||
+      this.view.busy ||
+      !response?.operation ||
+      !catalog ||
+      !draft ||
+      !sessionAlias.trim() ||
+      response.currentBinding === undefined ||
+      this.applyAttempts.has(response.operation.operationId)
+    )
+      return;
+    const identity = JSON.stringify([
+      this.deviceId,
+      response.operation.operationId,
+      response.configRevision,
+      catalog.snapshotHash,
+      response.currentBinding,
+      response.operation.receipt?.localRootReference,
+      response.operation.receipt?.repositoryAlias,
+    ]);
+    const intended = { ...draft };
+    const operationId = response.operation.operationId;
+    this.saveInFlight = true;
+    this.update({ saveError: null, applyUnconfirmed: false });
+    this.pollStartedAt = Date.now();
+    try {
+      validateSelection(intended, catalog);
+      // One explicit click owns both writes; an uncertain first result stops here.
+      if (!selectionSaved(this.view)) {
+        const selected = await this.mutate("select-runtime", {
+          ...intended,
+          operationId,
+          deviceId: this.deviceId,
+          expectedConfigRevision: response.configRevision,
+        });
+        if (!selected) {
+          this.update({ saveError: this.view.error });
+          return;
+        }
+      } else {
+        if (!(await this.mutate("list", { deviceId: this.deviceId, operationId }))) return;
+      }
+      const current = this.view.response;
+      const currentCatalog = confirmedCatalog(current);
+      const nextIdentity = JSON.stringify([
+        this.deviceId,
+        current?.operation?.operationId,
+        current?.configRevision,
+        currentCatalog?.snapshotHash,
+        current?.currentBinding,
+        current?.operation?.receipt?.localRootReference,
+        current?.operation?.receipt?.repositoryAlias,
+      ]);
+      if (
+        identity !== nextIdentity ||
+        !this.active ||
+        !selectionSaved(this.view) ||
+        JSON.stringify(this.view.draft) !== JSON.stringify(intended)
+      ) {
+        this.failure(new SettingsError("CONFLICT"));
+        return;
+      }
+      const generation = this.generation;
+      this.update({ sessionAlias });
+      if (generation === this.generation) await this.applySelection();
+    } catch (error) {
+      this.failure(error);
+    } finally {
+      this.saveInFlight = false;
+      this.schedule(0);
+    }
+  }
+
   async selectRuntime() {
+    if (this.saveInFlight) return;
     const { response, draft } = this.view;
     const catalog = confirmedCatalog(response);
     if (!response?.operation || !catalog || !draft || selectionSaved(this.view)) return;
@@ -367,6 +540,11 @@ export class SettingsController {
   }
 
   async apply() {
+    if (this.saveInFlight) return;
+    await this.applySelection();
+  }
+
+  private async applySelection() {
     const { response, draft, sessionAlias } = this.view;
     const receipt = response?.operation?.receipt;
     if (
@@ -374,11 +552,12 @@ export class SettingsController {
       !selectionSaved(this.view) ||
       !draft ||
       !receipt ||
-      response.currentBinding === undefined
+      response.currentBinding === undefined ||
+      this.applyAttempts.has(response.operation.operationId)
     )
       return;
     try {
-      await this.mutate("apply", {
+      const applyBody = {
         ...draft,
         operationId: response.operation.operationId,
         deviceId: this.deviceId,
@@ -388,13 +567,19 @@ export class SettingsController {
         sessionAlias,
         expectedEpoch: response.currentBinding?.bindingEpoch ?? null,
         ...(receipt.readMode === "AUTO_CODE" ? { readMode: receipt.readMode } : {}),
-      });
+      };
+      validateBody("apply", applyBody);
+      this.applyAttempts.add(response.operation.operationId);
+      if (!(await this.mutate("apply", applyBody)))
+        this.update({ saveError: this.view.error, applyUnconfirmed: true });
     } catch (error) {
       this.failure(error);
+      this.update({ saveError: this.view.error });
     }
   }
 
   async cancel() {
+    if (this.saveInFlight) return;
     const operationId = this.view.reservedOperationId;
     const op = this.view.response?.operation;
     if (

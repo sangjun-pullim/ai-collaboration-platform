@@ -51,6 +51,7 @@ async function fixture(t: TestContext) {
       answerSources: true,
       sevenDayCredentials: true,
       currentRepositoryGit: true,
+      connectionSetup: true,
     },
     status: {
       API_URL: "http://127.0.0.1:56321",
@@ -205,7 +206,7 @@ test("should resolve matching local public settings without forwarding inherited
 });
 
 test("should reject missing DB features before reading any gateway key", async (t) => {
-  for (const feature of ["aiSettings", "currentRepositoryGit"] as const) {
+  for (const feature of ["aiSettings", "currentRepositoryGit", "connectionSetup"] as const) {
     await t.test(feature, async (t) => {
       const f = await fixture(t);
       f.features[feature] = false;

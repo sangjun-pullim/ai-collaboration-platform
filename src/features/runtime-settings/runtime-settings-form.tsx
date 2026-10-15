@@ -6,6 +6,8 @@ import { Input } from "../../components/ui/input";
 import { Badge } from "../../components/ui/badge";
 import { requestSettings } from "./settings-client";
 import { validateSelection, type Capability, type ErrorCode, type State } from "./contracts";
+import { SetupProgress } from "../connection-setup/setup-status";
+import { parseInspection, requestSetup } from "../connection-setup/setup-controller";
 import { SettingsController, confirmedCatalog, selectionSaved } from "./settings-controller";
 
 const messages: Record<ErrorCode, string> = {
@@ -59,15 +61,41 @@ export function RuntimeSettingsForm({
   guidanceActive?: boolean;
   roomHref?: string;
 }) {
-  const controller = useMemo(() => new SettingsController(deviceId, requestSettings), [deviceId]);
+  const controller = useMemo(
+    () =>
+      new SettingsController(
+        deviceId,
+        requestSettings,
+        2500,
+        undefined,
+        deviceAlias,
+        roomHref
+          ? async (signal) =>
+              parseInspection(
+                await requestSetup(
+                  "inspect",
+                  { roomId: roomHref.split("/").at(-1)!, requestId: null, deviceId },
+                  signal,
+                ),
+              )
+          : undefined,
+      ),
+    [deviceId, deviceAlias, roomHref],
+  );
   const view = useSyncExternalStore(
     controller.subscribe,
     controller.getSnapshot,
     controller.getSnapshot,
   );
   useEffect(() => {
+    const changed = () => controller.setVisible(document.visibilityState === "visible");
+    changed();
     controller.start();
-    return () => controller.stop();
+    document.addEventListener("visibilitychange", changed);
+    return () => {
+      controller.stop();
+      document.removeEventListener("visibilitychange", changed);
+    };
   }, [controller]);
   const { response, draft, busy, reservedOperationId } = view;
   const operation = response?.operation;
@@ -136,8 +164,8 @@ export function RuntimeSettingsForm({
       operation?.state === "LOCAL_CONFIRMATION"
         ? "PC에서 모델 목록을 확인하지 못했습니다. 다음: 연결 터미널에서 설치 버전과 로그인 상태를 확인하고 이 요청을 취소하세요."
         : "다음: Mac의 폴더 선택 창에서 폴더와 공유 범위를 확인하세요. 연결 터미널을 열어 두세요.",
-    model: "다음: 3단계에서 모델과 추론 강도를 고르고 모델 선택을 확인하세요.",
-    apply: "다음: 공개 세션 별칭을 확인한 뒤 PC에 설정을 적용하세요.",
+    model: "모델·추론 강도·공개 세션 별칭을 확인하고 설정 저장을 누르세요.",
+    apply: "선택이 확인되었습니다. 공개 세션 별칭을 확인하고 저장 계속을 누르세요.",
     applied:
       "PC 설정 적용이 확인되었습니다. 다음: 채팅방에서 질문 대상을 선택하고 AI 응답 준비를 확인하세요.",
     folder: view.provider
@@ -176,7 +204,39 @@ export function RuntimeSettingsForm({
           role="status"
           className="space-y-2 rounded-md bg-neutral-50 p-3 text-sm"
         >
-          <p>{nextAction}</p>
+          {reservedOperationId ? (
+            <SetupProgress
+              embedded
+              inspection={
+                view.setupInspection ? { ...view.setupInspection, runtime: response } : null
+              }
+              now={view.setupCheckedAt}
+              error={view.setupError}
+              manual={view.pollManual}
+              fallback={
+                view.applyUnconfirmed
+                  ? "적용 요청 결과가 미확정입니다. 같은 요청의 상태를 다시 확인하세요. 자동으로 다시 적용하지 않습니다."
+                  : nextAction
+              }
+              onCheck={() => {
+                void controller.poll();
+              }}
+            />
+          ) : (
+            <>
+              <p>{nextAction}</p>
+              {(view.error || view.setupError || view.pollManual) && (
+                <Button variant="outline" onClick={() => controller.poll()}>
+                  상태 다시 확인
+                </Button>
+              )}
+            </>
+          )}
+          {view.error && (
+            <p role="alert" className="text-red-700">
+              {messages[view.error]}
+            </p>
+          )}
           {guidanceActive && connectionRecent && phase === "applied" && roomHref && (
             <a
               href={roomHref}
@@ -217,22 +277,13 @@ export function RuntimeSettingsForm({
           필요한 코드 자동 탐색 · 답과 근거 상대 경로/hash를 채팅 기록에 공유
         </p>
       )}
-      {view.error && (
-        <p role="alert" className="text-sm text-red-700">
-          {messages[view.error]}
-        </p>
-      )}
       {response && !response.current && (
         <p role="alert" className="text-sm text-amber-800">
           이전에 적용한 AI 연결이 현재 연결과 다릅니다. 자기 PC에서 연결 상태를 확인하세요.
         </p>
       )}
-      <details open={!appliedCurrent || !!reservedOperationId}>
-        <summary
-          className={appliedCurrent && !reservedOperationId ? "cursor-pointer text-sm" : "hidden"}
-        >
-          AI·폴더 변경
-        </summary>
+      <details open={!catalog && !reservedOperationId && !appliedCurrent}>
+        <summary className="cursor-pointer text-sm">AI·폴더 변경</summary>
         <div className="grid gap-3 pt-2">
           <label className={field}>
             AI 프로그램
@@ -277,23 +328,6 @@ export function RuntimeSettingsForm({
           </p>
         </div>
       </details>
-      {!!reservedOperationId && (
-        <p role="status" className="text-sm text-neutral-600">
-          {operation?.state === "CANCELLED"
-            ? operation.receipt?.state === "CANCELLED"
-              ? "PC에서 취소와 정리가 확인되었습니다. 새 설정을 요청할 수 있습니다."
-              : "취소 요청을 접수했습니다. PC의 취소·정리 확인 전에는 새 설정을 요청할 수 없습니다."
-            : operation?.state === "COMMITTED"
-              ? "서버에 저장했습니다. PC가 설정을 확정할 때까지 기다립니다."
-              : operation?.state === "APPLYING"
-                ? "자기 PC에서 설정을 적용하고 있습니다. 실행 중인 AI 요청이 있으면 기다립니다."
-                : operation?.state === "UNKNOWN" || operation?.state === "FAILED"
-                  ? "같은 요청의 상태를 확인합니다. 자기 PC에서 미확정 작업을 확인하세요."
-                  : operation?.state === "LOCAL_CONFIRMATION"
-                    ? "PC에서 폴더와 공유 범위를 확인했습니다. 다른 프로그램이나 모델을 고르려면 먼저 취소하세요."
-                    : "Mac의 폴더 선택 창과 공유 범위 확인을 완료하세요. PC가 꺼져 있거나 관리 프로그램이 종료되면 기다립니다."}
-        </p>
-      )}
       {operation?.state === "LOCAL_CONFIRMATION" && response?.catalog?.policy === "unsupported" && (
         <p role="alert" className="text-sm text-amber-800">
           이 PC에서 프로그램의 모델과 추론 강도를 검증하지 못했습니다. 자기 PC에서 설치 버전,
@@ -301,7 +335,7 @@ export function RuntimeSettingsForm({
         </p>
       )}
       <section aria-label="모델 선택과 채팅 시작" className="grid gap-3 border-t pt-3">
-        <h3 className="font-semibold">3. 모델 선택과 채팅 시작</h3>
+        {catalog && <h3 className="font-semibold">모델과 공개 별칭</h3>}
         {catalog ? (
           <div className="grid gap-4 rounded-md bg-neutral-50 p-4">
             <p className="text-sm">공유 저장소: {operation!.receipt!.repositoryAlias}</p>
@@ -328,9 +362,12 @@ export function RuntimeSettingsForm({
                 ))}
               </select>
             </label>
+            <p className="text-xs text-neutral-500">
+              추론 강도는 AI가 답을 검토하는 정도입니다. Mac에서 지원하는 값만 표시합니다.
+            </p>
             {model && model.efforts.length > 0 ? (
               <label className={field}>
-                추론 강도 (effort)
+                추론 강도
                 <select
                   className={select}
                   aria-label="추론 강도"
@@ -351,16 +388,6 @@ export function RuntimeSettingsForm({
             ) : model ? (
               <p className="text-sm">이 모델은 별도의 추론 강도 설정을 사용하지 않습니다.</p>
             ) : null}
-            <Button
-              aria-label="모델 선택 확인"
-              variant={
-                guidanceActive && connectionRecent && phase === "model" ? "default" : "outline"
-              }
-              disabled={setupBlocked || !validSelection || saved}
-              onClick={() => void controller.selectRuntime()}
-            >
-              {saved ? "모델 선택 확인됨" : "모델 선택 확인"}
-            </Button>
             <label className={field}>
               공개 세션 별칭
               <Input
@@ -377,19 +404,22 @@ export function RuntimeSettingsForm({
               남습니다.
             </p>
             <Button
-              aria-label="PC에 설정 적용"
+              aria-label="설정 저장"
               variant={
-                guidanceActive && connectionRecent && phase === "apply" ? "default" : "outline"
+                guidanceActive && connectionRecent && (phase === "apply" || phase === "model")
+                  ? "default"
+                  : "outline"
               }
               disabled={
                 setupBlocked ||
-                !saved ||
+                !!view.applyUnconfirmed ||
+                !validSelection ||
                 !view.sessionAlias.trim() ||
                 response?.currentBinding === undefined
               }
-              onClick={() => void controller.apply()}
+              onClick={() => void controller.save()}
             >
-              PC에 설정 적용
+              {saved ? "저장 계속" : "설정 저장"}
             </Button>
           </div>
         ) : (
@@ -405,8 +435,15 @@ export function RuntimeSettingsForm({
           설정 요청 취소
         </Button>
       )}
+      {saved && (
+        <p className="text-sm">
+          서버에 저장된 모델 선택은 고정됩니다. 다른 모델을 원하면 같은 요청의 취소와 PC 정리 확인
+          후 새 설정을 시작하세요.
+        </p>
+      )}
       {operation && (
-        <div className="grid gap-1 border-t pt-3 text-sm" aria-label="요청한 설정">
+        <details className="grid gap-1 border-t pt-3 text-sm" aria-label="요청한 설정">
+          <summary className="cursor-pointer">요청한 설정 상세</summary>
           <h4 className="font-medium">요청한 설정</h4>
           <p>
             {operation.requested.runtime === "codex" ? "Codex" : "Claude"}
@@ -417,7 +454,7 @@ export function RuntimeSettingsForm({
               ? ` · ${operation.requested.effort}`
               : ""}
           </p>
-        </div>
+        </details>
       )}
       <div className="grid gap-1 border-t pt-3 text-sm" aria-label="PC에 적용된 설정">
         <h4 className="font-medium">PC에 적용된 설정</h4>

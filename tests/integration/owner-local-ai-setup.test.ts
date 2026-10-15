@@ -1032,3 +1032,41 @@ test(
       }
     }),
 );
+
+test(
+  "should preserve fixed selection and the same explicit apply after a lost selection response",
+  options,
+  () =>
+    workflowCase("settings-single-save-contract", async (f) => {
+      const r = await settings(f),
+        scene = await f.directScene();
+      const candidate = await r.prepare(scene.owner, scene.responder);
+      // prepare confirms select-runtime. Replaying that exact selection is safe;
+      // changing the stored selection cannot become a new implicit save.
+      const current = r.accepted(await r.device(scene.responder, "poll", {}));
+      assert.equal(current.operation!.state, "LOCAL_CONFIRMATION");
+      const selected = { ...current.operation!.requested };
+      delete selected.localRootReference;
+      delete selected.repositoryAlias;
+      delete selected.sessionAlias;
+      delete selected.expectedEpoch;
+      delete selected.readMode;
+      assert.equal((await r.human(scene.owner, "select-runtime", selected)).status, 200);
+      assert.equal(
+        (await r.human(scene.owner, "select-runtime", { ...selected, model: "other-model" }))
+          .status,
+        409,
+      );
+      const applied = r.accepted(await r.human(scene.owner, "apply", candidate.apply));
+      assert.equal(applied.operation!.state, "APPLYING");
+      assert.equal(applied.applied, null);
+      const queried = r.accepted(
+        await r.human(scene.owner, "list", {
+          deviceId: scene.responder.deviceId!,
+          operationId: current.operation!.operationId,
+        }),
+      );
+      assert.equal(queried.operation!.operationId, current.operation!.operationId);
+      assert.equal(queried.operation!.state, "APPLYING");
+    }),
+);

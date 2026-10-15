@@ -143,7 +143,12 @@ ${options.directEntry ? `if (process.argv[1] && pathToFileURL(resolve(process.ar
     curl,
     `#!${process.execPath}\nimport {appendFileSync,readFileSync,writeFileSync} from "node:fs";
 const args=process.argv.slice(2), url=new URL(args.at(-1)), output=args[args.indexOf("--output")+1];
-appendFileSync(${JSON.stringify(log)}, JSON.stringify({url:url.href,args,preload:${JSON.stringify(preloadNames)}.filter(key => Object.hasOwn(process.env,key))})+"\\n");
+if (url.pathname.endsWith("startup-report")) {
+  const report=JSON.parse(args[args.indexOf("--data")+1]);
+  appendFileSync(${JSON.stringify(log)}, JSON.stringify({url:url.href,report})+"\\n");
+  process.exit(0);
+}
+appendFileSync(${JSON.stringify(log)}, JSON.stringify({url:url.href,args:args.map((value,index)=>args[index-1]==="--header" && value.startsWith("Authorization:") ? "Authorization: [redacted]" : value),preload:${JSON.stringify(preloadNames)}.filter(key => Object.hasOwn(process.env,key))})+"\\n");
 if (${!!options.redirect} && url.pathname.includes("connector-")) { writeFileSync(output, ""); process.stdout.write("302"); } else {
 const file=url.hostname==="nodejs.org" ? ${JSON.stringify(runtimeFile ?? "")} : ${JSON.stringify(root + "/public")}+url.pathname;
 writeFileSync(output,readFileSync(file)); process.stdout.write("200"); }

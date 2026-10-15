@@ -13,6 +13,9 @@ import {
   type ConnectionSelection,
 } from "./local-connection-command";
 
+import { requestSetup, type IssuedLaunch } from "../connection-setup/setup-controller";
+import { SetupStatus } from "../connection-setup/setup-status";
+
 type Room = { roomId: string; organizationId: string; roomTitle: string; organizationName: string };
 
 async function readManifest(origin: string, signal: AbortSignal): Promise<ConnectionManifest> {
@@ -65,6 +68,7 @@ export function LocalConnectionGuide({
   prominent = true,
   deviceAliasHint,
   deviceIdHint,
+  onLaunch,
 }: {
   origin: string;
   userId: string;
@@ -75,7 +79,12 @@ export function LocalConnectionGuide({
   prominent?: boolean;
   deviceAliasHint?: string;
   deviceIdHint?: string;
+  onLaunch?: () => void;
 }) {
+  const [issued, setIssued] = useState<{ scope: string; value: IssuedLaunch } | null>(null);
+  const currentKey = useRef("");
+  const [copying, setCopying] = useState(false);
+  const [expiredScope, setExpiredScope] = useState<string | null>(null);
   const [deviceAlias, setDeviceAlias] = useState("내 Mac");
   const [manifestReceipt, setManifest] = useState<{
     origin: string;
@@ -185,37 +194,19 @@ export function LocalConnectionGuide({
     };
   }, [origin]);
   useEffect(() => {
-    let live = true;
-    if (manifest && room && selection && !blocked) {
-      localConnectionCommand({
-        origin,
-        userId,
-        roomId: room.roomId,
-        organizationId: room.organizationId,
-        deviceAlias,
-        manifest,
-        ...(selection.value.chain.length ? { selection: selection.value } : {}),
-      }).then(
-        (value) => {
-          if (live) {
-            setCommand({ key, value });
-            setError(null);
-          }
-        },
-        () => {
-          if (live)
-            setError({
-              key,
-              value:
-                "서비스 주소와 기기 이름을 확인하세요. 이름은 한글·영문·숫자·공백을 사용해 40자 이내로 입력하세요.",
-            });
-        },
-      );
-    }
+    currentKey.current = key;
     return () => {
-      live = false;
+      if (currentKey.current === key) currentKey.current = "";
     };
-  }, [manifest, room, origin, userId, deviceAlias, key, selection, blocked]);
+  }, [key]);
+  useEffect(() => {
+    if (!issued) return;
+    const timer = setTimeout(
+      () => setExpiredScope(issued.scope),
+      Math.max(0, Date.parse(issued.value.expiresAt) - Date.now()),
+    );
+    return () => clearTimeout(timer);
+  }, [issued]);
   async function confirmSelection() {
     setSelection(null);
     setRecoveryDialog(null);
@@ -259,22 +250,67 @@ export function LocalConnectionGuide({
       setPreparing(null);
     }
   }
-  async function copy() {
-    if (!command || !selection || preparingRef.current) return;
+  async function copy(fresh = false) {
+    if (!manifest || !room || !selection || blocked || preparingRef.current) return;
+    const requestedKey = key;
+    let command = !fresh && prepared?.key === key ? prepared.value : "";
     try {
       if (window.localStorage.getItem(scopeKey) !== selection.raw)
         throw new Error("SELECTION_CHANGED");
+      preparingRef.current = true;
+      setCopying(true);
+      if (
+        !command ||
+        !issued ||
+        issued.scope !== key ||
+        Date.parse(issued.value.expiresAt) <= Date.now()
+      ) {
+        const result = (await requestSetup(
+          "issue",
+          { requestId: crypto.randomUUID(), roomId, deviceAlias, selection: selection.value },
+          AbortSignal.timeout(10000),
+        )) as IssuedLaunch;
+        if (currentKey.current !== requestedKey) return;
+        if (window.localStorage.getItem(scopeKey) !== selection.raw)
+          throw new Error("SELECTION_CHANGED");
+        if (!result.key || !result.created) throw new Error("REISSUE_REQUIRED");
+        command = await localConnectionCommand({
+          origin,
+          userId,
+          roomId,
+          organizationId: room.organizationId,
+          deviceAlias,
+          manifest,
+          selection: selection.value,
+          launch: { key: result.key, payloadHash: result.payloadHash },
+        });
+        if (currentKey.current !== requestedKey) return;
+        if (window.localStorage.getItem(scopeKey) !== selection.raw)
+          throw new Error("SELECTION_CHANGED");
+        setIssued({ scope: key, value: result });
+        setCommand({ key, value: command });
+        onLaunch?.();
+      }
+      setError(null);
     } catch {
-      setStorageFailure({
-        key: scopeKey,
-        message: "연결 선택이 바뀌었거나 저장소를 읽지 못했습니다. 현재 선택을 다시 확인하세요.",
-      });
+      if (currentKey.current === requestedKey)
+        setError({
+          key,
+          value: "연결 명령을 발급하지 못했습니다. 같은 연결 선택으로 새 명령을 복사하세요.",
+        });
       return;
+    } finally {
+      preparingRef.current = false;
+      setCopying(false);
     }
+    if (currentKey.current !== requestedKey) return;
     try {
+      if (window.localStorage.getItem(scopeKey) !== selection.raw)
+        throw new Error("SELECTION_CHANGED");
       await navigator.clipboard.writeText(command);
       setNotice({ command, value: "명령을 복사했습니다. 내 Mac의 터미널에 붙여 넣어 실행하세요." });
     } catch {
+      if (commandField.current) commandField.current.value = command;
       commandField.current?.closest("details")?.setAttribute("open", "");
       commandField.current?.focus();
       commandField.current?.select();
@@ -291,14 +327,18 @@ export function LocalConnectionGuide({
         type="button"
         aria-label="연결 명령 복사"
         variant={prominent ? "default" : "outline"}
-        disabled={!command}
-        onClick={copy}
+        disabled={!manifest || !selection || !!blocked || !!recovering || copying}
+        onClick={() => copy()}
       >
-        연결 명령 복사
+        {copying
+          ? "명령 준비 중"
+          : issued?.scope === key && expiredScope === key
+            ? "새 명령 복사"
+            : "연결 명령 복사"}
       </Button>
       <p className="text-sm text-neutral-600">
         {deviceAliasHint
-          ? `${deviceAliasHint}을 사용하는 Mac의 터미널에서 실행하세요.`
+          ? `이 명령은 실행하는 Mac의 브라우저 저장 연결을 사용합니다. 선택한 ${deviceAliasHint}과 터미널의 공개 연결 ID를 확인하세요.`
           : "복사한 명령을 내 Mac의 터미널에 붙여 넣어 실행하세요."}
       </p>
       {rooms.length === 0 && (
@@ -391,6 +431,22 @@ export function LocalConnectionGuide({
         </div>
       )}
       {preparing === scopeKey && <p role="status">새 승인 명령을 준비하고 있습니다.</p>}
+      {issued?.scope === key && (
+        <p className="text-xs text-neutral-500">
+          아래는 기기 인증 없이 받은 명령 시작 보고입니다. 선택한 기기의 등록·설정과 별도로
+          확인하세요.
+        </p>
+      )}
+      {issued?.scope === key && (
+        <SetupStatus
+          key={issued.value.requestId}
+          roomId={roomId}
+          requestId={issued.value.requestId}
+          onRetry={() => {
+            void copy(true);
+          }}
+        />
+      )}
       {notice && (
         <p role="status" aria-label="연결 명령 복사 결과" className="text-sm">
           {notice}
