@@ -29,8 +29,10 @@
 
 이미 승인된 복구 대상의 미완료 설정을 일반 연결과 같은 관리자로 인계한다. 이전 기록 검증·소유 범위·기기 잠금은 유지한다. 실패 시 배포 해시·오류 코드·최대8개 소스 위치만 0600 진단 파일에 남긴다. 터미널 중단의130/143 종료는 중단 요청·실제 자식 종료·정확한 VERIFIED 증거가 모두 있을 때만 정상 정리한다. 검증 중 실제 사용자 기기는 서버에서 제거 상태임을 별도로 확인했으므로, 이 보정이 제거된 기기의 인증을 복구했다고 주장하지 않는다.
 
-전체 웹 단위695/695, 연결 복구·명령107/107, production/distribution build·타입·lint·format/check를 통과했다. 실제 DB와 Next 화면으로 새 연결·실패·폴더·모델·적용·취소 대기를1440px/390px에서 확인했으며 가로 넘침과 기본 화면의 details 요소가 없었다. 실제 Claude/Codex 입력은0회이고 개인 연결 기록은 수정하지 않았다. 최종 브라우저·리뷰·배포 결과는 아래 완료 기록과 PR에서 확정한다.
+전체 웹 단위695/695, 연결 복구·명령107/107, production/distribution build·타입·lint·format/check를 통과했다. 실제 DB와 Next 화면으로 새 연결·실패·폴더·모델·적용·취소 대기를1440px/390px에서 확인했으며 가로 넘침과 기본 화면의 details 요소가 없었다. 실제 Claude/Codex 입력은0회이고 개인 연결 기록은 수정하지 않았다. 실제 DB/Next 기기·명령12/12, AI 설정12/12를 데스크톱·모바일에서 모두 통과했다. 독립 구현 리뷰2와 추가 테스트 리뷰는 PASS이며 남은 지적은 없다. 검사가 끝난 뒤 임시 로컬 웹과 프로젝트 Docker6개를 중지했다. 사용자 next-env.d.ts 원본 해시는 유지했다.
 
+
+[PR41](https://github.com/sangjun-pullim/ai-collaboration-platform/pull/41)의 main `5efba9553533000d2ff10ae326d16ec359501fa1`을 운영 배포했다. Vercel `dpl_EHYwBzUmypj8DTCc3AZUAwdUwFJu`의 Production READY·Git SHA·공개 별칭을 대조했다. 운영 bootstrap `23eeaf412d5624e3fd0d360030bf256031271af3b84ba962a6ac5e58c49a4f9d`, connector `8041c9e09c7814349780eee9cd8a7f7a3ef739869b75a211f097246d69df00d5`를 검증했고 압축 해제 배포 코드가 로컬 검사 빌드와 동일했다. 공개 로그인200·비인증 inspect/resolve401도 확인했다. 완료한 [연결 화면 재구성 계획](../impl-spec/archive/041-flat-connection-experience.md)을 보관한다. 기존 터미널의 실행 코드는 자동 교체되지 않으므로 최신 연결 명령을 실행해야 보정이 적용된다. 서버에서 이미 제거한 기기는 연결 옵션의 새 승인 절차를 사용한다.
 
 ### 연결 명령·진행·복구·모델 설정 통합
 

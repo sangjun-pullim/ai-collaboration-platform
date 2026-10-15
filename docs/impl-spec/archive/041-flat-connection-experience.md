@@ -1,5 +1,5 @@
 ---
-status: active
+status: done
 date: 2026-10-15
 risk-surface: auth
 ---
@@ -39,7 +39,7 @@ risk-surface: auth
 - clipboard 실패 시 직접 복사 영역을 보이고 focus/select한다. #mac-connection/#ai-settings 이동을 유지한다.
 - AI·폴더 선택은 현재 단계의 폼으로 표시한다. 모델은 catalog 확인 후에 표시하고 미완료 요청 동안 변경 잠금을 유지한다. 적용 후에는 설정 요약과 채팅 시작, 명시적 설정 변경을 보여준다.
 - 실패 원인과 가능한 행동을 묶는다. RUNTIME_BUSY로 살아 있는 프로세스를 단정하지 않는다.
-### [ ] Step 3: 검증·리뷰·배포
+### [x] Step 3: 검증·리뷰·배포
 - 상태별 테스트와 실제 브라우저의 데스크톱/모바일 렌더링을 확인한다. 독립 리뷰 후 문서 갱신·커밋·PR·승인된 main 병합·배포를 진행한다.
 
 ## Tests
@@ -67,3 +67,5 @@ risk-surface: auth
 구현 리뷰1의 HIGH(승인 fragment의 존재하지 않는 버튼 선택)와 MEDIUM(재적용 후 변경 폼 유지)을 수용했다. 명령 검사를 fragment 진입 전에 수행하고, 새 폴더 요청 시 편집 상태를 초기화했다. 독립 리뷰2에서 두 지적 해소와 종료 증거·진단 정보 보호 PASS를 확인했다. 추가 테스트 독립 리뷰는 No issues found이며 전체695/695 결과를 확인했다. 인증·scope·진단 구현 리뷰의 변경 없는 범위는 재사용한다.
 
 웹 단위695/695, 연결 복구·명령107/107, build/typecheck/lint/format/check 통과. 실제 DB/Next 기기·명령 브라우저12/12 통과. 새 연결·실패·폴더·모델·적용·취소 대기의 PC1440px/모바일390px 화면을 직접 확인했다. 실행 중지의 valid/missing/corrupt proof와 소유한 중단 요청 없음은 별도 회귀 테스트로 확인했다. 실제 AI 입력0회, 사용자 연결 파일 수정0회다.
+
+최종 설정 브라우저12/12도 통과했다. PR41 main `5efba9553533000d2ff10ae326d16ec359501fa1`의 Vercel `dpl_EHYwBzUmypj8DTCc3AZUAwdUwFJu` Production READY와 공개 별칭을 확인했다. 운영 bootstrap `23eeaf412d5624e3fd0d360030bf256031271af3b84ba962a6ac5e58c49a4f9d`와 code `8041c9e09c7814349780eee9cd8a7f7a3ef739869b75a211f097246d69df00d5`를 manifest·다운로드 본문으로 대조했다. gzip OS 바이트만 제외한 파일과 압축 해제 tar가 로컬 검사 빌드와 동일했다. 로그인200·비인증 inspect/resolve401을 확인했다. 검증 컨테이너6개와 웹 서버는 종료했다. 개인 기록과 사용자 next-env.d.ts는 보존했다.
