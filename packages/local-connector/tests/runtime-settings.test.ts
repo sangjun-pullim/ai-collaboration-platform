@@ -92,6 +92,8 @@ async function fixture(provider: "codex" | "claude" = "codex", profileName = "on
     },
     mappings: [],
   });
+  const observations: Record<string, unknown>[] = [];
+  let lastObservation: Record<string, unknown> | null = null;
   const requests: { action: string; body: Body; secret: string | null }[] = [];
   let failCommittedResponse = false;
   let failBeforeCommit = false;
@@ -102,6 +104,17 @@ async function fixture(provider: "codex" | "claude" = "codex", profileName = "on
   const fetcher: typeof fetch = async (url, init) => {
     const action = String(url).split("/").at(-1)!;
     const body = JSON.parse(String(init?.body)) as Body;
+    if (String(url).includes("/api/connection-setup/")) {
+      if (action === "settings-report") {
+        observations.push(body);
+        lastObservation = { ...body, receivedAt: new Date().toISOString() };
+      }
+      const current = lastObservation?.operationId === body.operationId ? lastObservation : null;
+      return Response.json({
+        ok: true,
+        data: { sequence: current?.sequence ?? 0, observation: current },
+      });
+    }
     requests.push({ action, body, secret: new Headers(init?.headers).get("authorization") });
     if (action === "poll") {
       await pollHook?.();
@@ -276,6 +289,7 @@ async function fixture(provider: "codex" | "claude" = "codex", profileName = "on
     manager,
     applying,
     requests,
+    observations,
     options,
     adapters,
     get response() {
@@ -497,7 +511,7 @@ test("should deduplicate displayed authentication failures and show recovery the
   }
 });
 
-test("should display setup completion while the actual runner remains active without claiming live readiness", async () => {
+test("should display setup completion while the actual runner remains active without claiming live readiness", async (t) => {
   const f = await fixture();
   const abort = new AbortController();
   const entered = deferred(),
@@ -525,12 +539,12 @@ test("should display setup completion while the actual runner remains active wit
     const observed: SettingsManagerStatus[] = [];
     let runtimeStore: RuntimeStore | undefined;
     let runtimeReadyWhileRunning = false,
+      persistedReady = false,
       settled = false;
     const workflowActions: string[] = [];
     f.pollHook = async () => {
       if (!runtimeStore) return;
-      const record = await runtimeStore.read();
-      if (record?.ready && workflowActions.filter((action) => action === "poll").length >= 3) {
+      if (persistedReady && workflowActions.filter((action) => action === "poll").length >= 3) {
         runtimeReadyWhileRunning = !settled;
         abort.abort();
       }
@@ -542,6 +556,12 @@ test("should display setup completion while the actual runner remains active wit
       },
       runner: (pointer, store) => {
         runtimeStore = store;
+        // Observe completion of the real durable write; concurrent secure reads can race its atomic rename.
+        const write = store.write.bind(store);
+        t.mock.method(store, "write", async (...args: Parameters<RuntimeStore["write"]>) => {
+          await write(...args);
+          persistedReady = args[0].ready;
+        });
         const fetcher: typeof fetch = async (url, init) => {
           const action = String(url).split("/").at(-1)!;
           const body = JSON.parse(String(init?.body));
@@ -1566,7 +1586,7 @@ for (const phase of ["CHOOSING", "CATALOG_INTENT", "PREPARE_INTENT", "UNKNOWN"] 
     }
   });
 
-test("should refuse capability drift before preparing a new context", async () => {
+test("should close a proven capability failure before preparing and accept a new setup", async () => {
   const f = await fixture();
   try {
     await local(f);
@@ -1576,9 +1596,38 @@ test("should refuse capability drift before preparing a new context", async () =
       defaultSettings: { model: "test-b", effort: "medium" },
     };
     const status = await f.manager().run({ once: true });
-    assert.equal(status.state, "FAILED");
+    assert.equal(status.state, "CANCELLED");
     assert.equal(status.reason, "SNAPSHOT_CHANGED");
     assert.equal(f.prepares, 0);
+    const journal = (await f.store.read())!.journal!;
+    assert.equal(journal.receipt!.state, "CANCELLED");
+    assert.equal(journal.context, null);
+    assert.equal(journal.settings, null);
+    assert.equal(journal.commitBody, undefined);
+    const reports = f.requests.filter((r) =>
+      ["FAILED", "CANCELLED"].includes(String(r.body.state)),
+    );
+    assert.deepEqual(
+      reports.map((r) => r.body.state),
+      ["FAILED", "CANCELLED"],
+    );
+    assert.deepEqual({ ...reports[0].body, state: "CANCELLED" }, reports[1].body);
+    await f.store.assertIdle();
+    const operationId = uuid();
+    f.response.operation = {
+      operationId,
+      deviceId: f.response.deviceId,
+      expectedConfigRevision: 0,
+      state: "REQUESTED",
+      requested: {
+        operationId,
+        deviceId: f.response.deviceId,
+        expectedConfigRevision: 0,
+        runtime: "codex",
+      },
+      receipt: null,
+    };
+    assert.equal((await f.manager().run({ once: true })).state, "LOCAL_CONFIRMATION");
   } finally {
     await f.close();
   }
@@ -3437,6 +3486,207 @@ test("should renew from the thirty-second background pulse without a foreground 
     abort.abort();
     await job;
     await r.renewal.stop();
+    await f.close();
+  }
+});
+
+for (const lost of ["FAILED", "CANCELLED"] as const) {
+  for (const accepted of [false, true]) {
+    test(`should replay proven cleanup after ${lost} ${accepted ? "response loss" : "delivery loss"} without opening AI`, async (t) => {
+      const f = await fixture();
+      try {
+        await local(f);
+        f.observedCaps = {
+          ...f.settings.capabilities,
+          models: f.settings.capabilities.models.slice(1),
+          defaultSettings: { model: "test-b", effort: "medium" },
+        };
+        const original = f.client.call.bind(f.client);
+        let interrupted = false;
+        const stub = t.mock.method(
+          f.client,
+          "call",
+          async (...args: Parameters<typeof original>) => {
+            if (!interrupted && args[0] === "receipt" && args[1].state === lost) {
+              interrupted = true;
+              if (accepted) await original(...args);
+              throw new SettingsError("UNAVAILABLE");
+            }
+            return original(...args);
+          },
+        );
+        await f.manager().run({ once: true });
+        const pending = (await f.store.read())!.journal!;
+        assert.equal(pending.phase, "UNKNOWN");
+        assert.equal(pending.receipt!.state, "CANCELLED");
+        const cleanup = structuredClone(pending.receipt);
+        stub.mock.restore();
+        const status = await f
+          .manager({ adapter: () => assert.fail("cleanup replay must not create an AI") })
+          .run({ once: true });
+        assert.equal(status.state, "CANCELLED");
+        assert.deepEqual((await f.store.read())!.journal!.receipt, cleanup);
+        assert.equal(f.prepares, 0);
+        await f.store.assertIdle();
+      } finally {
+        await f.close();
+      }
+    });
+  }
+}
+
+test("should never release capability failure when adapter cleanup fails", async () => {
+  const f = await fixture();
+  try {
+    await local(f);
+    f.observedCaps = {
+      ...f.settings.capabilities,
+      models: f.settings.capabilities.models.slice(1),
+      defaultSettings: { model: "test-b", effort: "medium" },
+    };
+    const adapter = f.options.adapter!("codex", async () =>
+      assert.fail("codex must not reserve Claude catalog"),
+    );
+    adapter.close = async () => {
+      throw new Error("failed cleanup");
+    };
+    await assert.rejects(
+      f.manager({ adapter: () => adapter }).run({ once: true }),
+      (error: unknown) => error instanceof RuntimeError && error.code === "CLEANUP_INCOMPLETE",
+    );
+    const journal = (await f.store.read())!.journal!;
+    assert.equal(journal.phase, "UNKNOWN");
+    assert.notEqual(journal.receipt?.state, "CANCELLED");
+    assert.equal(
+      f.requests.some((r) => r.body.state === "CANCELLED"),
+      false,
+    );
+    assert.equal(f.prepares, 0);
+  } finally {
+    await f.close();
+  }
+});
+
+for (const change of ["operation", "revision", "binding", "body"] as const) {
+  test(`should retain cleanup ownership when ${change} changes before failure confirmation`, async () => {
+    const f = await fixture();
+    try {
+      await local(f);
+      f.observedCaps = {
+        ...f.settings.capabilities,
+        models: f.settings.capabilities.models.slice(1),
+        defaultSettings: { model: "test-b", effort: "medium" },
+      };
+      const adapter = f.options.adapter!("codex", async () =>
+        assert.fail("unexpected catalog reservation"),
+      );
+      adapter.close = async () => {
+        if (change === "operation") f.response.operation!.operationId = uuid();
+        if (change === "revision") f.response.configRevision = 1;
+        if (change === "binding")
+          f.response.currentBinding = {
+            agentId: uuid(),
+            workspaceId: uuid(),
+            bindingEpoch: 1,
+            runtime: "codex",
+          };
+        if (change === "body") f.response.operation!.requested.sessionAlias = "Changed";
+      };
+      const status = await f.manager({ adapter: () => adapter }).run({ once: true });
+      assert.equal(status.state, "UNKNOWN");
+      assert.notEqual((await f.store.read())!.journal!.receipt?.state, "CANCELLED");
+      assert.equal(
+        f.requests.some((r) => r.body.state === "CANCELLED"),
+        false,
+      );
+    } finally {
+      await f.close();
+    }
+  });
+}
+
+for (const reason of ["TIMEOUT", "DENIED", "UNSUPPORTED", "FAILED"] as const) {
+  test(`should preserve folder ${reason} in observation without adding private error data`, async () => {
+    const f = await fixture();
+    const abort = new AbortController();
+    const timer = setTimeout(() => abort.abort(), 2000);
+    const running = f
+      .manager({ folder: async () => ({ status: reason }) })
+      .run({ signal: abort.signal });
+    try {
+      while (!abort.signal.aborted && !f.observations.some((o) => o.stage === "FAILED"))
+        await new Promise((resolve) => setTimeout(resolve, 5));
+      assert.ok(f.observations.some((o) => o.stage === "FAILED" && o.reason === reason));
+      assert.ok(
+        f.observations.every(
+          (o) =>
+            Object.keys(o).sort().join() ===
+            "configRevision,deviceId,operationId,reason,sequence,stage",
+        ),
+      );
+    } finally {
+      clearTimeout(timer);
+      abort.abort();
+      await running;
+      await f.close();
+    }
+  });
+}
+
+test("should report folder sharing and model discovery while each local action is still pending", async () => {
+  const f = await fixture();
+  const abort = new AbortController();
+  const folder = deferred(),
+    sharing = deferred(),
+    models = deferred();
+  const adapter = f.options.adapter!("codex", async () => assert.fail("unexpected reservation"));
+  const capabilities = adapter.capabilities.bind(adapter);
+  adapter.capabilities = async (...args) => {
+    await models.promise;
+    return capabilities(...args);
+  };
+  const timer = setTimeout(() => abort.abort(), 5000);
+  const running = f
+    .manager({
+      folder: async (signal) => {
+        await folder.promise;
+        return f.options.folder!(signal);
+      },
+      confirm: async (root, signal) => {
+        await sharing.promise;
+        return f.options.confirm!(root, signal);
+      },
+      adapter: () => adapter,
+    })
+    .run({ signal: abort.signal });
+  async function observed(stage: string) {
+    while (!abort.signal.aborted && !f.observations.some((value) => value.stage === stage))
+      await new Promise((resolve) => setTimeout(resolve, 5));
+    assert.ok(
+      f.observations.some((value) => value.stage === stage),
+      stage,
+    );
+    assert.equal(f.prepares, 0);
+  }
+  try {
+    await observed("FOLDER_SELECTION");
+    folder.resolve();
+    await observed("SHARING_CONFIRMATION");
+    sharing.resolve();
+    await observed("MODEL_DISCOVERY");
+    models.resolve();
+    await observed("MODEL_SELECTION");
+    assert.deepEqual(
+      f.observations.map((value) => value.stage),
+      ["FOLDER_SELECTION", "SHARING_CONFIRMATION", "MODEL_DISCOVERY", "MODEL_SELECTION"],
+    );
+  } finally {
+    clearTimeout(timer);
+    folder.resolve();
+    sharing.resolve();
+    models.resolve();
+    abort.abort();
+    await running;
     await f.close();
   }
 });

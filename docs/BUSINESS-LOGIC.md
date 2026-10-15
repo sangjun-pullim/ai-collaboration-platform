@@ -73,6 +73,10 @@ sources:
 
 `COMMITTED`는 서버가 binding·epoch·설정 receipt를 확정했다는 뜻이다. `APPLIED`는 PC가 후보 generation·profile mapping·현재 pointer를 영속 저장한 뒤 보고한 상태다. 두 단계를 동시에 성공한 것으로 처리하지 않는다. 서버 확정 전 허용된 상태에서만 취소하며 PC의 정리 확인까지 새 설정을 막는다. 확정 후 응답 유실이나 PC 장애는 같은 operation과 receipt로 복구하고 새 요청으로 자동 재실행하지 않는다. 일반 조회에서 종결 요청이 빠져도 자기 기기의 정확한 operation 조회로 종결을 확인한다. PC는 현재 pointer 값이 같다는 이유만으로 최종 영속 저장을 생략하지 않는다.
 
+설정 화면의 **설정 저장**은 같은 operation에서 모델 선택을 확인한 뒤 적용을 요청한다. 선택 응답이 유실되면 자동 적용하지 않고, 적용 응답이 유실되면 자동 재실행하지 않는다. 정확한 적용·취소 종결을 확인하거나 새 operation을 채택하면 이전 저장의 미확정 표시를 해제한다. 실제 단계 관찰은 별도 정보이며 설정 확정·정리 완료의 증거를 대신하지 않는다.
+
+현재 실행이 APPLYING이고 후보 준비 기록을 만들기 전에 실패했다면, 실행 자원 종료와 동일 operation·binding·revision을 확인한 뒤 기존 CANCELLED 정리 증거를 영속 저장한다. 전송 실패 후에는 같은 증거만 재전달한다. 정리 실패·후보 준비 이후·증거 없는 과거 FAILED/UNKNOWN은 이 경로로 자동 해제하지 않는다.
+
 root/provider 교체는 별도 후보 generation을 준비한다. 이전 generation의 저장소 신원·native context·실행 이력·outbox를 보존하고 옛 UNKNOWN을 새 root로 옮겨 해소하지 않는다. 기존 v1 Codex 기록은 소유권 검사를 유지하며 설정 관리와 raw CLI는 같은 기기 잠금으로 동시 변경을 막는다. Claude 제품 adapter는 소유 session과 입력 의도를 전송 전에 영속 저장하고 정확한 소유 이력으로 관찰한다. 기본 native 정책이 공식 설치·게시자·지원 버전·개인 구독 로그인·설정을 검증한 경우에만 실행하며 미확인 조합은 `POLICY_UNCONFIRMED`로 거절한다. 합성 adapter 통과는 실제 Claude 지원 검증을 대신하지 않는다. [설정 API](API-SPEC.md#소유자의-로컬-ai-설정)·[설정 DB](DB-SCHEMA.md#소유자의-로컬-ai-설정)·[실제 검증 상태](planning/delivery-and-validation.md#현재-진행-상태)를 따른다.
 
 설치 버전·설정 우선순위·소유 이력 위치가 검증되지 않은 Claude는 모델 목록 조회나 실제 질문을 시작하지 않는다. 개인 로그인·지침 파일은 유지하고 선택한 effort는 실행 인자·자식 프로세스 환경·작업 설정에 같은 값으로 지정한다. 더 높은 관리 설정이나 실행 중 변경이 이 선택을 덮어쓸 가능성을 확인하지 못하면 실행을 거절한다. effort 미제공은 null로 유지한다.

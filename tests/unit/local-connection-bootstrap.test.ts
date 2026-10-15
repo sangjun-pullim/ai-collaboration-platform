@@ -493,3 +493,140 @@ test(
     }
   },
 );
+
+for (const fault of [
+  "none",
+  "tampered",
+  "oversized",
+  "expired",
+  "scope",
+  "chain",
+  "redirect",
+] as const)
+  test(
+    `should validate short launch description ${fault} before executing a connector`,
+    macOnly,
+    async (t) => {
+      const f = await connectionFixture(t);
+      const { readConnectionSelection, nextConnectionSelection } =
+        await import("../../src/features/device-binding/local-connection-command.ts");
+      const userId = "33333333-3333-4333-8333-333333333333",
+        origin = f.args[0];
+      let selection = await readConnectionSelection(null, origin, userId, f.args[4]);
+      selection = await nextConnectionSelection(selection, "12345678-1234-4123-8123-123456789abc");
+      const description = {
+        version: 1,
+        origin,
+        ownerUserId: userId,
+        organizationId: f.args[3],
+        roomId: f.args[4],
+        deviceAlias: "내 Mac",
+        selection,
+      };
+      if (fault === "scope") description.origin = "https://other.example";
+      if (fault === "chain") description.selection.chain[0].profile = "web-" + "0".repeat(32);
+      const payload = JSON.stringify(description),
+        payloadHash = createHash("sha256").update(payload).digest("hex");
+      const endpoint = join(f.root, "public/api/connection-setup");
+      const { mkdir } = await import("node:fs/promises");
+      await mkdir(endpoint, { recursive: true });
+      await writeFile(
+        join(endpoint, "resolve"),
+        fault === "oversized"
+          ? "x".repeat(16385)
+          : JSON.stringify({
+              ok: true,
+              data: {
+                payload: fault === "tampered" ? payload + " " : payload,
+                payloadHash,
+                expiresAt: new Date(
+                  Date.now() + (fault === "expired" ? -1000 : 1800000),
+                ).toISOString(),
+              },
+            }),
+      );
+      if (fault === "redirect") {
+        const source = await readFile(f.curl, "utf8");
+        await writeFile(
+          f.curl,
+          source.replace(
+            'if (url.pathname.endsWith("startup-report"))',
+            'if (url.pathname.endsWith("resolve")) { process.stdout.write("302"); process.exit(0); }\nif (url.pathname.endsWith("startup-report"))',
+          ),
+        );
+      }
+      f.args.splice(0, f.args.length, origin, "--setup-ticket", "c".repeat(64), payloadHash);
+      if (fault === "none") {
+        await f.run();
+        const executed = JSON.parse(await readFile(f.runFile, "utf8"));
+        assert.equal(executed.args[4], selection.chain[0].profile);
+        assert.deepEqual(executed.args.slice(-2), ["--recovery-chain", JSON.stringify(selection)]);
+      } else {
+        await assert.rejects(f.run());
+        await assert.rejects(readFile(f.runFile), { code: "ENOENT" });
+      }
+      const log = await readFile(f.log, "utf8");
+      assert.ok(!log.includes("c".repeat(64)));
+      const reports = log
+        .trim()
+        .split("\n")
+        .map((line) => JSON.parse(line))
+        .filter((x) => x.report);
+      assert.ok(reports.length >= 1);
+      assert.equal(reports[0].report.stage, "PREPARING");
+      if (fault !== "none") assert.equal(reports.at(-1).report.reason, "INVALID_DESCRIPTION");
+    },
+  );
+
+test(
+  "should preserve the pre-Node failure when startup reporting is unavailable",
+  macOnly,
+  async (t) => {
+    const f = await connectionFixture(t);
+    await writeFile(
+      f.script,
+      (await readFile(f.script, "utf8")).replace("= Darwin ]", "= Linux ]"),
+    );
+    await writeFile(
+      f.curl,
+      (await readFile(f.curl, "utf8")).replace("process.exit(0);", "process.exit(22);"),
+    );
+    f.args.splice(0, f.args.length, f.args[0], "--setup-ticket", "c".repeat(64), "d".repeat(64));
+    await assert.rejects(f.run(), (error: Error & { stderr?: string }) => {
+      assert.match(error.stderr ?? "", /MACOS_REQUIRED/);
+      return true;
+    });
+    await assert.rejects(readFile(f.runFile), { code: "ENOENT" });
+  },
+);
+
+for (const [status, reason] of [
+  [403, "FORBIDDEN"],
+  [409, "CONFLICT"],
+] as const)
+  test(
+    `should preserve bootstrap ${reason} with actionable public reporting`,
+    macOnly,
+    async (t) => {
+      const f = await connectionFixture(t);
+      const source = await readFile(f.curl, "utf8");
+      await writeFile(
+        f.curl,
+        source.replace(
+          'if (url.pathname.endsWith("startup-report"))',
+          `if (url.pathname.endsWith("resolve")) { process.stdout.write("${status}"); process.exit(0); }\nif (url.pathname.endsWith("startup-report"))`,
+        ),
+      );
+      f.args.splice(0, f.args.length, f.args[0], "--setup-ticket", "c".repeat(64), "d".repeat(64));
+      await assert.rejects(f.run(), (error: Error & { stderr?: string }) => {
+        assert.ok(error.stderr?.includes(reason));
+        return true;
+      });
+      const reports = (await readFile(f.log, "utf8"))
+        .trim()
+        .split("\n")
+        .map((line) => JSON.parse(line))
+        .filter((row) => row.report);
+      assert.equal(reports.at(-1).report.reason, reason);
+    },
+  );

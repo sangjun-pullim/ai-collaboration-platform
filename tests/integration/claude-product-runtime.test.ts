@@ -5,6 +5,13 @@ import { timelineEvents } from "../../src/features/investigation-coordinator/cha
 import { ClaudeAdapter } from "../../packages/local-connector/src/claude/adapter.ts";
 import { claudeProductCase, productAnswer } from "../helpers/claude-product-fixture.js";
 
+import { SettingsManager } from "../../packages/local-connector/src/settings/manager.ts";
+import { SettingsClient } from "../../packages/local-connector/src/settings/client.ts";
+import {
+  RuntimeError,
+  type RuntimeAdapter,
+} from "../../packages/local-connector/src/runtime-contracts.ts";
+
 const options = { timeout: 300000 };
 // These are real owned Auth/DB/HTTP cases with fake frames, never official CLI acceptance.
 test("should keep default product Claude blocked without reviewed native policy", async () => {
@@ -180,4 +187,68 @@ test("should interrupt a held product file tool and suppress its late reply", op
     assert.equal(f.inputs.length, 1);
     f.assertRequesterWithoutAI();
   }),
+);
+
+test(
+  "should close a proven pre-prepare failure through real HTTP and release a new setup",
+  options,
+  () =>
+    claudeProductCase("setup-cleanup", async (f) => {
+      const base = await f.requestFolder("codex");
+      await f.driveFolder();
+      const response = f.settings.accepted(
+        await f.human(f.scene.owner, "list", { deviceId: base.deviceId }),
+      );
+      const catalog = response.catalog!,
+        local = response.operation!.receipt!;
+      const selection = {
+        ...base,
+        ...catalog.defaultSettings!,
+        snapshotHash: catalog.snapshotHash,
+      };
+      f.settings.accepted(await f.human(f.scene.owner, "select-runtime", selection));
+      const apply = {
+        ...selection,
+        localRootReference: local.localRootReference,
+        repositoryAlias: local.repositoryAlias,
+        sessionAlias: "검증 AI",
+        expectedEpoch: response.currentBinding?.bindingEpoch ?? null,
+      };
+      f.settings.accepted(await f.human(f.scene.owner, "apply", apply));
+      let closed = 0;
+      const adapter: RuntimeAdapter = {
+        capabilities: async () => {
+          throw new RuntimeError("PROVIDER_UNAVAILABLE");
+        },
+        prepare: async () => assert.fail("Failed catalog must not prepare an AI"),
+        validate: async () => assert.fail("Failed catalog must not validate an AI"),
+        execute: async () => assert.fail("No AI input is authorized"),
+        observe: async () => assert.fail("No AI input is authorized"),
+        interrupt: async () => false,
+        close: async () => {
+          closed++;
+        },
+      };
+      const manager = new SettingsManager(
+        f.state,
+        f.store,
+        new SettingsClient(f.workflow.stack.config.app),
+        { adapter: () => adapter },
+      );
+      const result = await manager.run({ once: true });
+      assert.equal(result.state, "CANCELLED");
+      assert.equal(closed, 1);
+      const journal = (await f.store.read())!.journal!;
+      const confirmed = f.settings.accepted(
+        await f.human(f.scene.owner, "list", {
+          deviceId: base.deviceId,
+          operationId: base.operationId,
+        }),
+      );
+      assert.equal(confirmed.operation!.state, "CANCELLED");
+      assert.deepEqual(confirmed.operation!.receipt, journal.receipt);
+      const replacement = await f.requestFolder("codex");
+      assert.notEqual(replacement.operationId, base.operationId);
+      assert.equal(f.inputs.length, 0);
+    }),
 );

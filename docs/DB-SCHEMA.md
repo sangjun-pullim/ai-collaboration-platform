@@ -127,6 +127,14 @@ question의 `source:HUMAN`에는 `requester_user_id`가 있고 origin request·e
 
 binding 교체·epoch 증가·설정 revision·`COMMITTED` receipt는 같은 DB transaction으로 확정한다. PC는 이를 확인한 뒤 로컬 generation 기록과 현재 pointer를 영속 저장하고 `APPLIED`를 보고한다. 서버 확정 이후 취소로 되돌리지 않으며 같은 operation으로 복구한다. 설정 migration은 기존 history wrapper와 DIRECT/AI_PAIR 이력의 구분을 보존한다. 실제 DB 설치·upgrade·권한·경합 검증은 [검증 정본](planning/delivery-and-validation.md#현재-진행-상태)을 따른다.
 
+## 연결 설명서와 진행 관찰
+
+[연결 관찰 migration](../supabase/migrations/20261015002100-connection-setup-observation.sql)은 `connection_setup_private`에 `tickets`, `attempts`, `observations`를 둔다. 기존 설정·질문·실행 테이블을 변경하지 않는다. 직접 DML은 막고 고정 human/device RPC에서 현재 권한을 확인한다.
+
+조회 키는 32바이트 난수의 hash만 저장한다. 설명서는 공개 연결 범위·기기 별칭·검증된 복구 이력이며 30분 동안 조회할 수 있다. 사용자별 미만료 32개·24시간 128회 발급을 제한한다. 발급/조회에서 24시간이 지난 자료를 제한된 수로 정리한다. 임시 자료는 해당 사용자·방·설정 작업 삭제 시 함께 정리된다.
+
+키별 최대 8개 시작 시도를 구분하고 첫 시도의 관찰만 추적한다. 설정 관찰은 현재 operation/revision과 단조 증가 sequence로 격리한다. 이 자료는 진행 안내이며 승인·설정 확정·실행 종료 증거가 아니다. 기존 immutable receipt와 미확정 작업 잠금을 유지한다.
+
 ## 채팅의 당시 대상과 자료 기록
 
 [자료 이력 migration 소스](../supabase/migrations/20261006001300-shared-input-source-history.sql)는 `source_history_private`에 다음 정본을 정의한다. 기존 workflow 이벤트·실행 본문과 설정 모델은 그대로 사용한다.

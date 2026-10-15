@@ -15,6 +15,8 @@ import {
   type RuntimeSettings,
 } from "../runtime-contracts.ts";
 import { SettingsClient } from "./client.ts";
+import { SetupObserver } from "./setup-observer.ts";
+import { setupReasons, type SetupReason, type SetupStage } from "./setup-contracts.ts";
 import { reportConnectionHeartbeat } from "./connection-heartbeat.ts";
 import type { ConnectionRenewalControl } from "../connection-renewal.ts";
 import { ConnectionError } from "../contracts.ts";
@@ -75,6 +77,9 @@ const closed = (journal: SetupJournal) => ["APPLIED", "CANCELLED"].includes(jour
 
 /** Classify only after sameOperation has validated the server operation. */
 function recoveryAction(j: SetupJournal, serverState: Operation["state"]) {
+  if (["COMMITTED", "APPLIED"].includes(serverState)) return "adopt";
+  if (["CANCEL_INTENT", "UNKNOWN"].includes(j.phase) && j.receipt?.state === "CANCELLED")
+    return "replay-cancellation";
   const restoreConfirmation =
     j.phase === "UNKNOWN" &&
     !j.applyBody &&
@@ -172,6 +177,9 @@ export class SettingsManager {
   private runnerFailure: unknown;
   private runnerSettled = false;
   private latestResponse: SettingsResponse | undefined;
+  private setupObserver: SetupObserver | undefined;
+  private observedOperation: string | undefined;
+  private setupFailureReason: SetupReason | null = null;
   constructor(
     readonly profile: StateStore,
     readonly store: SettingsStore,
@@ -184,6 +192,26 @@ export class SettingsManager {
       (options.pollIntervalMs ?? 1000) < 1
     )
       throw new RuntimeError("INVALID_RUNTIME");
+  }
+  private async observeOperation() {
+    const j = this.state.journal;
+    if (!j || this.observedOperation === j.operation.operationId) return;
+    await this.setupObserver?.stop();
+    this.observedOperation = j.operation.operationId;
+    this.setupFailureReason = null;
+    const identity = {
+      deviceId: this.state.deviceId,
+      operationId: j.operation.operationId,
+      configRevision: j.operation.expectedConfigRevision,
+    };
+    this.setupObserver = new SetupObserver(identity, async (action, body, timeoutMs) => {
+      const current = await this.connected();
+      if (current.deviceId !== identity.deviceId) throw new SettingsError("FORBIDDEN");
+      return this.client.observe(action, body, current.credential!, timeoutMs);
+    });
+  }
+  private observeSetup(stage: SetupStage, reason: SetupReason | null = null) {
+    this.setupObserver?.report(stage, reason);
   }
   private status(): SettingsManagerStatus {
     return {
@@ -503,6 +531,7 @@ export class SettingsManager {
     );
   }
   private async cancel(serverCancelled: boolean) {
+    this.observeSetup("CANCELLING", this.setupFailureReason);
     this.ready = false;
     await this.save((_state, j) => {
       j.phase = "CANCEL_INTENT";
@@ -596,11 +625,13 @@ export class SettingsManager {
     }
   }
   private async choose() {
+    this.observeSetup("FOLDER_SELECTION");
     const selected = await this.watched(
       (signal) => this.options.folder?.(signal) ?? pickFolder({ signal }),
     );
     if (selected.status !== "SELECTED") {
       if (selected.status === "CANCELLED") return this.cancel(false);
+      this.setupFailureReason = selected.status;
       throw new RuntimeError(
         selected.status === "UNSUPPORTED" ? "POLICY_UNCONFIRMED" : "PROVIDER_UNAVAILABLE",
       );
@@ -608,12 +639,16 @@ export class SettingsManager {
     await this.save((_state, j) => {
       j.root = selected.root;
     });
+    this.observeSetup("SHARING_CONFIRMATION");
     const choice = await this.watched(
       (signal) =>
         this.options.confirm?.(selected.root, signal) ??
         confirmLocalScope(selected.root, { signal }),
     );
-    if (!choice.confirmed) return this.cancel(false);
+    if (!choice.confirmed) {
+      this.setupFailureReason = "SHARING_UNCONFIRMED";
+      return this.cancel(false);
+    }
     if (
       choice.readMode !== undefined &&
       (choice.readMode !== "AUTO_CODE" || choice.files.length !== 0)
@@ -637,6 +672,7 @@ export class SettingsManager {
       };
       j.phase = "CATALOG_INTENT";
     });
+    this.observeSetup("MODEL_DISCOVERY");
     this.adapter = this.createAdapter();
     const capabilities = await this.watched((_signal, check) =>
       this.adapter!.capabilities(selected.root.path, check),
@@ -651,6 +687,7 @@ export class SettingsManager {
       j.receipt!.catalog = publicCatalog;
     });
     await this.call("receipt", this.state.journal!.receipt as unknown as Body);
+    this.observeSetup("MODEL_SELECTION");
   }
   private async stopRunner(abort = false) {
     if (abort) this.runnerAbort?.abort();
@@ -798,6 +835,7 @@ export class SettingsManager {
     return body;
   }
   private async prepare(response: SettingsResponse) {
+    this.observeSetup("APPLYING");
     const body = this.applyBody(response);
     this.ready = false;
     if (this.state.journal!.applyBody && !same(this.state.journal!.applyBody, body))
@@ -1035,6 +1073,54 @@ export class SettingsManager {
     });
     this.reason = null;
   }
+  /** A durable cancellation receipt, not an error label, proves candidate cleanup. */
+  private async replayCancellation(response: SettingsResponse) {
+    const j = this.state.journal!;
+    const op = this.sameOperation(response);
+    if (["COMMITTED", "APPLIED"].includes(op.state)) return this.adopt(response);
+    this.assertBinding(response, j.previous ?? null);
+    const cancelled = j.receipt;
+    if (!cancelled || cancelled.state !== "CANCELLED" || !same(cancelled, receipt(j, "CANCELLED")))
+      throw new RuntimeError("CONTEXT_UNCONFIRMED");
+    if (j.applyBody && !same(validateBody("apply", op.requested), j.applyBody))
+      throw new SettingsError("CONFLICT");
+    if (op.state === "APPLYING") {
+      // Never replace the durable cleanup receipt with this intermediate failure report.
+      const failed = { ...cancelled, state: "FAILED" as const };
+      const result = await this.call("receipt", failed as unknown as Body);
+      const confirmed = this.sameOperation(result);
+      if (["COMMITTED", "APPLIED"].includes(confirmed.state)) return this.adopt(result);
+      this.assertBinding(result, j.previous ?? null);
+      if (confirmed.state !== "FAILED" || !same(confirmed.receipt, failed))
+        throw new RuntimeError("UNKNOWN");
+    }
+    const result = await this.call("receipt", cancelled as unknown as Body);
+    const confirmed = this.sameOperation(result);
+    if (["COMMITTED", "APPLIED"].includes(confirmed.state)) return this.adopt(result);
+    this.assertBinding(result, j.previous ?? null);
+    if (confirmed.state !== "CANCELLED" || !same(confirmed.receipt, cancelled))
+      throw new RuntimeError("UNKNOWN");
+    await this.save((_state, journal) => {
+      journal.phase = "CANCELLED";
+    });
+  }
+  private async closeUnpreparedFailure() {
+    const j = this.state.journal!;
+    await this.cleanupAdapter();
+    const response = await this.call("poll");
+    const op = this.sameOperation(response);
+    if (["COMMITTED", "APPLIED"].includes(op.state)) return this.adopt(response);
+    this.assertBinding(response, j.previous ?? null);
+    if (!same(validateBody("apply", op.requested), j.applyBody))
+      throw new SettingsError("CONFLICT");
+    const cancelled = receipt(j, "CANCELLED");
+    await this.save((_state, journal) => {
+      journal.phase = "CANCEL_INTENT";
+      journal.reason = this.reason;
+      journal.receipt = cancelled;
+    });
+    await this.replayCancellation(response);
+  }
   private async recover(response: SettingsResponse) {
     const j = this.state.journal!,
       op = this.sameOperation(response);
@@ -1043,14 +1129,8 @@ export class SettingsManager {
         return this.cancel(true);
       case "adopt":
         return this.adopt(response);
-      case "replay-cancellation": {
-        const result = await this.call("receipt", j.receipt as unknown as Body);
-        if (this.sameOperation(result).state === "CANCELLED")
-          await this.save((_s, journal) => {
-            journal.phase = "CANCELLED";
-          });
-        return;
-      }
+      case "replay-cancellation":
+        return this.replayCancellation(response);
       case "commit":
         return this.commit();
       case "restore-confirmation":
@@ -1079,6 +1159,12 @@ export class SettingsManager {
     this.ready = false;
     this.reason =
       error instanceof RuntimeError || error instanceof SettingsError ? error.code : "UNKNOWN";
+    const publicReason =
+      this.setupFailureReason ??
+      (setupReasons.includes(this.reason as SetupReason)
+        ? (this.reason as SetupReason)
+        : "UNCONFIRMED");
+    this.observeSetup("FAILED", publicReason);
     const j = this.state?.journal;
     if (!j || closed(j) || ["COMMITTED", "LOCAL_COMMITTED"].includes(j.phase)) return;
     if (this.reason === "RUNTIME_BUSY" && j.phase === "APPLYING") {
@@ -1098,6 +1184,29 @@ export class SettingsManager {
       !j.context &&
       !["PREPARE_INTENT", "PREPARED", "COMMIT_INTENT"].includes(j.phase)
     ) {
+      if (j.phase === "APPLYING" && j.applyBody && !j.settings && !j.commitBody) {
+        try {
+          await this.closeUnpreparedFailure();
+        } catch (cleanup) {
+          this.reason =
+            cleanup instanceof RuntimeError || cleanup instanceof SettingsError
+              ? cleanup.code
+              : "UNKNOWN";
+          this.observeSetup(
+            "FAILED",
+            setupReasons.includes(this.reason as SetupReason)
+              ? (this.reason as SetupReason)
+              : "UNCONFIRMED",
+          );
+          await this.save((_s, journal) => {
+            journal.phase = "UNKNOWN";
+            journal.reason = this.reason;
+          });
+          if (cleanup instanceof RuntimeError && cleanup.code === "CLEANUP_INCOMPLETE")
+            throw cleanup;
+        }
+        return;
+      }
       try {
         await this.cleanupAdapter();
       } catch (cleanup) {
@@ -1116,7 +1225,7 @@ export class SettingsManager {
       await this.call("receipt", failed as unknown as Body).catch(() => {});
       return;
     }
-    if (j.phase === "CANCEL_INTENT" || !!j.commitBody) {
+    if (j.phase === "CANCEL_INTENT" || j.receipt?.state === "CANCELLED" || !!j.commitBody) {
       await this.save((_s, journal) => {
         journal.phase = "UNKNOWN";
         journal.reason = this.reason;
@@ -1186,9 +1295,13 @@ export class SettingsManager {
               if (!["REQUESTED", "CANCELLED"].includes(response.operation.state))
                 throw new RuntimeError("UNKNOWN");
               await this.bootstrap(response, response.operation);
+              await this.observeOperation();
               if (response.operation.state === "CANCELLED") await this.recover(response);
               else await this.choose();
-            } else if (journal && !closed(journal)) await this.recover(response);
+            } else if (journal && !closed(journal)) {
+              await this.observeOperation();
+              await this.recover(response);
+            }
             if (!this.state.journal || closed(this.state.journal)) {
               if (this.state.current) this.assertBinding(this.latestResponse ?? response);
               if (this.reason === "UNAUTHENTICATED" || this.reason === "FORBIDDEN")
@@ -1224,6 +1337,9 @@ export class SettingsManager {
           throw new RuntimeError("CLEANUP_INCOMPLETE");
         } finally {
           await heartbeatJob;
+          await this.setupObserver?.stop();
+          this.setupObserver = undefined;
+          this.observedOperation = undefined;
         }
       }
       return this.status();

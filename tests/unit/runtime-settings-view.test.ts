@@ -446,13 +446,20 @@ function loadUI(
       jsx: ts.JsxEmit.ReactJSX,
     },
   }).outputText;
-  const jsx = (type: unknown, props: Record<string, unknown>) => ({ type, props });
+  const jsx = (type: unknown, props: Record<string, unknown>) => ({
+    type,
+    props: type === "setup-progress" ? { ...props, children: props.fallback } : props,
+  });
   runInNewContext(source, {
     exports: exported,
     Date,
     ...globals,
     require(name: string) {
       if (name === "react/jsx-runtime") return { jsx, jsxs: jsx };
+      if (name === "../connection-setup/setup-controller" && path.includes("runtime-settings-form"))
+        return {};
+      if (name === "../connection-setup/setup-status")
+        return { SetupStatus: "setup-status", SetupProgress: "setup-progress" };
       if (name === "./connection-presence") return { connectionSnapshot };
       if (Object.hasOwn(replacements, name)) return replacements[name];
       throw new Error(`Unexpected settings UI dependency ${name}`);
@@ -564,7 +571,7 @@ test("should discover a terminal registration and show the approved room AI sett
       organizationId: string;
       roomId: string;
       state: string;
-      lastSeenAt: null;
+      lastSeenAt: string | null;
       expiresAt: string;
     }[],
     rooms: [deviceId, rootId].map((roomId) => ({
@@ -634,12 +641,67 @@ test("should discover a terminal registration and show the approved room AI sett
   for (const tick of timers.values()) tick();
   assert.equal(refreshed, 3);
   nextCleanup();
+  tree = render();
+  (nodes(tree).find((node) => node.type === "connection-guide")!.props.onLaunch as () => void)();
+  const reconnectCleanup = effects[1]() as () => void;
+  time += 300001;
+  for (const tick of timers.values()) tick();
+  tree = render();
+  assert.doesNotMatch(textContent(tree), /기기 등록을 확인하지 못했습니다/);
+  assert.equal(
+    nodes(tree).find((node) => node.type === "settings-form")?.props.deviceId,
+    operationId,
+  );
+  reconnectCleanup();
+  tree = render();
+  (nodes(tree).find((node) => node.type === "connection-guide")!.props.onLaunch as () => void)();
+  const heartbeatCleanup = effects[1]() as () => void;
+  props.devices.push({ ...props.devices[0], deviceId: secondOperationId, lastSeenAt: null });
+  tree = render();
+  (nodes(tree).find((node) => node.type === "connection-guide")!.props.onLaunch as () => void)();
+  const beforeOtherHeartbeat = refreshed;
+  props.devices[1].lastSeenAt = new Date(time + 1).toISOString();
+  for (const tick of timers.values()) tick();
+  assert.equal(
+    refreshed,
+    beforeOtherHeartbeat + 1,
+    "another device must not end selected-device recheck",
+  );
+  const beforeHeartbeat = refreshed;
+  props.devices[0].lastSeenAt = new Date(time + 1).toISOString();
+  for (const tick of timers.values()) tick();
+  assert.equal(refreshed, beforeHeartbeat, "same-ID heartbeat should end the independent recheck");
+  assert.match(textContent(render()), /선택한 기기의 최근 통신이 확인되었습니다/);
+  time += 300001;
+  for (const tick of timers.values()) tick();
+  assert.equal(refreshed, beforeHeartbeat);
+  assert.doesNotMatch(textContent(render()), /기기 등록을 확인하지 못했습니다/);
+  heartbeatCleanup();
+  tree = render();
+  (
+    nodes(tree).find((node) => node.props["aria-label"] === "설정할 본인 기기")!.props.onChange as (
+      event: unknown,
+    ) => void
+  )({ target: { value: "" } });
+  tree = render();
+  (nodes(tree).find((node) => node.type === "connection-guide")!.props.onLaunch as () => void)();
+  const unselectedCleanup = effects[1]() as () => void;
+  const beforeUnselectedHeartbeat = refreshed;
+  props.devices[1].lastSeenAt = new Date(time + 1).toISOString();
+  for (const tick of timers.values()) tick();
+  assert.equal(
+    refreshed,
+    beforeUnselectedHeartbeat + 1,
+    "an unselected device must not end communication recheck",
+  );
+  unselectedCleanup();
   assert.equal(timers.size, 0);
 });
 function formTree(
   view: SettingsView,
   onModel: (model: string) => void = () => {},
   props: Record<string, unknown> = {},
+  onPoll: () => Promise<void> = async () => {},
 ) {
   const component = loadUI("src/features/runtime-settings/runtime-settings-form.tsx", {
     react: {
@@ -657,6 +719,7 @@ function formTree(
       selectionSaved,
       SettingsController: class {
         setModel = onModel;
+        poll = onPoll;
         getSnapshot = () => view;
         subscribe() {}
       },
@@ -689,7 +752,7 @@ test("should render only actual capability choices and disable changes after the
     }),
   );
   const applyButton = nodes(missingBinding).find(
-    (node) => node.type === "button" && textContent(node) === "PC에 설정 적용",
+    (node) => node.type === "button" && node.props["aria-label"] === "설정 저장",
   )!;
   assert.equal(applyButton.props.disabled, true);
 });
@@ -736,7 +799,7 @@ test("should display the prior PC settings separately from the newly committed s
   assert.match(textContent(applied), /이전 연결/);
   assert.doesNotMatch(textContent(applied), /준비 완료/);
   assert.equal(
-    nodes(tree).some((node) => node.type === "button" && textContent(node) === "PC에 설정 적용"),
+    nodes(tree).some((node) => node.type === "button" && node.props["aria-label"] === "설정 저장"),
     false,
   );
 });
@@ -1324,12 +1387,24 @@ test("should prepare a room-specific command and expose it when clipboard permis
     {
       react: {
         useEffect: (f: () => unknown) => effects.push(f),
-        useRef: (value: unknown) => ({ current: value === false ? false : field }),
+        useRef(value: unknown) {
+          const slot = cursor++;
+          if (!(slot in states)) states[slot] = { current: value === null ? field : value };
+          return states[slot];
+        },
         useState(initial: unknown) {
           const slot = cursor++;
           if (!(slot in states)) states[slot] = initial;
           return [states[slot], (next: unknown) => (states[slot] = next)];
         },
+      },
+      "../connection-setup/setup-controller": {
+        requestSetup: async () => ({
+          created: true,
+          key: "a".repeat(64),
+          payloadHash: "b".repeat(64),
+          expiresAt: new Date(Date.now() + 1800000).toISOString(),
+        }),
       },
       "../../components/ui/button": { Button: "button" },
       "../../components/ui/input": { Input: "input" },
@@ -1346,6 +1421,8 @@ test("should prepare a room-specific command and expose it when clipboard permis
     },
     {
       AbortController,
+      AbortSignal,
+      crypto,
       setTimeout,
       clearTimeout,
       TextDecoder,
@@ -1384,11 +1461,13 @@ test("should prepare a room-specific command and expose it when clipboard permis
   effects.length = 0;
   ui(props);
   effects[2]();
+
   await new Promise((resolve) => setImmediate(resolve));
   cursor = 0;
   const tree = ui(props),
     button = nodes(tree).find((node) => node.type === "button")!;
   assert.equal(button.props.disabled, false);
+  await (button.props.onClick as () => Promise<void>)();
   assert.equal(options.length, 1);
   assert.deepEqual(JSON.parse(JSON.stringify(options[0])), {
     origin: props.origin,
@@ -1397,12 +1476,13 @@ test("should prepare a room-specific command and expose it when clipboard permis
     organizationId: rootId,
     deviceAlias: "내 Mac",
     manifest,
+    selection: await readConnectionSelection(null, props.origin, rootId, deviceId),
+    launch: { key: "a".repeat(64), payloadHash: "b".repeat(64) },
   });
   assert.equal(
-    nodes(tree).find((node) => node.type === "textarea")?.props.value,
+    nodes(((cursor = 0), ui(props))).find((node) => node.type === "textarea")?.props.value,
     "verified-connection-command",
   );
-  await (button.props.onClick as () => Promise<void>)();
   assert.deepEqual(calls, ["open", "focus", "select"]);
   cursor = 0;
   assert.ok(
@@ -1511,15 +1591,13 @@ test("should use terminal inspection instead of another launch for recent cancel
 
 test("should promote model confirmation then apply and keep applied settings separate", () => {
   const modelTree = formTree(formView());
-  const modelButton = nodes(modelTree).find(
-    (node) => node.props["aria-label"] === "모델 선택 확인",
-  )!;
+  const modelButton = nodes(modelTree).find((node) => node.props["aria-label"] === "설정 저장")!;
   assert.ok(modelButton);
   assert.equal(modelButton.props.variant, "default");
   const c = catalog();
   const saved = confirmed(c, { model: "model-one", effort: null, snapshotHash: c.snapshotHash });
   const applyTree = formTree(formView({ response: saved }));
-  const applyButton = nodes(applyTree).find((node) => textContent(node) === "PC에 설정 적용")!;
+  const applyButton = nodes(applyTree).find((node) => node.props["aria-label"] === "설정 저장")!;
   assert.equal(applyButton.props.variant, "default");
   assert.equal(applyButton.props.disabled, false);
   const applied = {
@@ -1540,7 +1618,322 @@ test("should promote model confirmation then apply and keep applied settings sep
   );
   assert.ok(nodes(appliedTree).find((node) => node.props["aria-label"] === "PC에 적용된 설정"));
   assert.equal(
-    nodes(appliedTree).some((node) => textContent(node) === "PC에 설정 적용"),
+    nodes(appliedTree).some((node) => node.props["aria-label"] === "설정 저장"),
     false,
   );
+});
+
+test("should save one explicit intent with exactly select then apply", async () => {
+  let current = confirmed();
+  const calls: string[] = [];
+  const c = controller(async (action, body) => {
+    if (action !== "list") calls.push(action);
+    if (action === "select-runtime") current = confirmed(catalog(), body);
+    if (action === "apply") current = response({ operation: operation("APPLYING", body) });
+    return current;
+  });
+  try {
+    await c.poll();
+    c.setSessionAlias("내 AI");
+    await c.save();
+    assert.deepEqual(calls, ["select-runtime", "apply"]);
+  } finally {
+    c.stop();
+  }
+});
+
+for (const fault of ["lost-select", "binding", "lost-apply", "navigation", "double"] as const)
+  test(`should stop or serialize an explicit save for ${fault}`, async () => {
+    let current = confirmed();
+    const calls: string[] = [];
+    const selected = deferred<Response>();
+    const c = controller(async (action, body) => {
+      if (action !== "list") calls.push(action);
+      if (action === "select-runtime") {
+        current = confirmed(catalog(), body);
+        if (fault === "lost-select") throw new SettingsError("UNAVAILABLE");
+        if (fault === "binding")
+          current = { ...current, currentBinding: { ...binding, bindingEpoch: 8 } };
+        if (fault === "navigation" || fault === "double") return selected.promise;
+      }
+      if (action === "apply" && fault === "lost-apply") throw new SettingsError("UNAVAILABLE");
+      return current;
+    });
+    try {
+      await c.poll();
+      c.setSessionAlias("내 AI");
+      const saving = c.save();
+      if (fault === "navigation") c.stop();
+      if (fault === "double") await c.save();
+      selected.resolve(current);
+      await saving;
+      if (fault === "lost-apply") {
+        await c.poll();
+        await c.save();
+        assert.equal(calls.filter((x) => x === "apply").length, 1);
+      } else assert.equal(calls.filter((x) => x === "apply").length, fault === "double" ? 1 : 0);
+      assert.equal(calls.filter((x) => x === "select-runtime").length, 1);
+    } finally {
+      c.stop();
+    }
+  });
+test("should resume confirmed selection only after a second explicit save", async () => {
+  let current = confirmed(),
+    lost = true;
+  const calls: string[] = [];
+  const c = controller(async (action, body) => {
+    if (action !== "list") calls.push(action);
+    if (action === "select-runtime") {
+      current = confirmed(catalog(), body);
+      if (lost) {
+        lost = false;
+        throw new SettingsError("UNAVAILABLE");
+      }
+    }
+    if (action === "apply") current = response({ operation: operation("APPLYING", body) });
+    return current;
+  });
+  try {
+    await c.poll();
+    c.setSessionAlias("내 AI");
+    await c.save();
+    assert.deepEqual(calls, ["select-runtime"]);
+    await c.poll();
+    assert.deepEqual(calls, ["select-runtime"]);
+    await c.save();
+    assert.deepEqual(calls, ["select-runtime", "apply"]);
+  } finally {
+    c.stop();
+  }
+});
+
+test("should keep cancellation outside an in-flight save intent", async () => {
+  let current = confirmed();
+  const calls: string[] = [];
+  const c = controller(async (action, body) => {
+    if (action !== "list") calls.push(action);
+    if (action === "select-runtime") current = confirmed(catalog(), body);
+    if (action === "apply") current = response({ operation: operation("APPLYING", body) });
+    return current;
+  });
+  try {
+    await c.poll();
+    c.setSessionAlias("내 AI");
+    const remove = c.subscribe(() => {
+      if (c.getSnapshot().busy === null) void c.cancel();
+    });
+    await c.save();
+    remove();
+    assert.deepEqual(calls, ["select-runtime", "apply"]);
+  } finally {
+    c.stop();
+  }
+});
+
+test("should render actual observations only in the upper current phase", () => {
+  const tree = formTree(
+    formView({
+      setupInspection: {
+        requestId: null,
+        expiresAt: null,
+        startup: null,
+        settings: {
+          deviceId,
+          operationId,
+          configRevision: 0,
+          sequence: 1,
+          stage: "MODEL_DISCOVERY",
+          reason: null,
+          receivedAt: new Date().toISOString(),
+        },
+        runtime: confirmed(),
+        device: { deviceId, state: "active", authenticated: true },
+      },
+    }),
+  );
+  const upper = nodes(tree).find((node) => node.props.id === "settings-next-action")!;
+  const progress = nodes(tree).filter((node) => node.type === "setup-progress");
+  assert.equal(progress.length, 1);
+  assert.ok(nodes(upper).includes(progress[0]));
+  assert.equal(progress[0].props.embedded, true);
+  assert.equal(nodes(tree).filter((node) => node.props.role === "status").length, 1);
+});
+
+for (const terminal of ["APPLIED", "CANCELLED"] as const)
+  test(`should clear lost apply only after proven ${terminal} and save a new folder operation`, async () => {
+    let current = confirmed();
+    const calls: string[] = [];
+    const c = controller(
+      async (action, body) => {
+        if (action !== "list") calls.push(action);
+        if (action === "select-runtime")
+          current = { ...current, operation: { ...current.operation!, requested: body } };
+        if (action === "apply" && body.operationId === operationId)
+          throw new SettingsError("UNAVAILABLE");
+        if (action === "select-folder")
+          current = response({
+            configRevision: terminal === "APPLIED" ? 1 : 0,
+            operation: {
+              ...operation("REQUESTED", body),
+              operationId: secondOperationId,
+              expectedConfigRevision: terminal === "APPLIED" ? 1 : 0,
+              receipt: null,
+            },
+          });
+        if (action === "apply" && body.operationId === secondOperationId)
+          current = {
+            ...current,
+            operation: { ...current.operation!, state: "APPLYING", requested: body },
+          };
+        return current;
+      },
+      () => secondOperationId,
+    );
+    try {
+      await c.poll();
+      c.setSessionAlias("내 AI");
+      await c.save();
+      assert.equal(c.getSnapshot().applyUnconfirmed, true);
+      const unproven = operation(terminal);
+      unproven.receipt = localReceipt();
+      current = response({ operation: unproven });
+      await c.poll();
+      assert.equal(c.getSnapshot().applyUnconfirmed, true);
+      const receipt =
+        terminal === "APPLIED"
+          ? {
+              ...localReceipt(terminal),
+              ...binding,
+              configRevision: 1,
+              bindingEpoch: 8,
+              model: "model-one",
+              sessionAlias: "내 AI",
+              snapshotHash: catalog().snapshotHash,
+            }
+          : localReceipt(terminal);
+      current = response({
+        configRevision: terminal === "APPLIED" ? 1 : 0,
+        currentBinding: terminal === "APPLIED" ? { ...binding, bindingEpoch: 8 } : binding,
+        operation: { ...operation(terminal), receipt },
+        applied: terminal === "APPLIED" ? receipt : null,
+      });
+      await c.poll();
+      assert.equal(c.getSnapshot().applyUnconfirmed, false);
+      assert.equal(c.getSnapshot().saveError, null);
+      await c.selectFolder();
+      const next = current.operation!;
+      current = {
+        ...current,
+        catalog: catalog(),
+        operation: {
+          ...next,
+          state: "LOCAL_CONFIRMATION",
+          receipt: {
+            ...localReceipt(),
+            operationId: secondOperationId,
+            configRevision: current.configRevision,
+          },
+        },
+      };
+      await c.poll();
+      const tree = formTree(c.getSnapshot());
+      assert.equal(
+        nodes(tree).find((node) => node.props["aria-label"] === "설정 저장")!.props.disabled,
+        false,
+      );
+      await c.save();
+      assert.equal(calls.filter((action) => action === "apply").length, 2);
+    } finally {
+      c.stop();
+    }
+  });
+
+test("should expose and execute manual status recovery after an initial list failure", async (t) => {
+  t.mock.timers.enable({ apis: ["Date"], now: 1000 });
+  let unavailable = true;
+  const c = controller(async () => {
+    if (unavailable) throw new SettingsError("UNAVAILABLE");
+    return response();
+  });
+  try {
+    await c.poll();
+    t.mock.timers.setTime(301001);
+    await c.poll();
+    assert.equal(c.getSnapshot().pollManual, true);
+    const tree = formTree(c.getSnapshot(), undefined, {}, () => c.poll());
+    const button = nodes(tree).find(
+      (node) => node.type === "button" && textContent(node) === "상태 다시 확인",
+    );
+    assert.ok(button);
+    assert.equal(button.props.disabled, undefined);
+    unavailable = false;
+    await (button.props.onClick as () => Promise<void>)();
+    await new Promise((resolve) => setImmediate(resolve));
+    assert.equal(c.getSnapshot().response?.current, true);
+    assert.equal(c.getSnapshot().error, null);
+  } finally {
+    c.stop();
+  }
+});
+
+test("should label ticket-only execution separately without turning a valid device into a failure", () => {
+  const startup = {
+    attemptId: operationId,
+    sequence: 1,
+    stage: "FAILED",
+    reason: "RUNTIME_BUSY",
+    receivedAt: new Date().toISOString(),
+    authenticated: false,
+  };
+  const snapshot = {
+    inspection: {
+      requestId: operationId,
+      expiresAt: new Date(Date.now() + 1800000).toISOString(),
+      startup,
+      settings: null,
+      runtime: null,
+      device: null,
+    },
+    checkedAt: Date.now(),
+    error: false,
+    manual: false,
+  };
+  let requested: unknown;
+  const exports = loadUI("src/features/connection-setup/setup-status.tsx", {
+    react: {
+      useMemo: (factory: () => unknown) => factory(),
+      useEffect() {},
+      useSyncExternalStore: (_subscribe: unknown, get: () => unknown) => get(),
+    },
+    "../../components/ui/button": { Button: "button" },
+    "./setup-controller": {
+      SetupController: class {
+        constructor(body: unknown) {
+          requested = body;
+        }
+        subscribe() {}
+        getSnapshot = () => snapshot;
+      },
+      setupSummary: () => "연결 시작에 실패했습니다",
+    },
+  });
+  const component = exports.SetupStatus as (props: unknown) => UINode;
+  const progress = component({ roomId: rootId, requestId: operationId });
+  const renderProgress = exports.SetupProgress as (props: unknown) => UINode;
+  const command = renderProgress(progress.props);
+  assert.equal(command.props["aria-label"], "복사한 명령의 실행 상태");
+  assert.match(textContent(command), /이번 명령 실행을 시작하지 못했습니다/);
+  assert.match(textContent(command), /기존 기기의 등록·설정은 이 보고로 바뀌지 않습니다/);
+  assert.doesNotMatch(textContent(command), /연결 시작에 실패했습니다/);
+  assert.deepEqual(JSON.parse(JSON.stringify(requested)), {
+    roomId: rootId,
+    requestId: operationId,
+    deviceId: null,
+  });
+  const valid = formTree(
+    formView({ response: response(), reservedOperationId: null, draft: null }),
+    undefined,
+    { connectionRecent: true },
+  );
+  assert.doesNotMatch(textContent(valid), /연결 시작에 실패|RUNTIME_BUSY/);
 });

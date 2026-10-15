@@ -4,14 +4,42 @@ set -euo pipefail
 builtin unset BASH_ENV ENV NODE_OPTIONS NODE_PATH PERL5OPT PERL5DB PERL5LIB PERLLIB PERLIO PERL_USE_UNSAFE_INC LD_PRELOAD LD_LIBRARY_PATH DYLD_INSERT_LIBRARIES DYLD_LIBRARY_PATH DYLD_FRAMEWORK_PATH DYLD_FALLBACK_LIBRARY_PATH DYLD_FALLBACK_FRAMEWORK_PATH
 umask 077
 
-fail() { /usr/bin/printf '%s\n' "로컬 연결을 시작하지 못했습니다: $1" >&2; exit 1; }
-[ "$#" -eq 5 ] || [ "$#" -eq 7 ] || [ "$#" -eq 8 ] || fail INVALID_ARGUMENTS
+ticket=""
+attempt=""
+sequence=0
+report_startup() {
+  [ -n "$ticket" ] && [ -n "$attempt" ] || return 0
+  sequence=$((sequence + 1))
+  /usr/bin/curl --disable --silent --fail --proto '=http,https' --max-redirs 0 --connect-timeout 1 --max-time 2 --max-filesize 16384 \
+    --request POST --header 'Content-Type: application/json' --header "Authorization: Bearer $ticket" \
+    --data "{\"attemptId\":\"$attempt\",\"sequence\":$sequence,\"stage\":\"$1\",\"reason\":$2}" \
+    --output /dev/null "$origin/api/connection-setup/startup-report" 2>/dev/null || true
+}
+fail() {
+  /usr/bin/printf '%s\n' "로컬 연결을 시작하지 못했습니다: $1" "Mac의 터미널에서 운영체제·다운로드·연결 상태를 확인한 뒤 같은 연결로 재개하세요." >&2
+  case "$1" in
+    FORBIDDEN|CONFLICT|MACOS_REQUIRED|MACOS_13_5_REQUIRED|UNSUPPORTED_ARCHITECTURE|DOWNLOAD_FAILED|DOWNLOAD_DIGEST|INVALID_MANIFEST|INVALID_ARCHIVE|INVALID_DESCRIPTION|RUNTIME_VERSION|RUNTIME_ARCHIVE|RUNTIME_FILE|REDIRECT_OR_HTTP_ERROR|DOWNLOAD_SIZE|MACOS_VERSION) reason=$1 ;;
+    *) reason=UNCONFIRMED ;;
+  esac
+  report_startup FAILED "\"$reason\""
+  exit 1
+}
+[ "$#" -eq 4 ] || [ "$#" -eq 5 ] || [ "$#" -eq 7 ] || [ "$#" -eq 8 ] || fail INVALID_ARGUMENTS
 origin=$1
+[[ "$origin" =~ ^https://[^/?\#@[:space:]]+$ || "$origin" =~ ^http://(localhost|127\.0\.0\.1|\[::1\])(:[0-9]+)?$ ]] || fail UNSAFE_ORIGIN
+if [ "$#" -eq 4 ]; then
+  [ "$2" = --setup-ticket ] || fail INVALID_ARGUMENTS
+  [[ "$3" =~ ^[a-f0-9]{64}$ && "$4" =~ ^[a-f0-9]{64}$ ]] || fail INVALID_ARGUMENTS
+  ticket=$3
+  description_sha=$4
+  attempt=$(/usr/bin/uuidgen | /usr/bin/tr 'A-F' 'a-f')
+  report_startup PREPARING null
+  set --
+else
 profile=$2
 device_alias=$3
 organization=$4
 room=$5
-[[ "$origin" =~ ^https://[^/?\#@[:space:]]+$ || "$origin" =~ ^http://(localhost|127\.0\.0\.1|\[::1\])(:[0-9]+)?$ ]] || fail UNSAFE_ORIGIN
 [[ "$profile" =~ ^web-[a-f0-9]{32}$ ]] || fail INVALID_PROFILE
 if [ "$#" -ge 7 ]; then
   previous_profile=$6
@@ -31,6 +59,7 @@ if [ "$#" -ge 7 ]; then
   fi
 else
   set --
+fi
 fi
 [ "$(/usr/bin/uname -s)" = Darwin ] || fail MACOS_REQUIRED
 os=$(/usr/bin/sw_vers -productVersion)
@@ -72,6 +101,8 @@ node=$(builtin type -P node || true)
 version=""
 if [ -n "$node" ]; then version=$("$node" --version 2>/dev/null || true); fi
 if [[ ! "$version" =~ ^v24\.[0-9]+\.[0-9]+$ ]]; then
+  report_startup DOWNLOADING null
+  /usr/bin/printf '%s\n' "Node 실행 프로그램을 준비하고 있습니다."
   node_package="node-v24.21.0-darwin-$arch"
   download "https://nodejs.org/download/release/v24.21.0/$node_package.tar.gz" "$work/node.tar.gz" 157286400
   verify "$work/node.tar.gz" "$node_sha"
@@ -96,7 +127,38 @@ try {
     !Array.isArray(value) &&
     Object.keys(value).length === keys.length &&
     keys.every((k) => Object.hasOwn(value, k));
-  if (mode === "manifest") {
+  if (mode === "description") {
+    const crypto = require("node:crypto");
+    const bytes = fs.readFileSync(input);
+    if (bytes.length > 16384) throw Error("DESCRIPTION_SIZE");
+    const envelope = JSON.parse(new TextDecoder("utf-8", { fatal: true }).decode(bytes));
+    if (!exact(envelope, ["ok", "data"]) || envelope.ok !== true ||
+        !exact(envelope.data, ["payload", "payloadHash", "expiresAt"])) throw Error("DESCRIPTION_ENVELOPE");
+    const { payload, payloadHash, expiresAt } = envelope.data;
+    if (typeof payload !== "string" || Buffer.byteLength(payload) > 16384 ||
+        payloadHash !== process.argv[5] || crypto.createHash("sha256").update(payload).digest("hex") !== payloadHash ||
+        !Number.isFinite(Date.parse(expiresAt)) || Date.parse(expiresAt) <= Date.now()) throw Error("DESCRIPTION_HASH");
+    const b = JSON.parse(payload);
+    const id = value => typeof value === "string" && /^[a-f0-9]{8}-[a-f0-9]{4}-[1-8][a-f0-9]{3}-[89ab][a-f0-9]{3}-[a-f0-9]{12}$/i.test(value);
+    const hash = parts => "web-" + crypto.createHash("sha256").update(JSON.stringify(parts)).digest("hex").slice(0,32);
+    if (!exact(b, ["version", "origin", "ownerUserId", "organizationId", "roomId", "deviceAlias", "selection"]) || b.version !== 1 ||
+        b.origin !== process.argv[6] || !id(b.ownerUserId) || !id(b.organizationId) || !id(b.roomId) ||
+        typeof b.deviceAlias !== "string" || !/^[\p{L}\p{N} ._-]{1,40}$/u.test(b.deviceAlias) || b.deviceAlias.trim() !== b.deviceAlias || b.deviceAlias.startsWith(".") || b.deviceAlias.includes("..") || /^[a-f0-9-]{36}$/i.test(b.deviceAlias) || /^[A-Za-z0-9_-]{24,}$/.test(b.deviceAlias)) throw Error("DESCRIPTION_SCOPE");
+    const s = b.selection;
+    if (!exact(s, ["version", "baseProfile", "chain"]) || s.version !== 1 || s.baseProfile !== hash([b.origin,b.ownerUserId,b.roomId]) ||
+        !Array.isArray(s.chain) || s.chain.length > 32) throw Error("DESCRIPTION_CHAIN");
+    let previous = s.baseProfile;
+    for (const g of s.chain) {
+      if (!exact(g,["previousProfile","recoveryId","profile"]) || g.previousProfile !== previous ||
+          typeof g.recoveryId !== "string" || !/^[a-f0-9]{8}-[a-f0-9]{4}-4[a-f0-9]{3}-[89ab][a-f0-9]{3}-[a-f0-9]{12}$/.test(g.recoveryId) ||
+          g.profile !== hash(["connection-recovery",previous,g.recoveryId]) || g.profile === previous) throw Error("DESCRIPTION_CHAIN");
+      previous = g.profile;
+    }
+    const g = s.chain.at(-1);
+    const args = [previous,b.deviceAlias,b.organizationId,b.roomId,
+      ...(g ? ["--previous-profile",g.previousProfile,"--recovery-id",g.recoveryId,"--recovery-chain",JSON.stringify(s)] : [])];
+    fs.writeFileSync(output,args.join("\n")+"\n",{flag:"wx",mode:0o600});
+  } else if (mode === "manifest") {
     const bytes = fs.readFileSync(input);
     if (bytes.length > 4096) throw Error("MANIFEST_SIZE");
     const m = JSON.parse(bytes.toString("utf8"));
@@ -192,6 +254,27 @@ try {
 NODE
 }
 
+if [ -n "$ticket" ]; then
+  status=$(ulimit -f 16; /usr/bin/curl --disable --silent --show-error --proto '=http,https' --max-redirs 0 --connect-timeout 10 --max-time 30 --max-filesize 16384 \
+    --request POST --header 'Content-Type: application/json' --header "Authorization: Bearer $ticket" --data '{}' \
+    --write-out '%{http_code}' --output "$work/description.json" "$origin/api/connection-setup/resolve") || fail INVALID_DESCRIPTION
+  case "$status" in
+    403) fail FORBIDDEN ;;
+    409) fail CONFLICT ;;
+    200) ;;
+    *) fail INVALID_DESCRIPTION ;;
+  esac
+  node_tool description "$work/description.json" "$work/description.args" "$description_sha" "$origin" || fail INVALID_DESCRIPTION
+  description_args=()
+  while IFS= read -r argument; do description_args+=("$argument"); done < "$work/description.args"
+  [ "${#description_args[@]}" -ge 4 ] || fail INVALID_DESCRIPTION
+  profile=${description_args[0]}
+  device_alias=${description_args[1]}
+  organization=${description_args[2]}
+  room=${description_args[3]}
+  set -- "${description_args[@]:4}"
+fi
+report_startup DOWNLOADING null
 download "$origin/local-connection/manifest.json" "$work/manifest.json" 4096
 node_tool manifest "$work/manifest.json" "$work/code.metadata" || fail INVALID_MANIFEST
 { read -r code_path; read -r code_sha; read -r code_bytes; } < "$work/code.metadata"
@@ -204,12 +287,13 @@ wait_interrupted=0
 interrupt() { wait_interrupted=1; forward "$1"; }
 trap 'interrupt INT' INT
 trap 'interrupt TERM' TERM
+report_startup CONNECTING null
 started=1
 "$node" --input-type=module -e '
 import {writeFile} from "node:fs/promises";
 import {pathToFileURL} from "node:url";
 // Keep argv[1] separate from the imported CLI entry so its direct-run guard stays idle.
-const [, entry, proof, ...args] = process.argv.slice(1);
+const [, entry, proof, origin, ticket, attempt, initialSequence, ...args] = process.argv.slice(1);
 let hint;
 try {
   const module = await import(pathToFileURL(entry).href);
@@ -225,9 +309,15 @@ try {
 } catch (error) {
   const code = typeof error?.code === "string" && /^[A-Z_]{1,40}$/.test(error.code) ? error.code : "UNAVAILABLE";
   process.stderr.write(JSON.stringify({state:"disconnected",error:code}) + "\n");
+  if (ticket) {
+    const reasons = new Set(["FORBIDDEN","CONFLICT","RUNTIME_BUSY","SNAPSHOT_CHANGED","POLICY_UNCONFIRMED","CONTEXT_UNCONFIRMED","CLEANUP_INCOMPLETE","UNAUTHENTICATED","UNAVAILABLE","PROVIDER_UNAVAILABLE"]);
+    try { await fetch(origin+"/api/connection-setup/startup-report", {method:"POST",redirect:"error",signal:AbortSignal.timeout(2000),
+      headers:{"Content-Type":"application/json",Authorization:"Bearer "+ticket},
+      body:JSON.stringify({attemptId:attempt,sequence:Number(initialSequence)+1,stage:"FAILED",reason:reasons.has(code)?code:"UNCONFIRMED"})}); } catch {}
+  }
   process.stdout.write((typeof hint === "function" ? hint(error) : "내 AI 연결에서 이전 연결 취소 여부와 연결 명령을 확인하세요.") + "\n");
   process.exitCode = 1;
-}' ai-collab-bootstrap "$work/code/src/cli.js" "$work/shutdown" connect --server "$origin" --profile "$profile" --device-alias "$device_alias" --organization-id "$organization" --room-id "$room" "$@" <&0 &
+}' ai-collab-bootstrap "$work/code/src/cli.js" "$work/shutdown" "$origin" "$ticket" "$attempt" "$sequence" connect --server "$origin" --profile "$profile" --device-alias "$device_alias" --organization-id "$organization" --room-id "$room" "$@" <&0 &
 child=$!
 set +e
 while true; do

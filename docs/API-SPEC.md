@@ -11,12 +11,14 @@ sources:
   - src/features/investigation-coordinator/**
   - packages/local-connector/src/workflow-contracts.ts
   - src/features/runtime-settings/**
+  - src/features/connection-setup/**
   - packages/local-connector/src/settings/contracts.ts
   - supabase/migrations/20261005001000-owner-local-ai-setup.sql
   - supabase/migrations/20261006001100-own-ai-input-pause.sql
   - supabase/migrations/20261006001200-owner-approved-repository-access.sql
   - supabase/migrations/20261006001300-shared-input-source-history.sql
   - supabase/migrations/20261009001700-runtime-model-display-names.sql
+  - supabase/migrations/20261015002100-connection-setup-observation.sql
 ---
 # 사람 입장·AI 채팅방·기기·실행 조정 계약
 
@@ -146,6 +148,16 @@ PC가 확인한 capability는 provider·설치 버전·모델·허용 effort·�
 응답은 `configRevision`, `catalog`, `operation`, `applied`, `current`, `currentBinding`을 구분한다. `REQUESTED`는 요청 접수, `LOCAL_CONFIRMATION`은 PC의 폴더·범위 확인, `APPLYING`은 서버 예약, `COMMITTED`는 binding과 receipt의 서버 확정, `APPLIED`는 PC의 영속 적용 보고다. `CANCELLED`라도 PC 정리 receipt가 없으면 새 설정을 막는다. `FAILED`·`UNKNOWN`을 새 operation으로 자동 재적용하지 않는다. 같은 단계·operation·본문의 재전달은 현재 인증·소유권·기기 scope 안에서 저장된 결과를 복구하고 다른 본문은 `CONFLICT`다.
 
 적용 예약은 관련 조사·실행·후속 입력·미확정 결과가 닫혔을 때만 가능하다. 예약 중 새 질문·공동 조사 시작과 legacy replace/새 ready를 차단하며 읽기·취소·관찰·기존 결과 업로드는 유지한다. 취소는 서버 확정 전의 허용 상태에만 가능하다. `COMMITTED` 이후에는 같은 receipt로 PC 확정을 복구한다. [SQL 소스](../supabase/migrations/20261005001000-owner-local-ai-setup.sql)가 계약을 정의하며 실제 설치·upgrade·Auth HTTP·브라우저·provider 수용 여부는 [검증 정본](planning/delivery-and-validation.md#현재-진행-상태)을 따른다.
+
+## 연결 시작과 진행 관찰
+
+`POST /api/connection-setup/<action>`은 기존 설정 receipt와 분리된 관찰 계약이다. [계약](../src/features/connection-setup/contracts.ts)과 [관찰 계약](../src/features/connection-setup/setup-contracts.ts)이 필드·enum의 정본이다. strict UTF-8·16KiB·no-store를 적용한다.
+
+- `issue`, `inspect`: 현재 cookie Auth·Origin·방 소속과 본인 소유권을 확인한다. issue는 서버가 owner/조직을 결정하고 같은 requestId/본문의 존재를 복구한다. 원문 조회 키는 최초 응답에만 있으며 응답 유실 때 같은 연결 선택으로 재발급한다.
+- `resolve`, `startup-report`: 30분 유효한 제한된 조회 키를 사용한다. 키는 기기 승인 권한이 없다. 시작 보고는 attemptId/sequence를 검증하며 첫 시도만 추적한다. 같은 명령의 중복 실행 실패가 첫 실행 상태를 덮지 않는다.
+- `settings-inspect`, `settings-report`: 현재 기기 bearer와 정확한 device/operation/configRevision을 확인한다. 설정·실행 결과를 변경하지 않는다. 마지막 sequence에서 이어가며 같은 sequence의 다른 본문과 과거 작업 보고를 거절한다.
+
+소유자 조회는 현재 기기·설정 정본과 제한된 진행 단계·원인·서버 수신 시각만 반환한다. raw 로그·경로·모델 응답·인증 정보는 수용하지 않는다. 공개 진행이 없거나 오래되면 완료·실패를 추정하지 않는다. 설정 완료와 취소 정리는 기존 receipt로만 판정한다.
 
 ## 채팅의 당시 대상과 자료 기록
 
