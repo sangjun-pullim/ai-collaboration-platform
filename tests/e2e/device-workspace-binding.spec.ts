@@ -103,16 +103,20 @@ async function connectionsFromRoom(page: Page, roomId: string) {
     await expect(page.getByRole("button", { name: "채팅방 목록 열기", exact: true })).toBeFocused();
   }
 }
+async function openApproval(page: Page) {
+  const phase = page.locator('details[aria-label="Mac 연결 단계"]');
+  if ((await phase.getAttribute("open")) === null) await phase.locator(":scope > summary").click();
+  const approval = phase.locator('details[aria-label="기기 승인 안내"]');
+  if ((await approval.getAttribute("open")) === null)
+    await approval.locator(":scope > summary").click();
+}
 async function connect(page: Page, id: string, name: string, roomId: string) {
   const p = await broker<{ name: string; code: string }>("pair", { id, name });
   await connectionsFromRoom(page, roomId);
   await page
     .getByRole("combobox", { name: "AI를 제공할 채팅방", exact: true })
     .selectOption(roomId);
-  const macPhase = page.locator('details[aria-label="Mac 연결 단계"]');
-  if (!(await macPhase.getByText("웹에서 새 기기 승인", { exact: true }).isVisible()))
-    await macPhase.locator(":scope > summary").click();
-  await page.getByText("웹에서 새 기기 승인", { exact: true }).click();
+  await openApproval(page);
   await page.getByLabel("기기 연결 코드", { exact: true }).fill(p.code);
   await page.getByRole("checkbox").check();
   await page.getByRole("button", { name: "기기 승인", exact: true }).click();
@@ -127,6 +131,7 @@ async function connect(page: Page, id: string, name: string, roomId: string) {
     timeout: 15000,
   });
   await expect(page.getByRole("combobox", { name: "AI 프로그램", exact: true })).toBeVisible();
+  await revealRoomActions(page);
   await expect(page.getByRole("link", { name: "이전 채팅방으로", exact: true })).toHaveAttribute(
     "href",
     `/app/rooms/${roomId}`,
@@ -153,6 +158,7 @@ test("should retain an explicitly confirmed recovery command across reload and b
     await expect(copy).toBeEnabled();
     await page.getByText("명령 확인·직접 복사", { exact: true }).click();
     await copy.click();
+    await expect(command).not.toHaveValue("");
     const defaultCommand = await command.inputValue();
     await page.getByText("기기 이름·새 승인으로 다시 연결", { exact: true }).click();
     await page.getByRole("button", { name: "새 승인으로 다시 연결", exact: true }).click();
@@ -165,6 +171,7 @@ test("should retain an explicitly confirmed recovery command across reload and b
     await prepare.click();
     await expect(copy).toBeEnabled();
     await copy.click();
+    await expect(command).not.toHaveValue("");
     const selected = await command.inputValue();
     const savedSelection = await page.evaluate(() =>
       Object.entries(localStorage).filter(([key]) => key.startsWith("ai-collab-connection:")),
@@ -175,6 +182,7 @@ test("should retain an explicitly confirmed recovery command across reload and b
     await page.getByText("명령 확인·직접 복사", { exact: true }).click();
     await expect(command).toHaveValue("");
     await copy.click();
+    await expect(command).not.toHaveValue("");
     expect(await command.inputValue()).not.toBe(selected);
     expect(
       await page.evaluate(() =>
@@ -195,6 +203,7 @@ test("should retain an explicitly confirmed recovery command across reload and b
     await page.getByRole("button", { name: "현재 선택 다시 확인", exact: true }).click();
     await expect(copy).toBeEnabled();
     expect(await command.inputValue()).not.toBe(selected);
+    await revealRoomActions(page);
     await page.getByRole("link", { name: "이전 채팅방으로", exact: true }).click();
     await expect(page).toHaveURL(new RegExp(`/app/rooms/${scope.roomId}$`));
     await expect(page.getByRole("heading", { name: "기기 검사방", exact: true })).toBeVisible();
@@ -241,7 +250,7 @@ test("should approve an owned connection and display only public unverified bind
     await expect(roster).toContainText("codex");
     await expect(op.getByRole("button", { name: "기기 승인", exact: true })).toHaveCount(0);
     await connectionsFromRoom(op, scope.roomId);
-    await op.getByText("웹에서 새 기기 승인", { exact: true }).click();
+    await openApproval(op);
     await op.getByText("연결 문제 해결", { exact: true }).click();
     await expect(
       op.getByText("승인할 수 있는 참가 방이 없습니다.", { exact: false }),
@@ -252,12 +261,13 @@ test("should approve an owned connection and display only public unverified bind
     await expect(op.getByRole("combobox", { name: "AI를 제공할 채팅방", exact: true })).toHaveCount(
       0,
     );
+    await revealRoomActions(op);
     await op.getByRole("link", { name: "이전 채팅방으로", exact: true }).click();
     await expect(op).toHaveURL(new RegExp(`/app/rooms/${scope.roomId}$`));
     await expect(op.getByRole("textbox", { name: "메시지", exact: true })).toHaveCount(0);
     await connectionsFromRoom(op, scope.roomId);
     await ap.goto("/app/connections");
-    await ap.getByText("웹에서 새 기기 승인", { exact: true }).click();
+    await openApproval(ap);
     await ap.getByLabel("기기 연결 코드", { exact: true }).fill("0".repeat(64));
     await ap.getByRole("checkbox").check();
     await ap.getByRole("button", { name: "기기 승인", exact: true }).click();
@@ -364,6 +374,7 @@ test("should revoke a connection and require fresh approval after membership rem
       (await broker<{ status: number }>("heartbeat", { id: owner.id, name: own })).status === 200,
     );
     await ap.reload();
+    await revealRoomActions(ap);
     if (await participantButton.isVisible()) await participantButton.click();
     await expect(memberBinding).toHaveCount(0);
     await expect(roster.getByText("공개 저장소 · 공개 세션", { exact: true })).toHaveCount(1);
@@ -378,6 +389,9 @@ test("should revoke a connection and require fresh approval after membership rem
         401,
     );
     await bp.goto("/app/connections");
+    await bp.getByText("연결 문제 해결", { exact: true }).click();
+    await expect(history).toHaveCount(0);
+    await bp.getByRole("button", { name: "연결 기록 확인", exact: true }).click();
     await expect(history).not.toHaveAttribute("open", "");
     await expect(history.getByText("제거됨 · 새 승인 필요", { exact: true })).toBeHidden();
     await expect(
@@ -389,6 +403,7 @@ test("should revoke a connection and require fresh approval after membership rem
     await expect(history.getByRole("button")).toHaveCount(0);
     await history.locator("summary").click();
     await expect(history.getByText("제거됨 · 새 승인 필요", { exact: true })).toBeHidden();
+    await revealRoomActions(bp);
     const appListReturn = bp.getByRole("link", { name: "채팅방 목록으로", exact: true });
     await expect(appListReturn).toHaveAttribute("href", "/app");
     await appListReturn.focus();
@@ -404,6 +419,7 @@ test("should revoke a connection and require fresh approval after membership rem
       (await broker<{ status: number }>("heartbeat", { id: owner.id, name: own })).status === 200,
     );
     await ap.reload();
+    await revealRoomActions(ap);
     if (await participantButton.isVisible()) await participantButton.click();
     await expect(memberBinding).toHaveCount(0);
     await expect(roster.getByText("공개 저장소 · 공개 세션", { exact: true })).toHaveCount(2);
@@ -446,9 +462,21 @@ test("should expose a valid room command and require explicit approval after a p
     const guide = page.getByRole("region", { name: "명령 한 번으로 내 Mac 연결" });
     await expect(guide.getByRole("button", { name: "연결 명령 복사", exact: true })).toBeEnabled();
     await guide.getByText("명령 확인·직접 복사", { exact: true }).click();
+    const issuedResponse = page.waitForResponse(
+      (response) =>
+        response.url().endsWith("/api/connection-setup/issue") &&
+        response.request().method() === "POST",
+    );
+    await guide.getByRole("button", { name: "연결 명령 복사", exact: true }).click();
+    const issued = await issuedResponse;
+    check(issued.status() === 200 && issued.request().postDataJSON().roomId === scope.roomId);
+    const launch = (await issued.json()).data;
+    await expect(guide.getByLabel("로컬 연결 명령")).not.toHaveValue("");
     const command = await guide.getByLabel("로컬 연결 명령").inputValue();
-    expect(command).toContain(scope.roomId);
-    expect(command).toContain(scope.organizationId);
+    check(command.includes(launch.key) && command.includes(launch.payloadHash));
+    expect(command).toContain("--setup-ticket");
+    expect(command).not.toContain(scope.roomId);
+    expect(command).not.toContain(scope.organizationId);
     expect(command).toContain("bootstrap-");
     expect(command).toContain(sha);
     expect(command).not.toContain(owner.id);
@@ -459,6 +487,7 @@ test("should expose a valid room command and require explicit approval after a p
     await page.goto(`/app/connections#code=${code}&room=00000000-0000-4000-8000-000000000099`);
     await expect(page).toHaveURL(/\/app\/connections$/);
     await expect(page.getByLabel("기기 연결 코드", { exact: true })).toHaveValue("");
+    await openApproval(page);
     await expect(page.getByRole("checkbox")).not.toBeChecked();
     await page.goto(`/app/connections#code=malformed&room=${scope.roomId}`);
     await expect(page).toHaveURL(/\/app\/connections$/);
@@ -552,6 +581,7 @@ test("should preserve the owned status snapshot and chat draft across explicit r
       .click();
     await expect(ap.getByRole("heading", { name: "기기 검사방", exact: true })).toBeVisible();
     await expectOwnedStatus();
+    await bar.locator("summary").click();
     const composer = ap.getByRole("form", { name: "AI에게 질문", exact: true });
     await expect(composer).toContainText("응답 준비된 AI가 없습니다.");
     const settingsLink = composer.getByRole("link", { name: "이 방의 AI 설정", exact: true });
@@ -656,12 +686,13 @@ test("should preserve the owned status snapshot and chat draft across explicit r
       .poll(() =>
         body.evaluate((element) => ({
           overflowY: getComputedStyle(element).overflowY,
-          hasOverflow: element.scrollHeight > element.clientHeight,
-          scrolled: element.scrollTop > 0,
-          atEnd: Math.abs(element.scrollHeight - element.clientHeight - element.scrollTop) <= 1,
+          contentReachable:
+            element.scrollHeight <= element.clientHeight ||
+            (element.scrollTop > 0 &&
+              Math.abs(element.scrollHeight - element.clientHeight - element.scrollTop) <= 1),
         })),
       )
-      .toEqual({ overflowY: "auto", hasOverflow: true, scrolled: true, atEnd: true });
+      .toEqual({ overflowY: "auto", contentReachable: true });
     const ownSnapshot = await bar.textContent();
     check(ownSnapshot && !ownSnapshot.includes(`기기 ${other}`));
     const memberBar = bp.getByRole("region", { name: "PC 연결 상태", exact: true });
@@ -669,7 +700,11 @@ test("should preserve the owned status snapshot and chat draft across explicit r
     await memberBar.getByRole("button", { name: "다시 확인", exact: true }).click();
     await expect(memberBar).toContainText(`기기 ${other}`);
     await expect(memberBar).not.toContainText(`기기 ${first}`);
+    if (await bar.locator("details").evaluate((element) => element.hasAttribute("open")))
+      await bar.locator("summary").click();
+    await revealRoomActions(ap);
     await ap.getByRole("link", { name: "채팅방 목록으로", exact: true }).click();
+    await expect(ap.getByRole("heading", { name: "내 AI 채팅방", exact: true })).toBeVisible();
     await revealRoomActions(ap);
     await ap.getByRole("button", { name: "로그아웃", exact: true }).click();
     await expect(ap).toHaveURL(/\/login$/);

@@ -32,8 +32,9 @@ const states: Record<State, string> = {
   FAILED: "실패 · PC 확인 필요",
   UNKNOWN: "결과 미확정 · PC 확인 필요",
 };
-const field = "grid gap-2 text-sm";
-const select = "h-9 rounded-md border border-neutral-200 bg-white px-3 disabled:opacity-50";
+const field = "grid min-w-0 grid-cols-1 gap-2 text-sm";
+const select =
+  "h-9 w-full min-w-0 rounded-md border border-neutral-200 bg-white px-3 disabled:opacity-50";
 
 function modelLabel(
   model: string | null,
@@ -180,7 +181,7 @@ export function RuntimeSettingsForm({
   }
 
   return (
-    <section className="grid gap-3" aria-label={`${deviceAlias} AI 설정`}>
+    <section className="grid min-w-0 grid-cols-1 gap-3" aria-label={`${deviceAlias} AI 설정`}>
       <div className="flex flex-wrap items-center justify-between gap-2">
         <h3 className="font-semibold">{deviceAlias}의 AI 설정</h3>
         <Badge variant="secondary">

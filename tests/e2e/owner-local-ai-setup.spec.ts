@@ -173,6 +173,16 @@ test("should distinguish owner Claude request application and readiness and answ
         response.url().endsWith("/api/runtime-settings/select-runtime") &&
         response.request().method() === "POST",
     );
+    check(
+      await form.locator("select, input, button").evaluateAll((elements) =>
+        elements
+          .filter((element) => element.getClientRects().length > 0)
+          .every((element) => {
+            const rect = element.getBoundingClientRect();
+            return rect.left >= 0 && rect.right <= innerWidth + 1;
+          }),
+      ),
+    );
     await form.getByLabel("공개 세션 별칭", { exact: true }).fill("브라우저 Claude AI");
     await form.getByRole("button", { name: "설정 저장", exact: true }).click();
     const selected = await selection;

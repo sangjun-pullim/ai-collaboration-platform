@@ -341,14 +341,14 @@ export function ConnectionManager({
       }
     >
       <div role="region" aria-label="AI 연결 설정 내용" className="min-h-0 flex-1 overflow-y-auto">
-        <div className="mx-auto grid w-full max-w-[960px] gap-4 px-4 py-4 md:px-6">
+        <div className="mx-auto grid w-full min-w-0 grid-cols-1 max-w-[960px] gap-4 px-4 py-4 md:px-6">
           <p className="text-sm text-neutral-600">
             내 AI를 제공할 때만 연결하세요.{" "}
             <Link href={roomId ? `/app/rooms/${roomId}` : "/app"} className="underline">
               질문만 하기
             </Link>
           </p>
-          <div className="grid gap-3 sm:grid-cols-2">
+          <div className="grid min-w-0 grid-cols-1 gap-3 sm:grid-cols-2">
             {rooms.length > 0 && (
               <label className={styles.field}>
                 AI를 제공할 채팅방
@@ -390,7 +390,7 @@ export function ConnectionManager({
           </div>
           <details
             open={!settingsDevice || !!pairingCode || awaitingRegistration}
-            className="grid gap-3 rounded-xl border p-4"
+            className="grid min-w-0 grid-cols-1 gap-3 rounded-xl border p-4"
             aria-label="Mac 연결 단계"
           >
             <summary className="cursor-pointer text-sm">Mac 연결</summary>
@@ -515,7 +515,7 @@ export function ConnectionManager({
             id="ai-settings"
             ref={settingsSection}
             tabIndex={-1}
-            className="grid gap-3 rounded-xl border p-4"
+            className="grid min-w-0 grid-cols-1 gap-3 rounded-xl border p-4"
             aria-label="본인 기기 AI 설정"
           >
             <h2 className="font-semibold">AI 설정</h2>
