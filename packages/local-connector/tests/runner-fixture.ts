@@ -445,6 +445,20 @@ export async function runnerFixture(
                 accepted: true,
                 cycleState: "ACTIVE",
               };
+            } else if (action === "fail-before-input") {
+              if (!["EXECUTING", "UNKNOWN"].includes(attempt.state) || !attempt.startIntentAt)
+                return fail(409, "CONFLICT");
+              attempt.state = "FAILED";
+              result = {
+                requestId: attempt.requestId,
+                attemptId: attempt.attemptId,
+                fence: attempt.fence,
+                bindingEpoch: attempt.bindingEpoch,
+                state: "FAILED",
+                kind: "PREINPUT_REJECTED",
+                proofHash: body.proofHash,
+                adoption: "HUMAN_INPUT_REQUIRED",
+              };
             } else if (action === "complete" || action === "observe") {
               attempt.state = body.terminal as "COMPLETED";
               result = {

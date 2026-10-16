@@ -32,6 +32,14 @@ Git 기준과 작업트리의 사람 cookie Auth·기기 bearer·내구 조사·
 
 인증 session은 서버가 관리하는 HttpOnly·SameSite=Lax cookie로 전달하고 HTTPS에서는 Secure를 적용한다. 브라우저 JSON에 전체 session·refresh token을 반환하지 않는다. 예외적으로 아래 채팅 실시간 authorize 응답에 검증된 access token만 반환하며 메모리에서만 사용한다. 보호 화면의 미인증 redirect는 `/login`으로 보낸다. `/app?invite=<64자리 hex>`의 유효한 초대 목적지는 `/login?invite=...`를 거쳐 복원한다. 외부 redirect를 받지 않는다. API에서는 proxy가 인증을 먼저 갱신하지 않으며 각 route가 Origin·본문·인증과 응답 쿠키를 처리한다.
 
+## 선택 기기의 연결 확인
+
+`POST /api/connections/status`는 `expectedUserId`, `roomId`, `deviceId`만 받는다. 같은 Origin·현재 Auth 사용자·본인 기기·방 참가 권한을 확인한다. 응답은 선택 기기의 공개 정보, 서버 `checkedAt`, 현재 `agentId/bindingEpoch`와 제한된 입력 전 실패 사유를 반환한다. 기기 인증값·개인 경로는 반환하지 않는다. 실패 사유가 없다는 사실만으로 AI 준비를 보장하지 않는다. 준비 조회는 기존 `read-recovery`의 현재 binding과 유효 시각을 대조한다.
+
+## 입력 전 확정 실패
+
+기기 action `fail-before-input`은 기존 실행 identity와 `proofVersion:1`, `proofHash`, `reason`만 받는다. 사유는 `SNAPSHOT_CHANGED`, `POLICY_REJECTED`, `LOCAL_VALIDATION_FAILED`로 제한한다. 현재 기기 인증·소유 scope·epoch·attempt/fence·동일 operation 본문을 검증한다. 응답은 해당 identity, `state:FAILED`, `kind:PREINPUT_REJECTED`, 증거 hash와 adoption이다. 채팅 RUN_STATE의 publicText는 빈 문자열로 유지한다. 별도 답변이나 중단 성공을 생성하지 않는다. 영수증 재조회는 같은 operation으로만 수행하며 원래 질문을 다시 실행하지 않는다.
+
 ## Auth action
 
 | 경로 | body | 성공 data |

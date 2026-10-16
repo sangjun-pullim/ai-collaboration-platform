@@ -11,6 +11,12 @@ sources:
 
 검증 기준 커밋의 모델 소스를 설명한다. 이 문서는 모델의 이유와 제약을 설명하며 실제 DDL은 [마이그레이션](../supabase/migrations/20261001000100-web-auth-room-access.sql)이 정본이다. 진행 상태와 검증 수치는 [개발 순서와 검증 계획](planning/delivery-and-validation.md#현재-진행-상태)에 유지한다.
 
+## 입력 전 확정 실패
+
+[SQL024](../supabase/migrations/20261016002400-confirmed-preinput-failure.sql)의 `workflow_private.preinput_failures`는 원래 attempt·scope·증거 hash·제한된 사유·영수증을 보존한다. 브라우저의 직접 조회를 막고 `connection_execution_status`가 현재 방의 본인 기기에 한해 공개 사유를 투영한다. 원래 기기의 입력 전 확정 증거가 있는 EXECUTING/UNKNOWN만 FAILED로 종결한다. 증거 없는 과거 UNKNOWN에는 이 예외를 적용하지 않는다.
+
+FAILED와 같은 트랜잭션에서 cycle을 HUMAN_INPUT_REQUIRED로 바꾸고 준비 보고를 내린다. 자동 후속 질문은 생성하지 않는다. 정확히 같은 request/attempt/fence의 증거와 FAILED가 있으면 과거 REQUESTED control을 설정 예약에서 제외하되 원래 control을 보존한다. 기존 중단 수신 확인이나 실제 중단으로 변경하지 않는다. 로컬 역시 확인된 영수증으로 같은 시도의 미확인 lease·interrupt-ack만 닫으며 원래 start-intent와 확정 영수증을 보존한다.
+
 ## 모델 경계
 
 | 모델 | 책임과 주요 제약 |

@@ -4,6 +4,7 @@ import { projectCapability } from "../settings/contracts.ts";
 import { supportsEffort } from "../runtime-settings-policy.ts";
 import {
   codexVersion,
+  digest,
   stableJson,
   type AttemptJournal,
   type OwnedContext,
@@ -19,6 +20,31 @@ import { validateRecordSchema, validInterruption } from "./record-schema.ts";
 
 function closureValid(a: AttemptJournal, v: RuntimeRecord) {
   const proof = a.unstartedClosure;
+  if (proof?.kind === "SERVER_PREINPUT_REJECTED") {
+    const rejection = a.preinputRejection;
+    const receipt = proof.receipt;
+    if (
+      !rejection ||
+      proof.claimOperationId !== a.claimOperationId ||
+      proof.proofHash !== digest(stableJson(rejection)) ||
+      receipt.proofHash !== proof.proofHash ||
+      receipt.requestId !== a.requestId ||
+      receipt.attemptId !== a.snapshot?.attemptId ||
+      receipt.fence !== a.snapshot.fence ||
+      receipt.bindingEpoch !== a.scope.bindingEpoch ||
+      !v.operations.some(
+        (o) =>
+          o.action === "fail-before-input" &&
+          o.state === "CONFIRMED" &&
+          attemptMatches(a, o) &&
+          o.body.proofHash === proof.proofHash &&
+          o.body.reason === rejection.reason &&
+          stableJson(o.result) === stableJson(receipt),
+      )
+    )
+      unsafe();
+    return;
+  }
   if (
     !proof ||
     proof.claimOperationId !== a.claimOperationId ||
@@ -331,6 +357,34 @@ function validateAttempt(v: RuntimeRecord, a: AttemptJournal) {
   validateAttemptTools(v, a);
 }
 function validateAttemptClaim(v: RuntimeRecord, a: AttemptJournal) {
+  if (a.preinputRejection) {
+    const proof = a.preinputRejection;
+    if (
+      v.version !== 2 ||
+      !a.snapshot?.startIntentAt ||
+      !["SERVER_INTENT_CONFIRMED", "UNKNOWN", "NOT_STARTED"].includes(a.state) ||
+      stableJson(proof.scope) !== stableJson(a.scope) ||
+      proof.generation !== a.generation ||
+      proof.requestId !== a.requestId ||
+      proof.attemptId !== a.snapshot.attemptId ||
+      proof.fence !== a.snapshot.fence ||
+      a.nativeIntent ||
+      a.native ||
+      a.sourceObservation ||
+      a.toolCalls.length ||
+      a.terminal ||
+      a.receipt ||
+      !v.operations.some(
+        (o) =>
+          o.action === "start-intent" &&
+          o.state === "CONFIRMED" &&
+          attemptMatches(a, o) &&
+          record(o.result) &&
+          o.result.startIntentAt === a.snapshot!.startIntentAt,
+      )
+    )
+      unsafe();
+  }
   if (
     a.sourceObservation &&
     (a.unstartedClosure ||
@@ -513,6 +567,17 @@ function validateAttemptTools(v: RuntimeRecord, a: AttemptJournal) {
   }
 }
 function validateOperationRelationships(v: RuntimeRecord) {
+  for (const o of v.operations) {
+    if (o.action !== "fail-before-input") continue;
+    const attempt = v.attempts.find((a) => attemptMatches(a, o));
+    if (
+      !attempt?.preinputRejection ||
+      v.version !== 2 ||
+      o.body.proofHash !== digest(stableJson(attempt.preinputRejection)) ||
+      o.body.reason !== attempt.preinputRejection.reason
+    )
+      unsafe();
+  }
   for (const o of v.operations)
     if (
       o.body.agentId !== v.scope.agentId ||
@@ -538,9 +603,12 @@ function validateClosedOperations(v: RuntimeRecord) {
       !v.attempts.some(
         (a) =>
           (["lease", "interrupt-ack"].includes(o.action) &&
-            a.state === "UPLOADED" &&
+            (a.state === "UPLOADED" ||
+              (a.state === "NOT_STARTED" &&
+                a.unstartedClosure?.kind === "SERVER_PREINPUT_REJECTED")) &&
             attemptMatches(a, o)) ||
           (a.state === "NOT_STARTED" &&
+            a.unstartedClosure?.kind !== "SERVER_PREINPUT_REJECTED" &&
             (claimMatches(a, o) ||
               ((o.action === "start-intent" ||
                 (o.action === "lease" && a.unstartedClosure?.kind === "SERVER_ABANDONED")) &&

@@ -36,10 +36,12 @@ import {
   type PollSnapshot,
   type RequestPayload,
   type TerminalReceipt,
+  type PreinputFailureReceipt,
 } from "./workflow-contracts.ts";
 import {
   RuntimeAdmission,
   RuntimeError,
+  PreinputRejectedError,
   digest,
   stableJson,
   scopedNamespace,
@@ -187,6 +189,7 @@ export class WorkflowRunner {
   private retired = false;
   private active: AttemptAuthority | undefined;
   private toolOpen = false;
+  private preinputValidationRejected = false;
   private readonly secrets = new Set<string>();
   private readonly calls = new Map<
     string,
@@ -1208,6 +1211,7 @@ export class WorkflowRunner {
               await this.execute(poll.queuedRequest);
               if (
                 options.once ||
+                this.preinputValidationRejected ||
                 this.record.attempts.some((a) => !["UPLOADED", "NOT_STARTED"].includes(a.state))
               )
                 return this.publicStatus();
@@ -1347,6 +1351,8 @@ export class WorkflowRunner {
           : undefined;
       const monitorController = new AbortController();
       let publication: Promise<void> | undefined;
+      let preinputRejected = false;
+      let inputCallbackEntered = false;
       const monitor = this.monitor(authority, monitorController.signal, () => publication).catch(
         (error) => {
           this.lossReason = code(error);
@@ -1363,9 +1369,10 @@ export class WorkflowRunner {
         await this.recordServerIntentSnapshot(journalId, start, intent);
         authority.attempt = intent;
         const evidence = await this.admission.wait(() =>
-          this.adapter.execute(authority, this.record.settings!, payload, (intent) =>
-            this.beforeProviderInput(journalId, sourceCapacityKey, authority, intent),
-          ),
+          this.adapter.execute(authority, this.record.settings!, payload, (intent) => {
+            inputCallbackEntered = true;
+            return this.beforeProviderInput(journalId, sourceCapacityKey, authority, intent);
+          }),
         );
         this.check();
         this.toolOpen = false;
@@ -1373,6 +1380,28 @@ export class WorkflowRunner {
         this.check();
         publication = this.publish(journalId, "complete", () => monitorController.abort());
         await publication;
+      } catch (error) {
+        if (!(error instanceof PreinputRejectedError) || inputCallbackEntered) throw error;
+        this.check();
+        await this.mutate("preinput-rejection", (record) => {
+          const a = this.journal(journalId, record);
+          if (
+            record.settings?.provider !== "claude" ||
+            a.state !== "SERVER_INTENT_CONFIRMED" ||
+            a.nativeIntent ||
+            a.native ||
+            a.sourceObservation ||
+            a.toolCalls.length ||
+            a.terminal ||
+            a.receipt
+          )
+            throw new RuntimeError("AUTHORITY_LOST");
+          a.preinputRejection = structuredClone(error.preinputRejection);
+          a.reason = error.code;
+          record.ready = false;
+        });
+        preinputRejected = true;
+        this.preinputValidationRejected = true;
       } finally {
         monitorController.abort();
         await monitor;
@@ -1385,6 +1414,7 @@ export class WorkflowRunner {
         this.repositoryTools = undefined;
         this.capacityReservations.clear();
       }
+      if (preinputRejected) await this.publishPreinputRejection(journalId);
     } catch (error) {
       this.toolOpen = false;
       if (!this.retired) await this.markUnresolvedUnknown(this.lossReason ?? code(error));
@@ -1398,6 +1428,61 @@ export class WorkflowRunner {
       Date.parse(payload.deadline) <= Date.now()
     )
       throw new RuntimeError("AUTHORITY_LOST");
+  }
+
+  private async publishPreinputRejection(key: string) {
+    this.check();
+    const a = this.journal(key);
+    if (!a.preinputRejection || !a.snapshot || a.unstartedClosure) return;
+    const proofHash = digest(stableJson(a.preinputRejection));
+    const pending = this.record.operations.find(
+      (o) =>
+        o.action === "fail-before-input" &&
+        o.body.requestId === a.requestId &&
+        o.body.attemptId === a.snapshot!.attemptId &&
+        o.body.fence === a.snapshot!.fence &&
+        o.body.bindingEpoch === a.scope.bindingEpoch,
+    );
+    const op =
+      pending ??
+      (await this.operation("fail-before-input", {
+        ...this.identity(a),
+        proofVersion: 1,
+        proofHash,
+        reason: a.preinputRejection.reason,
+      }));
+    const receipt = (await this.transmit(op)) as PreinputFailureReceipt;
+    this.check();
+    if (
+      receipt.requestId !== a.requestId ||
+      receipt.attemptId !== a.snapshot.attemptId ||
+      receipt.fence !== a.snapshot.fence ||
+      receipt.bindingEpoch !== a.scope.bindingEpoch ||
+      receipt.proofHash !== proofHash
+    )
+      throw new RuntimeError("AUTHORITY_LOST");
+    await this.mutate("preinput-closure", (record) => {
+      const current = this.journal(key, record);
+      current.state = "NOT_STARTED";
+      current.unstartedClosure = {
+        kind: "SERVER_PREINPUT_REJECTED",
+        claimOperationId: current.claimOperationId!,
+        proofHash,
+        receipt,
+      };
+      record.ready = false;
+      for (const operation of record.operations) {
+        if (
+          ["lease", "interrupt-ack"].includes(operation.action) &&
+          operation.state !== "CONFIRMED" &&
+          operation.body.requestId === receipt.requestId &&
+          operation.body.attemptId === receipt.attemptId &&
+          operation.body.fence === receipt.fence &&
+          operation.body.bindingEpoch === receipt.bindingEpoch
+        )
+          operation.state = "CLOSED";
+      }
+    });
   }
 
   private recordClaimIntent(requestId: string, claimOperationId: string) {
@@ -2613,6 +2698,10 @@ export class WorkflowRunner {
   }
 
   private async recover() {
+    for (const attempt of this.record.attempts.filter(
+      (a) => a.preinputRejection && !a.unstartedClosure,
+    ))
+      await this.publishPreinputRejection(this.journalKey(attempt));
     await this.recoverUnstarted();
     this.check();
     // Recover exact durable terminals before ordinary readiness/question work. An older
@@ -2644,6 +2733,14 @@ export class WorkflowRunner {
         const a = this.operationJournal(op);
         await this.publish(this.journalKey(a), op.action as "complete" | "observe");
         continue;
+      }
+      // A stale positive report can reach the server for the first time after restart.
+      // Revalidate before replaying it; exact terminal recovery above stays independent.
+      if (op.action === "ready" && op.body.reportedReady === true) {
+        await this.admission.wait(() =>
+          this.adapter.validate(this.record.context!, this.record.settings!, this.check),
+        );
+        this.check();
       }
       await this.transmit(op);
       this.check();

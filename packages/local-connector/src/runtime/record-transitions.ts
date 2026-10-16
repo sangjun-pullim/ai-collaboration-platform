@@ -275,6 +275,23 @@ function validateAttemptIdentityAndClosureChange(
 ) {
   if (old.state === "UPLOADED" && stableJson(old) !== stableJson(current)) unsafe();
   if (
+    old.preinputRejection &&
+    stableJson(old.preinputRejection) !== stableJson(current.preinputRejection)
+  )
+    unsafe();
+  if (
+    !old.preinputRejection &&
+    current.preinputRejection &&
+    (old.state !== "SERVER_INTENT_CONFIRMED" ||
+      old.nativeIntent ||
+      old.native ||
+      old.sourceObservation ||
+      old.toolCalls.length ||
+      old.terminal ||
+      old.receipt)
+  )
+    unsafe();
+  if (
     !current ||
     old.requestId !== current.requestId ||
     (old.claimOperationId && old.claimOperationId !== current.claimOperationId) ||

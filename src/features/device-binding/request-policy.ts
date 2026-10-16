@@ -2,6 +2,16 @@ import "server-only";
 import { readJsonBody } from "../../lib/http/read-json-body";
 import { serverConfig } from "../../lib/supabase/server";
 import { ConnectionError, validateBody, type ConnectorAction, type HumanAction } from "./contracts";
+import { validateStatusRequest } from "./connection-status-contracts";
+export async function readConnectionStatus(request: Request) {
+  return validateStatusRequest(
+    await readJsonBody(request, {
+      expectedOrigin: serverConfig().origin,
+      error: (code) => new ConnectionError(code),
+      utf8: "strict",
+    }),
+  );
+}
 export async function readConnection(
   request: Request,
   action: ConnectorAction | HumanAction,

@@ -1,6 +1,7 @@
 import { randomUUID } from "node:crypto";
 import {
   RuntimeError,
+  PreinputRejectedError,
   digest,
   stableJson,
   scopedNamespace,
@@ -363,8 +364,32 @@ export class ClaudeAdapter implements RuntimeAdapter {
     beforeSubmit: (intent?: NativeInputIntent) => Promise<void>,
   ): Promise<TerminalEvidence> {
     const check = () => authority.assertLive();
-    await this.validate(authority.context, settings, check);
     if (this.active || this.transport) throw new RuntimeError("RUNTIME_BUSY");
+    try {
+      await this.validate(authority.context, settings, check);
+    } catch (error) {
+      check();
+      if (
+        error instanceof RuntimeError &&
+        // POLICY_UNCONFIRMED also covers probe timeouts and unreadable responses.
+        // Only definite local mismatches are eligible for this evidence.
+        ["SNAPSHOT_CHANGED", "UNSUPPORTED_SETTINGS"].includes(error.code)
+      ) {
+        throw new PreinputRejectedError(error.code, {
+          version: 1,
+          kind: "PREINPUT_REJECTED",
+          provider: "claude",
+          scope: structuredClone(authority.scope),
+          generation: authority.context.generation,
+          requestId: authority.attempt.requestId,
+          attemptId: authority.attempt.attemptId,
+          fence: authority.attempt.fence,
+          reason:
+            error.code === "SNAPSHOT_CHANGED" ? "SNAPSHOT_CHANGED" : "LOCAL_VALIDATION_FAILED",
+        });
+      }
+      throw error;
+    }
     if (authority.context.materialization!.state === "RESERVED" && this.options.history) {
       const history = await this.options.history(authority.context, check);
       this.historyFormat = history.format;

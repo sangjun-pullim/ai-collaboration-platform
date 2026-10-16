@@ -5,6 +5,7 @@ import { runInNewContext } from "node:vm";
 import ts from "typescript";
 import * as presence from "../../src/features/device-binding/connection-presence.ts";
 import * as roomGitReport from "../../src/features/device-binding/room-git-report.ts";
+import * as statusContracts from "../../src/features/device-binding/connection-status-contracts.ts";
 import * as contracts from "../../src/features/device-binding/contracts.ts";
 
 type Node = { type: unknown; props: Record<string, unknown> };
@@ -175,6 +176,7 @@ test("should project only the owned connection snapshot and fail closed without 
     },
     "./contracts": contracts,
     "./room-git-report": roomGitReport,
+    "./connection-status-contracts": statusContracts,
   });
   const exports = load("src/features/device-binding/owned-connection-status.tsx", {
     "server-only": {},

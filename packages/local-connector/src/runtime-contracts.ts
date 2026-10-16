@@ -6,6 +6,7 @@ import type {
   RequestPayload,
   Terminal,
   TerminalReceipt,
+  PreinputFailureReceipt,
 } from "./workflow-contracts.ts";
 
 export const runtimeVersion = 1 as const;
@@ -50,6 +51,26 @@ export interface RuntimeScope {
   roomId: string;
   agentId: string;
   bindingEpoch: number;
+}
+export interface PreinputRejection {
+  version: 1;
+  kind: "PREINPUT_REJECTED";
+  provider: "claude";
+  scope: RuntimeScope;
+  generation: string;
+  requestId: string;
+  attemptId: string;
+  fence: number;
+  reason: "SNAPSHOT_CHANGED" | "POLICY_REJECTED" | "LOCAL_VALIDATION_FAILED";
+}
+/** Only the adapter's child-free validation boundary may issue this evidence. */
+export class PreinputRejectedError extends RuntimeError {
+  constructor(
+    code: RuntimeCode,
+    readonly preinputRejection: PreinputRejection,
+  ) {
+    super(code);
+  }
 }
 export interface RequestedSettings {
   model: string;
@@ -268,10 +289,17 @@ export interface AttemptJournal {
   generation: string;
   state: JournalState;
   claimOperationId?: string;
+  preinputRejection?: PreinputRejection;
   unstartedClosure?:
     | { kind: "LOCAL_NOT_TRANSMITTED"; claimOperationId: string }
     | { kind: "SERVER_INPUT_PAUSED"; claimOperationId: string }
-    | { kind: "SERVER_ABANDONED"; claimOperationId: string; snapshot: AttemptSnapshot };
+    | { kind: "SERVER_ABANDONED"; claimOperationId: string; snapshot: AttemptSnapshot }
+    | {
+        kind: "SERVER_PREINPUT_REJECTED";
+        claimOperationId: string;
+        proofHash: string;
+        receipt: PreinputFailureReceipt;
+      };
   snapshot: AttemptSnapshot | null;
   native: { threadId: string; turnId: string } | null;
   nativeIntent?: NativeInputIntent;

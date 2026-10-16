@@ -1,6 +1,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import { ClaudeAdapter } from "../src/claude/adapter.ts";
+import { NativeAdmissionError } from "../src/claude/native-installation.ts";
 import { OWNED_SERVER, NATIVE_TOOL_NAMES } from "../src/claude/input-proof.ts";
 import { proveOwnedHistory } from "../src/claude/history-proof.ts";
 import {
@@ -61,6 +62,54 @@ test("should send no input or spawn after input intent persistence fails", async
       }),
       { code: "UNSAFE_STORAGE" },
     );
+    assert.equal(f.starts, 0);
+    assert.equal(f.native.writes.length, 0);
+  } finally {
+    await f.close();
+  }
+});
+test("should prove a scoped policy rejection before entering the input callback", async () => {
+  const f = await fixture();
+  let submitted = false;
+  try {
+    f.adapter.validate = async () => {
+      throw new RuntimeError("SNAPSHOT_CHANGED");
+    };
+    await assert.rejects(
+      f.execute(async () => {
+        submitted = true;
+      }),
+      (error: unknown) => {
+        const rejection = (error as { preinputRejection?: Record<string, unknown> })
+          .preinputRejection;
+        assert.equal(rejection?.kind, "PREINPUT_REJECTED");
+        assert.equal(rejection?.reason, "SNAPSHOT_CHANGED");
+        assert.deepEqual(rejection?.scope, f.authority.scope);
+        assert.equal(rejection?.attemptId, f.authority.attempt.attemptId);
+        assert.equal(rejection?.fence, f.authority.attempt.fence);
+        return true;
+      },
+    );
+    assert.equal(submitted, false);
+    assert.equal(f.starts, 0);
+    assert.equal(f.native.writes.length, 0);
+  } finally {
+    await f.close();
+  }
+});
+
+test("should preserve uncertain native login checks without issuing pre-input failure proof", async () => {
+  const f = await fixture();
+  const failure = new NativeAdmissionError("LOGIN");
+  try {
+    f.adapter.validate = async () => {
+      throw failure;
+    };
+    await assert.rejects(f.execute(), (error: unknown) => {
+      assert.equal(error, failure);
+      assert.equal("preinputRejection" in (error as object), false);
+      return true;
+    });
     assert.equal(f.starts, 0);
     assert.equal(f.native.writes.length, 0);
   } finally {

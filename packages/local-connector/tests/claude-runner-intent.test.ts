@@ -3,6 +3,7 @@ import { open, lstat, readFile, type FileHandle } from "node:fs/promises";
 import assert from "node:assert/strict";
 import {
   RuntimeError,
+  PreinputRejectedError,
   digest,
   stableJson,
   scopedNamespace,
@@ -17,6 +18,7 @@ import type { RequestPayload } from "../src/workflow-contracts.ts";
 import { runnerFixture, SyntheticAdapter, deferred } from "./runner-fixture.ts";
 import { uuid, observation } from "./runtime-fixture.ts";
 import { claudeRecord } from "./provider-runtime-fixture.ts";
+import { unresolvedRuntime } from "../src/runtime-store.ts";
 
 class IntentAdapter extends SyntheticAdapter {
   lostAck = false;
@@ -67,6 +69,282 @@ class IntentAdapter extends SyntheticAdapter {
     return this.observed;
   }
 }
+class RejectedBeforeInputAdapter extends IntentAdapter {
+  override async execute(authority: AttemptAuthority): Promise<TerminalEvidence> {
+    throw new PreinputRejectedError("SNAPSHOT_CHANGED", {
+      version: 1,
+      kind: "PREINPUT_REJECTED",
+      provider: "claude",
+      scope: structuredClone(authority.scope),
+      generation: authority.context.generation,
+      requestId: authority.attempt.requestId,
+      attemptId: authority.attempt.attemptId,
+      fence: authority.attempt.fence,
+      reason: "SNAPSHOT_CHANGED",
+    });
+  }
+}
+test("should close a proven pre-input failure without inventing native terminal evidence", async () => {
+  const f = await runnerFixture({}, (record) => Object.assign(record, claudeRecord(record)));
+  const adapter = new RejectedBeforeInputAdapter();
+  try {
+    f.queue();
+    await f.runner(adapter).run({ once: true });
+    const disk = (await f.store.read())!;
+    assert.equal(disk.attempts[0].state, "NOT_STARTED");
+    assert.equal(disk.attempts[0].unstartedClosure?.kind, "SERVER_PREINPUT_REJECTED");
+    assert.ok(disk.attempts[0].snapshot?.startIntentAt);
+    assert.equal(disk.attempts[0].nativeIntent, undefined);
+    assert.equal(disk.attempts[0].terminal, null);
+    assert.equal(disk.ready, false);
+    assert.equal(adapter.starts, 0);
+  } finally {
+    await f.close();
+  }
+});
+for (const failure of ["preinput-rejection", "preinput-closure", "response-loss"]) {
+  test(`should preserve and recover pre-input evidence across ${failure} without replaying input`, async () => {
+    let fault = true;
+    const f = await runnerFixture(
+      {
+        beforeMutation: async (kind) => {
+          if (fault && kind === failure) throw new RuntimeError("UNSAFE_STORAGE");
+        },
+      },
+      (record) => Object.assign(record, claudeRecord(record)),
+    );
+    const adapter = new RejectedBeforeInputAdapter();
+    try {
+      if (failure === "response-loss")
+        f.faults.after = async (action, _body, _result, response) => {
+          if (fault && action === "fail-before-input") response.destroy();
+        };
+      f.queue();
+      await f.runner(adapter).run({ once: true });
+      const before = (await f.store.read())!;
+      assert.equal(before.attempts[0].state, "UNKNOWN");
+      assert.equal(!!before.attempts[0].preinputRejection, failure !== "preinput-rejection");
+      fault = false;
+      await f.runner(adapter).run({ once: true });
+      const after = (await f.store.read())!;
+      assert.equal(
+        after.attempts[0].state,
+        failure === "preinput-rejection" ? "UNKNOWN" : "NOT_STARTED",
+      );
+      assert.equal(after.attempts.length, 1);
+      assert.equal(adapter.starts, 0);
+      assert.deepEqual(after.attempts[0].snapshot, before.attempts[0].snapshot);
+    } finally {
+      await f.close();
+    }
+  });
+}
+test("should stop the continuous runner after pre-input rejection until a new validation", async () => {
+  const f = await runnerFixture({}, (record) => Object.assign(record, claudeRecord(record)));
+  try {
+    f.queue();
+    await assert.doesNotReject(
+      f.runner(new RejectedBeforeInputAdapter()).run({ signal: AbortSignal.timeout(1500) }),
+    );
+    assert.equal((await f.store.read())!.ready, false);
+  } finally {
+    await f.close();
+  }
+});
+
+test("should archive a confirmed input-free failure with its exact evidence", async () => {
+  const f = await runnerFixture({}, (record) => Object.assign(record, claudeRecord(record)));
+  try {
+    f.queue();
+    await f.runner(new RejectedBeforeInputAdapter()).run({ once: true });
+    const before = (await f.store.read())!;
+    const after = await f.store.compact(before);
+    assert.equal(after.attempts.length, 0);
+    assert.equal(after.archives?.length, 1);
+    assert.deepEqual(await f.store.lastAttempt(after), before.attempts[0]);
+    const archive = JSON.parse(
+      await readFile(
+        `${f.store.dir}/archives/${f.store.agentId}/${after.archives![0].hash}.json`,
+        "utf8",
+      ),
+    );
+    assert.deepEqual(archive.attempts, before.attempts);
+    assert.deepEqual(archive.operations, before.operations);
+    assert.equal(unresolvedRuntime(after), false);
+  } finally {
+    await f.close();
+  }
+});
+
+test("should validate before recovering an unsent positive readiness after pre-input rejection", async () => {
+  const f = await runnerFixture({}, (record) => Object.assign(record, claudeRecord(record)));
+  try {
+    f.queue();
+    await f.runner(new RejectedBeforeInputAdapter()).run({ once: true });
+    const saved = (await f.store.read())!;
+    const body = {
+      protocol: 1,
+      operationId: uuid(),
+      agentId: saved.scope.agentId,
+      bindingEpoch: saved.scope.bindingEpoch,
+      reportedReady: true,
+    };
+    saved.operations.push({
+      operationId: body.operationId,
+      action: "ready",
+      body,
+      payloadHash: digest(stableJson({ action: "ready", body })),
+      state: "PENDING",
+      result: null,
+    });
+    await f.store.write(saved);
+    const adapter = new IntentAdapter();
+    adapter.validateHook = async () => {
+      throw new RuntimeError("SNAPSHOT_CHANGED");
+    };
+    await assert.rejects(f.runner(adapter).run({ once: true }), { code: "SNAPSHOT_CHANGED" });
+    assert.equal(
+      f.requests.some((r) => r.body.operationId === body.operationId),
+      false,
+    );
+    assert.equal(adapter.starts, 0);
+  } finally {
+    await f.close();
+  }
+});
+
+test("should reject retrospective pre-input proof on an existing unknown attempt", async () => {
+  const f = await runnerFixture({}, (record) => Object.assign(record, claudeRecord(record)));
+  class UnknownAdapter extends IntentAdapter {
+    override async execute(): Promise<TerminalEvidence> {
+      throw new RuntimeError("SNAPSHOT_CHANGED");
+    }
+  }
+  try {
+    f.queue();
+    await f.runner(new UnknownAdapter()).run({ once: true });
+    const original = (await f.store.read())!;
+    assert.equal(original.attempts[0].state, "UNKNOWN");
+    const changed = structuredClone(original);
+    const attempt = changed.attempts[0];
+    attempt.preinputRejection = {
+      version: 1,
+      kind: "PREINPUT_REJECTED",
+      provider: "claude",
+      scope: structuredClone(attempt.scope),
+      generation: attempt.generation,
+      requestId: attempt.requestId,
+      attemptId: attempt.snapshot!.attemptId,
+      fence: attempt.snapshot!.fence,
+      reason: "SNAPSHOT_CHANGED",
+    };
+    await assert.rejects(f.store.write(changed), { code: "UNSAFE_STORAGE" });
+    assert.deepEqual(await f.store.read(), original);
+  } finally {
+    await f.close();
+  }
+});
+
+test("should close only unresolved monitor operations after recovering a pre-input receipt", async () => {
+  let failClosure = true;
+  const f = await runnerFixture(
+    {
+      beforeMutation: async (kind) => {
+        if (failClosure && kind === "preinput-closure") throw new RuntimeError("UNSAFE_STORAGE");
+      },
+    },
+    (record) => Object.assign(record, claudeRecord(record)),
+  );
+  try {
+    f.queue();
+    await f.runner(new RejectedBeforeInputAdapter()).run({ once: true });
+    const before = (await f.store.read())!;
+    assert.equal(before.attempts[0].state, "UNKNOWN");
+    const pending = structuredClone(before);
+    const attempt = pending.attempts[0];
+    for (const action of ["lease", "interrupt-ack"] as const) {
+      const body = {
+        protocol: 1,
+        operationId: uuid(),
+        agentId: attempt.scope.agentId,
+        bindingEpoch: attempt.scope.bindingEpoch,
+        requestId: attempt.requestId,
+        attemptId: attempt.snapshot!.attemptId,
+        fence: attempt.snapshot!.fence,
+        ...(action === "interrupt-ack" ? { controlId: uuid() } : {}),
+      };
+      pending.operations.push({
+        action,
+        operationId: body.operationId,
+        body,
+        payloadHash: digest(stableJson({ action, body })),
+        state: "TRANSMITTED",
+        result: null,
+      });
+    }
+    await f.store.write(pending);
+    assert.equal(unresolvedRuntime(pending), true);
+    failClosure = false;
+    await f.runner(new RejectedBeforeInputAdapter()).run({ once: true });
+    const after = (await f.store.read())!;
+    assert.equal(unresolvedRuntime(after), false);
+    for (const operation of before.operations.filter(
+      (o) => o.state === "CONFIRMED" && o.action !== "ready",
+    ))
+      assert.deepEqual(
+        after.operations.find((o) => o.operationId === operation.operationId),
+        operation,
+      );
+    for (const operation of pending.operations.slice(before.operations.length)) {
+      assert.equal(
+        after.operations.find((o) => o.operationId === operation.operationId)?.state,
+        "CLOSED",
+      );
+      assert.equal(
+        f.requests.some((r) => r.body.operationId === operation.operationId),
+        false,
+      );
+    }
+    const late = structuredClone(after);
+    late.operations.find((o) => o.operationId === pending.operations.at(-1)!.operationId)!.state =
+      "TRANSMITTED";
+    await assert.rejects(async () => f.store.write(late), { code: "UNSAFE_STORAGE" });
+    assert.deepEqual(await f.store.read(), after);
+  } finally {
+    await f.close();
+  }
+});
+
+test("should keep provider input uncertain when rejection is raised after the input callback", async () => {
+  const f = await runnerFixture({}, (record) => Object.assign(record, claudeRecord(record)));
+  const adapter = new IntentAdapter();
+  adapter.onSubmitted = async () => {
+    const attempt = (await f.store.read())!.attempts[0];
+    throw new PreinputRejectedError("SNAPSHOT_CHANGED", {
+      version: 1,
+      kind: "PREINPUT_REJECTED",
+      provider: "claude",
+      scope: structuredClone(attempt.scope),
+      generation: attempt.generation,
+      requestId: attempt.requestId,
+      attemptId: attempt.snapshot!.attemptId,
+      fence: attempt.snapshot!.fence,
+      reason: "SNAPSHOT_CHANGED",
+    });
+  };
+  try {
+    f.queue();
+    await f.runner(adapter).run({ once: true });
+    const saved = (await f.store.read())!;
+    assert.equal(saved.attempts[0].state, "UNKNOWN");
+    assert.ok(saved.attempts[0].nativeIntent);
+    assert.equal(saved.attempts[0].preinputRejection, undefined);
+    assert.equal(f.requests.filter((r) => r.action === "fail-before-input").length, 0);
+    assert.equal(adapter.starts, 1);
+  } finally {
+    await f.close();
+  }
+});
 
 test("should fsync the exact Claude input intent before provider submission and materialize only after ACK", async () => {
   const f = await runnerFixture({}, (record) => Object.assign(record, claudeRecord(record)));
