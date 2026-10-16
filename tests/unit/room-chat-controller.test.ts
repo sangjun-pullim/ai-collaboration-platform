@@ -593,7 +593,7 @@ test("should drain independent retirement pages beyond the latest thirty-two run
   }));
   await h.controller.poll();
   assert.equal(h.controller.getSnapshot().history.retirementCursor, 32);
-  t.mock.timers.tick(2000);
+  t.mock.timers.tick(0);
   await flush();
   assert.equal(h.calls.at(-1)!.body.afterSequence, 1);
   assert.equal(h.calls.at(-1)!.body.afterRetirementSequence, 32);
@@ -691,4 +691,126 @@ test("should reject foreign retirement identities against previously observed re
   assert.ok(h.controller.getSnapshot().pollError);
   assert.equal(h.controller.getSnapshot().history.retirementCursor, 0);
   assert.equal(h.controller.getSnapshot().history.retirements.length, 0);
+});
+
+function historyBatch(after: number, total = 64): RecoveryHistoryPage {
+  const end = Math.min(after + 16, total);
+  return {
+    ...page(),
+    events: Array.from({ length: end - after }, (_, index) => ({
+      ...fixture.history.events[0],
+      eventId: `00000000-0000-4000-8000-${String(after + index + 1000).padStart(12, "0")}`,
+      sequence: after + index + 1,
+      publicText: `기록 ${after + index + 1}`,
+      kind: "SPEECH",
+      adoption: "NONE",
+      cycleId: null,
+      requestId: null,
+      questionId: null,
+      bindingEpoch: null,
+      agentId: null,
+      requestKind: null,
+    })),
+    nextCursor: end,
+    highWaterSequence: total,
+    hasMore: end < total,
+  };
+}
+
+test("should load four history pages serially without a polling delay on room entry", async (t) => {
+  const h = setup(t);
+  h.setBehavior(async (_action, body) => historyBatch(body.afterSequence as number));
+  for (let index = 0; index < 4; index++) {
+    t.mock.timers.tick(0);
+    await flush();
+    assert.equal(h.calls.length, index + 1);
+    assert.equal(h.controller.getSnapshot().history.events.length, (index + 1) * 16);
+  }
+  assert.deepEqual(
+    h.calls.map((call) => call.body.afterSequence),
+    [0, 16, 32, 48],
+  );
+  t.mock.timers.tick(9999);
+  assert.equal(h.calls.length, 4);
+  t.mock.timers.tick(1);
+  await flush();
+  assert.equal(h.calls.length, 5);
+});
+
+test("should keep progressive backfill serialized and abort it when leaving the room", async (t) => {
+  const h = setup(t);
+  const second = deferred<unknown>();
+  h.setBehavior(async (_action, body) =>
+    body.afterSequence === 0 ? historyBatch(0) : second.promise,
+  );
+  t.mock.timers.tick(0);
+  await flush();
+  t.mock.timers.tick(0);
+  await flush();
+  assert.equal(h.calls.length, 2);
+  await h.controller.poll();
+  t.mock.timers.tick(60_000);
+  assert.equal(h.calls.length, 2);
+  h.controller.stop();
+  assert.equal(h.calls[1].signal.aborted, true);
+  second.resolve(historyBatch(16));
+  await flush();
+  t.mock.timers.tick(60_000);
+  assert.equal(h.calls.length, 2);
+  assert.equal(h.controller.getSnapshot().history.cursor, 16);
+});
+
+test("should retain hidden-tab throttling even when history advances", async (t) => {
+  const h = setup(t);
+  h.hide();
+  h.setBehavior(async (_action, body) => historyBatch(body.afterSequence as number));
+  t.mock.timers.tick(0);
+  await flush();
+  t.mock.timers.tick(29_999);
+  assert.equal(h.calls.length, 1);
+  t.mock.timers.tick(1);
+  await flush();
+  assert.equal(h.calls.length, 2);
+  assert.equal(h.controller.getSnapshot().history.cursor, 32);
+});
+
+test("should back off after a failed immediate history page and resume from its cursor", async (t) => {
+  const h = setup(t);
+  h.setBehavior(async (_action, body) => {
+    if (body.afterSequence === 16) throw new WorkflowError("UNAVAILABLE");
+    return historyBatch(0);
+  });
+  t.mock.timers.tick(0);
+  await flush();
+  t.mock.timers.tick(0);
+  await flush();
+  assert.equal(h.calls.length, 2);
+  assert.ok(h.controller.getSnapshot().pollError);
+  t.mock.timers.tick(19_999);
+  assert.equal(h.calls.length, 2);
+  h.setBehavior(async (_action, body) => historyBatch(body.afterSequence as number));
+  t.mock.timers.tick(1);
+  await flush();
+  assert.equal(h.calls.length, 3);
+  assert.equal(h.calls[2].body.afterSequence, 16);
+  t.mock.timers.tick(0);
+  await flush();
+  assert.equal(h.calls.length, 4);
+});
+
+test("should clear loaded history and stop backfill immediately when access is denied", async (t) => {
+  const h = setup(t);
+  h.setBehavior(async (_action, body) => {
+    if (body.afterSequence === 16) throw new WorkflowError("FORBIDDEN");
+    return historyBatch(0);
+  });
+  t.mock.timers.tick(0);
+  await flush();
+  assert.equal(h.controller.getSnapshot().history.events.length, 16);
+  t.mock.timers.tick(0);
+  await flush();
+  assert.equal(h.controller.getSnapshot().permissionDenied, true);
+  assert.deepEqual(h.controller.getSnapshot().history.events, []);
+  t.mock.timers.tick(60_000);
+  assert.equal(h.calls.length, 2);
 });

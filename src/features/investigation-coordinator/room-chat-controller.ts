@@ -179,6 +179,7 @@ export class RoomChatController {
     const abort = new AbortController();
     this.pollAbort = abort;
     let backfill = false;
+    let progressed = false;
     try {
       const afterSequence = this.state.history.cursor;
       const afterRetirementSequence = this.state.history.retirementCursor;
@@ -200,6 +201,8 @@ export class RoomChatController {
       )
         throw new WorkflowError("UNAVAILABLE");
       const history = mergeHistory(this.state.history, page);
+      progressed =
+        history.cursor > afterSequence || history.retirementCursor > afterRetirementSequence;
       const cancelReceipts = this.state.cancelReceipts.filter((receipt) => {
         const run = history.snapshot?.runs.find(
           (run) =>
@@ -243,7 +246,13 @@ export class RoomChatController {
         const running = this.state.history.runs.some((run) =>
           ["QUEUED", "LEASED", "RUNNING"].includes(run.state),
         );
-        this.schedule(pollingDelay(backfill || running, this.environment.hidden(), this.failures));
+        const hidden = this.environment.hidden();
+        // Drain validated history pages serially; stalled pages must not create a busy loop.
+        this.schedule(
+          backfill && progressed && !hidden && this.failures === 0
+            ? 0
+            : pollingDelay(backfill || running, hidden, this.failures),
+        );
       }
     }
   }
