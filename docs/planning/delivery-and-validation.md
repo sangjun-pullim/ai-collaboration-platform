@@ -27,7 +27,7 @@
 
 2026-10-16 기기 등록 뒤 AI 설정이 실패한 원인은 개인 Claude2.1.301의 설치와 앱이 검증한 실행 버전의 차이였다. 사용자 저장소 설정 스냅샷은 통과했지만 VERSION admission에서 중단됐다. 개인 설치의 지원 파일이 없으면 공식2.1.293을 앱 전용 캐시에 준비하도록 보완했다. 고정 길이·hash·코드 서명을 확인하며 개인 launcher·로그인·설정은 유지한다. 터미널에는 실패 단계를, 웹에는 기기 재승인이 필요 없는 프로그램 검증 오류를 표시한다.
 
-Claude·설정 회귀458/458, 전체 웹699/699와 production/distribution build·lint·format/check를 통과했다. 배포 archive에 캐시 모듈이 포함됨을 대조했다. 실제 Mac에서 공식2.1.293을 내려받아 길이·hash·서명·기존 로그인을 확인하고 제품 factory로 모델13개를 조회했다. 개인 launcher·설정 불변, 프로세스 REAPED와 catalog 예약 정리를 확인했다. 실제 AI 입력은0회다. 독립 운영 코드·검증 드라이버 리뷰는 차단 지적 없이 통과했고 캐시 손상 오류 분류 MEDIUM1건도 보완 후 독립 추가 리뷰 PASS를 확인했다. 운영 배포 결과는 해당 PR에 기록한다. 실제 사용자 폴더 설정 완료나 새 AI 답변 검증으로 표시하지 않는다. Docker는 시작하지 않았다.
+Claude·설정 회귀458/458, 전체 웹699/699와 production/distribution build·lint·format/check를 통과했다. 배포 archive에 캐시 모듈이 포함됨을 대조했다. 실제 Mac에서 공식2.1.293을 내려받아 길이·hash·서명·기존 로그인을 확인하고 제품 factory로 모델13개를 조회했다. 개인 launcher·설정 불변, 프로세스 REAPED와 catalog 예약 정리를 확인했다. 실제 AI 입력은0회다. 독립 운영 코드·검증 드라이버 리뷰는 차단 지적 없이 통과했고 캐시 손상 오류 분류 MEDIUM1건도 보완 후 독립 추가 리뷰 PASS를 확인했다. [PR46](https://github.com/sangjun-pullim/ai-collaboration-platform/pull/46)의 main `75a821d13f80b2a775b1f192ec611cccf3548590`을 배포했다. Vercel `dpl_4YF5J5QkCGHQug3nADCyFzt2nTGk` Production READY·운영 별칭과 배포 tar의 검사 코드 일치를 확인했다. 운영 connector hash는 `faef9365ee54cc5e1e31cb6d37b18580385f04035e3fd661af5fc86f9310ad81`이며 로그인200·비인증 inspect/resolve401을 확인했다. 완료한 [버전 분리 계획](../impl-spec/archive/042-claude-runtime-version-isolation.md)을 보관한다. 실제 사용자 폴더 설정 완료나 새 AI 답변 검증으로 표시하지 않는다. Docker는 시작하지 않았다.
 
 
 ### 초기 설정 실패 뒤 새 승인 차단 보정
