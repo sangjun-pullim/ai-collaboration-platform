@@ -1,5 +1,5 @@
 ---
-status: active
+status: done
 date: 2026-10-16
 risk-surface: permission
 ---
@@ -83,7 +83,7 @@ risk-surface: permission
 - 웹에서는 공유 동의가 원인이라고 단정한 문구를 바로잡는다. 세부 원인은 로컬 터미널에서 확인하고 원시 설정은 웹에 공유하지 않는다.
 - 기존 durable journal은 실패 code를 보존한다. 새 상세 단계는 실행 중 로컬 안내이며 재시작 뒤에도 보존된다고 주장하지 않는다. 독립 진단 저장 포맷 확대는 이번 변경에 포함하지 않는다.
 
-### [ ] Step 5: 검증·배포·현재 실패 복구
+### [x] Step 5: 검증·배포·현재 실패 복구
 
 - 독립 reviewer가 운영 변경과 입력 없는 실제 검증 드라이버를 검사한다.
 - 승인 이후 실제 Mac에서 캐시 수급·길이/hash/서명·version/auth를 확인한다. 개인 launcher·설정의 불변을 확인한다. 새 AI 질문0회.
@@ -117,10 +117,19 @@ risk-surface: permission
 
 ## Review Notes
 
-독립 reviewer `claude_cache_plan_review`의 계획 검토 PASS. CRITICAL/HIGH 0건. 사용자가 계획을 승인했다. 운영 코드와 회귀 테스트를 구현했다. 구현·드라이버 독립 검토에서 CRITICAL/HIGH0건이었다. 실제 캐시 다운로드와 입력 없는 모델 조회1회를 실행해 모델13개·개인 설정/launcher 불변·REAPED·catalog 예약 정리·입력0을 확인했다. 캐시 오류 분류 MEDIUM1건은 보완 후 새 reviewer의 추가 검토 PASS로 해소했다. 최종 관련458/458·웹699/699·build/lint/format/check 통과. 배포와 기존 사용자 설정 갱신은 Step5에 남긴다.
+독립 reviewer `claude_cache_plan_review`의 계획 검토 PASS. CRITICAL/HIGH 0건. 사용자가 계획을 승인했다. 운영 코드와 회귀 테스트를 구현했다. 구현·드라이버 독립 검토에서 CRITICAL/HIGH0건이었다. 실제 캐시 다운로드와 입력 없는 모델 조회1회를 실행해 모델13개·개인 설정/launcher 불변·REAPED·catalog 예약 정리·입력0을 확인했다. 캐시 오류 분류 MEDIUM1건은 보완 후 새 reviewer의 추가 검토 PASS로 해소했다. 최종 관련458/458·웹699/699·build/lint/format/check 통과. PR46 main 병합·Production READY·공개 연결 코드 일치를 확인했다. 기존 실패 요청의 취소 완료 후 같은 기기의 새 명령으로 갱신하도록 안내했다. 사용자 폴더 재선택·새 실제 답변은 자동 실행하지 않았고 완료로 간주하지 않는다.
 
 | Finding | Severity | Disposition | Rationale |
 |---|---|---|---|
 | 존재하지 않는 CLI 소비자 경로와 최종 JSON 영향 | MEDIUM | ACCEPTED | 실제 `cli.ts` 소비자 위치로 교체했다. 상세 단계는 reportStatus 콜백에만 추가하고 status/run 반환 JSON은 유지하도록 Step 4에 반영했다. |
 
 | 캐시 손상 오류가 개인 설치 문제로 잘못 안내됨 | MEDIUM | ACCEPTED | 캐시 준비의 파일시스템 오류와 UNSAFE_STORAGE를 CACHE_INTEGRITY로 변환한다. 취소·종료·서명·snapshot RuntimeError는 유지한다. missing binary/symlink parent 제품 회귀를 먼저 실패 확인한 뒤 보완했다. |
+
+## Completion Evidence
+
+- 관련 connector458/458, 웹699/699, production/distribution build·lint·format/check PASS.
+- 독립 구현/드라이버 리뷰와 MEDIUM 보정 후 추가 리뷰 PASS. 새 CRITICAL/HIGH 없음.
+- 실제 Mac의 새 합성 폴더에서 공식293 모델13개 조회·기존 설정/launcher 불변·REAPED·catalog 예약 정리 확인. 모델 입력0, 실행1회. 실제 사용자 설정 완료와는 구분한다.
+- [PR46](https://github.com/sangjun-pullim/ai-collaboration-platform/pull/46), main `75a821d13f80b2a775b1f192ec611cccf3548590`, Vercel `dpl_4YF5J5QkCGHQug3nADCyFzt2nTGk` Production READY 및 운영 별칭 확인.
+- 운영 connector `faef9365ee54cc5e1e31cb6d37b18580385f04035e3fd661af5fc86f9310ad81`의 길이·hash와 압축 해제 tar를 검사한 로컬 코드와 대조했다. gzip OS 헤더만 플랫폼에 따라 다르다. 로그인200·비인증 inspect/resolve401 확인.
+- 사용자 개인 기기·실패 요청 기록은 보존했다. 현재 설정 취소→기존 연결 종료→새 명령 갱신→사용자 AI·폴더 선택 절차를 안내했다. 사용자 재선택·실제 새 답변은 후속 사용 확인 사항이며 이번에 대신 실행하지 않았다.
