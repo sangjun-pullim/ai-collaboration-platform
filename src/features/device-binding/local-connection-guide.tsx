@@ -83,6 +83,10 @@ export function LocalConnectionGuide({
 }) {
   const [issued, setIssued] = useState<{ scope: string; value: IssuedLaunch } | null>(null);
   const currentKey = useRef("");
+  const currentSelection = useRef("");
+  const rejectedRef = useRef(new Set<string>());
+  const [rejectedSelections, setRejectedSelections] = useState(new Set<string>());
+  const recoveryPanel = useRef<HTMLDivElement>(null);
   const [copying, setCopying] = useState(false);
   const [expiredScope, setExpiredScope] = useState<string | null>(null);
   const [deviceAlias, setDeviceAlias] = useState("내 Mac");
@@ -113,8 +117,15 @@ export function LocalConnectionGuide({
   );
   const [preparing, setPreparing] = useState<string | null>(null);
   const selection = selectionReceipt?.key === scopeKey ? selectionReceipt : null;
+  const selectionIdentity = JSON.stringify([
+    scopeKey,
+    selection?.raw,
+    selection?.value.baseProfile,
+  ]);
+  const needsApproval = rejectedSelections.has(selectionIdentity);
   const blocked = storageFailure?.key === scopeKey ? storageFailure.message : "";
   const recovering = recoveryDialog?.key === scopeKey ? recoveryDialog : null;
+  const recoveryKey = recovering?.key;
   const room = rooms.find((item) => item.roomId === roomId);
   const manifest = manifestReceipt?.origin === origin ? manifestReceipt.value : null;
   const key = JSON.stringify([
@@ -128,7 +139,12 @@ export function LocalConnectionGuide({
     selection?.value.baseProfile,
   ]);
   const command =
-    selection && !blocked && !recovering && preparing !== scopeKey && prepared?.key === key
+    selection &&
+    !blocked &&
+    !needsApproval &&
+    !recovering &&
+    preparing !== scopeKey &&
+    prepared?.key === key
       ? prepared.value
       : "";
   const error = failure?.key === key || failure?.key === `manifest:${origin}` ? failure.value : "";
@@ -196,6 +212,18 @@ export function LocalConnectionGuide({
     };
   }, [origin]);
   useEffect(() => {
+    currentSelection.current = selectionIdentity;
+    return () => {
+      if (currentSelection.current === selectionIdentity) currentSelection.current = "";
+    };
+  }, [selectionIdentity]);
+  useEffect(() => {
+    if (recoveryKey) {
+      recoveryPanel.current?.focus();
+      recoveryPanel.current?.scrollIntoView({ block: "nearest" });
+    }
+  }, [recoveryKey]);
+  useEffect(() => {
     currentKey.current = key;
     return () => {
       if (currentKey.current === key) currentKey.current = "";
@@ -253,7 +281,16 @@ export function LocalConnectionGuide({
     }
   }
   async function copy(fresh = false) {
-    if (!manifest || !room || !selection || blocked || preparingRef.current) return;
+    if (
+      !manifest ||
+      !room ||
+      !selection ||
+      blocked ||
+      recovering ||
+      rejectedRef.current.has(selectionIdentity) ||
+      preparingRef.current
+    )
+      return;
     const requestedKey = key;
     let command = !fresh && prepared?.key === key ? prepared.value : "";
     try {
@@ -272,7 +309,8 @@ export function LocalConnectionGuide({
           { requestId: crypto.randomUUID(), roomId, deviceAlias, selection: selection.value },
           AbortSignal.timeout(10000),
         )) as IssuedLaunch;
-        if (currentKey.current !== requestedKey) return;
+        if (currentKey.current !== requestedKey || rejectedRef.current.has(selectionIdentity))
+          return;
         if (window.localStorage.getItem(scopeKey) !== selection.raw)
           throw new Error("SELECTION_CHANGED");
         if (!result.key || !result.created) throw new Error("REISSUE_REQUIRED");
@@ -286,7 +324,8 @@ export function LocalConnectionGuide({
           selection: selection.value,
           launch: { key: result.key, payloadHash: result.payloadHash },
         });
-        if (currentKey.current !== requestedKey) return;
+        if (currentKey.current !== requestedKey || rejectedRef.current.has(selectionIdentity))
+          return;
         if (window.localStorage.getItem(scopeKey) !== selection.raw)
           throw new Error("SELECTION_CHANGED");
         setIssued({ scope: key, value: result });
@@ -305,13 +344,15 @@ export function LocalConnectionGuide({
       preparingRef.current = false;
       setCopying(false);
     }
-    if (currentKey.current !== requestedKey) return;
+    if (currentKey.current !== requestedKey || rejectedRef.current.has(selectionIdentity)) return;
     try {
       if (window.localStorage.getItem(scopeKey) !== selection.raw)
         throw new Error("SELECTION_CHANGED");
       await navigator.clipboard.writeText(command);
+      if (currentKey.current !== requestedKey || rejectedRef.current.has(selectionIdentity)) return;
       setNotice({ command, value: "명령을 복사했습니다. 내 Mac의 터미널에 붙여 넣어 실행하세요." });
     } catch {
+      if (currentKey.current !== requestedKey || rejectedRef.current.has(selectionIdentity)) return;
       if (commandField.current) commandField.current.value = command;
       setShowRaw(true);
       const panel = commandField.current?.closest<HTMLElement>("[data-command-panel]");
@@ -332,11 +373,68 @@ export function LocalConnectionGuide({
         <li>② Mac 터미널에서 실행</li>
         <li>③ 안내에 따라 계정 확인</li>
       </ol>
+      {needsApproval && !recovering && (
+        <div className="space-y-2 text-sm" role="status">
+          <p>이전 기기 인증이 거절되었습니다. 같은 명령 대신 새 승인을 준비하세요.</p>
+          <Button onClick={() => setRecoveryDialog({ key: scopeKey, confirmed: false })}>
+            새 승인으로 다시 연결
+          </Button>
+        </div>
+      )}
+      {recovering && (
+        <div
+          ref={recoveryPanel}
+          tabIndex={-1}
+          className="space-y-3 rounded-lg border border-amber-200 bg-amber-50 p-4 text-sm"
+          aria-label="새 승인 연결 확인"
+        >
+          <h3 className="font-semibold">새 승인으로 다시 연결</h3>
+          {needsApproval && (
+            <p>
+              이전 기기 인증이 거절되어 기존 명령 복사를 중지했습니다. 아래 확인을 마친 뒤 새 명령을
+              복사하세요.
+            </p>
+          )}
+          <p>
+            기존 AI 기록은 그대로 보존합니다. 만료된 연결은 새 웹 승인이 필요하며, AI·폴더·모델은
+            다시 선택합니다.
+          </p>
+          <p>
+            이전에 연결한 터미널이 실행 중이면 먼저 Ctrl+C로 종료하세요. 이미 종료됐다면 아래
+            확인란을 선택하세요.
+          </p>
+          <label className="flex items-center gap-2">
+            <input
+              type="checkbox"
+              checked={recovering.confirmed}
+              onChange={(event) =>
+                setRecoveryDialog({ key: scopeKey, confirmed: event.target.checked })
+              }
+            />
+            이전 연결의 터미널 실행을 종료했습니다
+          </label>
+          <Button
+            type="button"
+            disabled={!recovering.confirmed || preparing === scopeKey || !!blocked}
+            onClick={prepareRecoveryCommand}
+          >
+            새 승인 명령 준비
+          </Button>
+          <Button
+            type="button"
+            variant="outline"
+            disabled={preparing === scopeKey}
+            onClick={() => setRecoveryDialog(null)}
+          >
+            취소
+          </Button>
+        </div>
+      )}
       <Button
         type="button"
         aria-label="연결 명령 복사"
         variant={prominent ? "default" : "outline"}
-        disabled={!manifest || !selection || !!blocked || !!recovering || copying}
+        disabled={!manifest || !selection || !!blocked || needsApproval || !!recovering || copying}
         onClick={() => copy()}
       >
         {copying
@@ -368,9 +466,20 @@ export function LocalConnectionGuide({
           onRetry={() => {
             void copy(true);
           }}
-          onFreshApproval={() => {
-            setShowOptions(true);
+          onAuthenticationRejected={() => {
+            if (
+              currentSelection.current !== selectionIdentity ||
+              rejectedRef.current.has(selectionIdentity)
+            )
+              return;
+            rejectedRef.current.add(selectionIdentity);
+            setRejectedSelections(new Set(rejectedRef.current));
             setRecoveryDialog({ key: scopeKey, confirmed: false });
+          }}
+          onFreshApproval={() => {
+            setRecoveryDialog({ key: scopeKey, confirmed: false });
+            recoveryPanel.current?.focus();
+            recoveryPanel.current?.scrollIntoView({ block: "nearest" });
           }}
         />
       )}
@@ -450,45 +559,6 @@ export function LocalConnectionGuide({
           >
             새 승인으로 다시 연결
           </Button>
-          {recovering && (
-            <div className="space-y-2 rounded-md border p-3 text-sm" aria-label="새 승인 연결 확인">
-              <p>
-                기존 AI 기록은 그대로 보존합니다. 만료된 연결은 새 웹 승인이 필요하며,
-                AI·폴더·모델은 다시 선택합니다.
-              </p>
-              <p>
-                기존 터미널 실행을 종료하세요. 준비만 하고 실행하지 않은 명령은 건너뛰고 실제 로컬
-                기록을 확인합니다. 유효한 연결은 기존 설정을 유지해 재사용합니다. 만료된 연결을 새로
-                승인하는 경우에만 공개 연결 ID를 보여 줍니다. 이때 내 연결 카드에서 같은 ID인 본인
-                연결만 연결 취소하고 터미널에서 완료를 확인하세요.
-              </p>
-              <label className="flex items-center gap-2">
-                <input
-                  type="checkbox"
-                  checked={recovering.confirmed}
-                  onChange={(event) =>
-                    setRecoveryDialog({ key: scopeKey, confirmed: event.target.checked })
-                  }
-                />
-                이전 연결의 터미널 실행을 종료했습니다
-              </label>
-              <Button
-                type="button"
-                disabled={!recovering.confirmed || preparing === scopeKey || !!blocked}
-                onClick={prepareRecoveryCommand}
-              >
-                새 승인 명령 준비
-              </Button>
-              <Button
-                type="button"
-                variant="outline"
-                disabled={preparing === scopeKey}
-                onClick={() => setRecoveryDialog(null)}
-              >
-                취소
-              </Button>
-            </div>
-          )}
         </div>
       </section>
 

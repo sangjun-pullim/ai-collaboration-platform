@@ -20,8 +20,7 @@ const reasons: Record<SetupReason, string> = {
   FORBIDDEN: "이 방의 참가 권한과 연결한 계정을 확인하세요. 같은 계정과 방으로 연결을 재개하세요.",
   CONFLICT:
     "연결이나 승인 상태가 변경되었습니다. 같은 연결의 상태를 확인한 뒤 새 명령을 복사하세요.",
-  UNAUTHENTICATED:
-    "기기 인증을 확인할 수 없습니다. 연결 옵션에서 새 승인으로 다시 연결을 선택하세요.",
+  UNAUTHENTICATED: "이전 기기 인증이 거절되었습니다. 새 승인으로 다시 연결해야 합니다.",
   UNAVAILABLE: "Mac에서 서버 통신을 확인하지 못했습니다.",
 };
 function startupReason(reason: string | null): string | null {
@@ -67,12 +66,14 @@ export function SetupStatus({
   deviceId = null,
   onRetry,
   onFreshApproval,
+  onAuthenticationRejected,
 }: {
   roomId: string;
   requestId?: string | null;
   deviceId?: string | null;
   onRetry?: () => void;
   onFreshApproval?: () => void;
+  onAuthenticationRejected?: () => void;
 }) {
   const controller = useMemo(
     () => new SetupController({ roomId, requestId, deviceId }),
@@ -93,6 +94,14 @@ export function SetupStatus({
       document.removeEventListener("visibilitychange", changed);
     };
   }, [controller]);
+  const rejected =
+    requestId !== null &&
+    deviceId === null &&
+    view.inspection?.startup?.stage === "FAILED" &&
+    view.inspection.startup.reason === "UNAUTHENTICATED";
+  useEffect(() => {
+    if (rejected) onAuthenticationRejected?.();
+  }, [rejected, onAuthenticationRejected]);
   return (
     <SetupProgress
       inspection={view.inspection}

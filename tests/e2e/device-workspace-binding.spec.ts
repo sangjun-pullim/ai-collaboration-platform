@@ -795,9 +795,12 @@ test("should renew an expired command and display first-attempt failure without 
     });
     await expect(freshApproval).toBeVisible();
     await expect(status.getByRole("button", { name: "새 명령 복사", exact: true })).toHaveCount(0);
-    await freshApproval.click();
+    await expect(copy).toBeDisabled();
+    await expect(page.getByLabel("연결 명령 복사 결과", { exact: true })).toHaveCount(0);
     const confirmation = page.getByLabel("새 승인 연결 확인", { exact: true });
     await expect(confirmation).toBeVisible();
+    await expect(confirmation).toBeInViewport();
+    await expect(confirmation).toBeFocused();
     await expect(confirmation.getByRole("checkbox")).not.toBeChecked();
     await expect(
       confirmation.getByRole("button", { name: "새 승인 명령 준비", exact: true }),
@@ -808,6 +811,23 @@ test("should renew an expired command and display first-attempt failure without 
         Object.entries(localStorage).filter(([name]) => name.startsWith("ai-collab-connection:")),
       ),
     ).toEqual(generation);
+    await confirmation.getByRole("button", { name: "취소", exact: true }).click();
+    await expect(confirmation).toHaveCount(0);
+    await expect(copy).toBeDisabled();
+    await freshApproval.click();
+    await expect(confirmation).toBeInViewport();
+    await confirmation.getByRole("checkbox").check();
+    await confirmation.getByRole("button", { name: "새 승인 명령 준비", exact: true }).click();
+    await expect(confirmation).toHaveCount(0);
+    await expect(copy).toBeEnabled();
+    expect(issued).toBe(3);
+    await copy.click();
+    await expect.poll(() => issued).toBe(4);
+    expect(
+      await page.evaluate(() =>
+        Object.entries(localStorage).filter(([name]) => name.startsWith("ai-collab-connection:")),
+      ),
+    ).not.toEqual(generation);
   } finally {
     await owned.close();
   }
