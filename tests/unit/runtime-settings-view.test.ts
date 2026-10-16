@@ -1473,7 +1473,7 @@ test("should prepare a room-specific command and expose it when clipboard permis
   cursor = 0;
   effects.length = 0;
   ui(props);
-  effects[2]();
+  for (const effect of effects.slice(2)) effect();
 
   await new Promise((resolve) => setImmediate(resolve));
   cursor = 0;

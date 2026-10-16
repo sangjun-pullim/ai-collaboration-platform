@@ -484,7 +484,7 @@ test("should open explicit fresh approval from a rejected command without issuin
     const tree = f.render();
     assert.equal(
       nodes(tree).find((n) => n.props["aria-label"] === "연결 추가 옵션")!.props.hidden,
-      false,
+      true,
     );
     assert.ok(nodes(tree).some((n) => n.props["aria-label"] === "새 승인 연결 확인"));
     assert.equal(nodes(tree).find((n) => n.props.type === "checkbox")!.props.checked, false);
@@ -493,6 +493,71 @@ test("should open explicit fresh approval from a rejected command without issuin
     assert.deepEqual(f.copies, [before]);
     assert.deepEqual([...f.saved.entries()], saved);
     assert.equal(f.copies.length, 1);
+  } finally {
+    f.close();
+  }
+});
+
+test("should block rejected credentials until explicit recovery and ignore stale failure reports", async () => {
+  const f = fixture();
+  try {
+    await f.settle();
+    await f.click("연결 명령 복사");
+    const oldCopy = f.button("연결 명령 복사").props.onClick as () => Promise<void>;
+    const status = nodes(f.render()).find((n) => n.type === "setup-status")!;
+    const reject = status.props.onAuthenticationRejected as () => void;
+    assert.equal(typeof reject, "function");
+    reject();
+    await f.settle();
+    assert.equal(f.button("연결 명령 복사").props.disabled, true);
+    assert.equal(f.value(), "");
+    assert.equal(f.button("새 승인 명령 준비").props.disabled, true);
+    assert.equal(nodes(f.render()).find((n) => n.props.type === "checkbox")!.props.checked, false);
+    assert.ok(!text(f.render()).includes("명령을 복사했습니다."));
+    await oldCopy();
+    assert.equal(f.copies.length, 1);
+    assert.equal(f.saved.size, 0);
+    await f.click("취소");
+    reject();
+    await f.settle();
+    assert.equal(f.button("연결 명령 복사").props.disabled, true);
+    assert.ok(!nodes(f.render()).some((n) => n.props["aria-label"] === "새 승인 연결 확인"));
+    await f.choose();
+    await f.click("새 승인 명령 준비");
+    await f.settle();
+    reject();
+    await f.settle();
+    assert.equal(f.button("연결 명령 복사").props.disabled, false);
+    assert.equal(f.saved.size, 1);
+    await f.click("연결 명령 복사");
+    assert.equal(f.copies.length, 2);
+  } finally {
+    f.close();
+  }
+});
+
+test("should retain rejection after alias changes and discard an in-flight reissue", async () => {
+  const f = fixture();
+  try {
+    await f.settle();
+    await f.click("연결 명령 복사");
+    const status = nodes(f.render()).find((n) => n.type === "setup-status")!;
+    let release!: () => void;
+    f.faults.issue = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    (status.props.onRetry as () => void)();
+    (status.props.onAuthenticationRejected as () => void)();
+    release();
+    await f.settle();
+    assert.equal(f.copies.length, 1);
+    await f.click("취소");
+    const alias = nodes(f.render()).find((n) => n.type === "input" && n.props.maxLength === 40)!;
+    (alias.props.onChange as (event: unknown) => void)({ target: { value: "Other name" } });
+    await f.settle();
+    assert.equal(f.button("연결 명령 복사").props.disabled, true);
+    assert.equal(f.value(), "");
+    assert.equal(f.saved.size, 0);
   } finally {
     f.close();
   }
