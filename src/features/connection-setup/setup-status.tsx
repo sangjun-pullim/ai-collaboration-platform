@@ -66,11 +66,13 @@ export function SetupStatus({
   requestId = null,
   deviceId = null,
   onRetry,
+  onFreshApproval,
 }: {
   roomId: string;
   requestId?: string | null;
   deviceId?: string | null;
   onRetry?: () => void;
+  onFreshApproval?: () => void;
 }) {
   const controller = useMemo(
     () => new SetupController({ roomId, requestId, deviceId }),
@@ -99,6 +101,7 @@ export function SetupStatus({
       manual={view.manual}
       commandOnly={requestId !== null && deviceId === null}
       onRetry={onRetry}
+      onFreshApproval={onFreshApproval}
       onCheck={() => {
         void controller.poll();
       }}
@@ -112,6 +115,7 @@ export function SetupProgress({
   manual = false,
   onCheck,
   onRetry,
+  onFreshApproval,
   fallback,
   embedded = false,
   commandOnly = false,
@@ -125,7 +129,13 @@ export function SetupProgress({
   manual?: boolean;
   onCheck: () => void;
   onRetry?: () => void;
+  onFreshApproval?: () => void;
 }) {
+  const needsFreshApproval =
+    commandOnly &&
+    inspection?.startup?.stage === "FAILED" &&
+    inspection.startup.reason === "UNAUTHENTICATED" &&
+    !!onFreshApproval;
   const observation = commandOnly
     ? inspection?.startup
     : (inspection?.settings ?? inspection?.startup);
@@ -160,7 +170,13 @@ export function SetupProgress({
         inspection?.startup?.stage === "FAILED" && (
           <p>{startupReason(inspection.startup.reason)}</p>
         )}
-      {onRetry &&
+      {needsFreshApproval && (
+        <Button variant="outline" onClick={onFreshApproval}>
+          새 승인으로 다시 연결
+        </Button>
+      )}
+      {!needsFreshApproval &&
+        onRetry &&
         (inspection?.startup?.stage === "FAILED" ||
           (inspection?.expiresAt && Date.parse(inspection.expiresAt) <= now)) && (
           <Button variant="outline" onClick={onRetry}>
