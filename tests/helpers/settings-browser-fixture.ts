@@ -15,6 +15,7 @@ import {
 import { secret } from "./device-binding-fixture.js";
 import { assertOwnedStack, ensure, productEnvironment } from "./local-access-stack.js";
 import { authBrowserChildEnvironment } from "./auth-browser-artifact-policy.js";
+import { RuntimeError } from "../../packages/local-connector/src/runtime-contracts.ts";
 
 type Input = Record<string, unknown>;
 function exact(input: Input, keys: string[]) {
@@ -174,6 +175,7 @@ export async function runSettingsBrowserParent() {
             "/drive-apply": 1,
             "/drive-ready": 1,
             "/drive-question": 2,
+            "/drive-blocked": 1,
             "/stale-capability": 1,
           };
           const limit = limits[req.url ?? ""];
@@ -204,6 +206,24 @@ export async function runSettingsBrowserParent() {
               agentId: fixture.scene.responder.agentId,
               inputs: fixture.inputs.length,
             };
+          } else if (req.url === "/drive-blocked") {
+            const before = fixture.inputs.length;
+            const admitted = await workflow.ask(fixture.scene);
+            const status = await fixture.run({
+              beforeMutation: async (kind) => {
+                if (kind === "provider-intent") throw new RuntimeError("SNAPSHOT_CHANGED");
+              },
+            });
+            ensure(status.state === "UNKNOWN", "Owned request must remain unresolved");
+            ensure(fixture.inputs.length === before, "Blocked fixture must not send input");
+            const record = await (await fixture.runtime()).read();
+            const attempt = record?.attempts.at(-1)?.snapshot;
+            ensure(attempt, "Owned unresolved attempt must exist");
+            await workflow.expire("lease", attempt.attemptId);
+            await workflow.expire("cycle", admitted.cycleId);
+            await workflow.history(fixture.scene, fixture.scene.owner);
+            await workflow.devices.request("heartbeat", {}, fixture.scene.responder.credential);
+            data = { state: status.state, inputs: fixture.inputs.length };
           } else if (req.url === "/stale-capability") {
             const current = fixture.settings.accepted(
               await fixture.human(fixture.scene.owner, "list", {

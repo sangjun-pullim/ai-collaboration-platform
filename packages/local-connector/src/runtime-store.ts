@@ -149,7 +149,9 @@ function completedRequests(value: RuntimeRecord): string[] {
   return [...new Set(value.attempts.map((a) => a.requestId))].filter((requestId) => {
     const attempts = value.attempts.filter((a) => a.requestId === requestId);
     if (
-      !attempts.some((a) => a.state === "UPLOADED") ||
+      !attempts.some(
+        (a) => a.state === "UPLOADED" || a.unstartedClosure?.kind === "SERVER_PREINPUT_REJECTED",
+      ) ||
       attempts.some(
         (a) => a.state !== "UPLOADED" && !(a.state === "NOT_STARTED" && a.unstartedClosure),
       )

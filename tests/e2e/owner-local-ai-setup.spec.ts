@@ -24,6 +24,7 @@ const brokerActions = [
   "drive-apply",
   "drive-ready",
   "drive-question",
+  "drive-blocked",
   "stale-capability",
   "report-setup",
 ] as const;
@@ -133,6 +134,7 @@ test("should distinguish owner Claude request application and readiness and answ
     }),
     ownerContext = await context(browser, info),
     requesterContext = await context(browser, info);
+  let phase = "entry";
   try {
     const owner = await ownerContext.newPage(),
       requester = await requesterContext.newPage();
@@ -151,6 +153,7 @@ test("should distinguish owner Claude request application and readiness and answ
     await expect(
       owner.getByRole("combobox", { name: "설정할 본인 기기", exact: true }),
     ).toBeVisible();
+    phase = "folder";
     const form = await folder(owner, scene, "claude");
     await expect(
       form.getByRole("combobox", { name: "모델", exact: true }).getByRole("option"),
@@ -198,6 +201,7 @@ test("should distinguish owner Claude request application and readiness and answ
     await expect(form.getByLabel("PC에 적용된 설정", { exact: true })).toContainText(
       "아직 PC 적용 확인이 없습니다.",
     );
+    phase = "apply";
     const applied = await broker<{ state: string; ready: boolean; agentId: string }>(
       "drive-apply",
       { scene: scene.id },
@@ -208,13 +212,34 @@ test("should distinguish owner Claude request application and readiness and answ
     await expect(settings(owner).getByLabel("PC에 적용된 설정", { exact: true })).toContainText(
       "브라우저 Claude AI",
     );
-    await expect(settings(owner)).toContainText(
-      "AI 응답 준비는 AI 채팅방의 질문 대상 선택에서 확인하세요.",
+    phase = "initial-readiness";
+    await expect(owner.getByLabel("연결 확인 결과", { exact: true })).toContainText(
+      "응답 준비 미확인",
     );
+    await expect(settings(owner).getByRole("link", { name: "채팅 시작", exact: true })).toHaveCount(
+      0,
+    );
+    phase = "manual-refresh";
+    const previousCheck = await owner.getByLabel("연결 확인 결과", { exact: true }).innerText();
+    await owner.getByRole("button", { name: "연결 상태 새로 확인", exact: true }).click();
+    await expect(owner.getByLabel("연결 확인 결과", { exact: true })).toContainText(
+      "상태 확인 완료",
+    );
+    await expect
+      .poll(() => owner.getByLabel("연결 확인 결과", { exact: true }).innerText())
+      .not.toBe(previousCheck);
+    phase = "ready-confirmation";
     const ready = await broker<{ ready: boolean }>("drive-ready", { scene: scene.id });
     check(ready.ready);
+    await owner.getByRole("button", { name: "연결 상태 새로 확인", exact: true }).click();
+    await expect(owner.getByLabel("연결 확인 결과", { exact: true })).toContainText("AI 준비 완료");
+    await expect(
+      settings(owner).getByRole("link", { name: "채팅 시작", exact: true }),
+    ).toBeVisible();
+    phase = "question";
     await requester.reload();
     const question = requester.getByRole("form", { name: "AI에게 질문", exact: true });
+    phase = "question-target";
     await expect(question.getByLabel("직접 질문 대상", { exact: true })).toHaveValue(
       applied.agentId,
     );
@@ -222,6 +247,7 @@ test("should distinguish owner Claude request application and readiness and answ
     await question
       .getByLabel("AI에게 보낼 질문", { exact: true })
       .fill("설정한 한 Claude AI에게만 질문");
+    phase = "question-submit";
     const admitted = requester.waitForResponse(
       (response) =>
         response.url().endsWith("/api/investigations/ask") &&
@@ -229,20 +255,54 @@ test("should distinguish owner Claude request application and readiness and answ
     );
     await question.getByRole("button", { name: "AI에 질문 보내기", exact: true }).click();
     check((await admitted).status() === 200);
+    phase = "question-drive";
     const driven = await broker<{ inputs: number; state: string }>("drive-question", {
       scene: scene.id,
     });
     check(driven.inputs === 1 && driven.state === "UPLOADED");
+    phase = "question-answer";
     const records = requester.getByLabel("확정 공동 이력", { exact: true });
     await expect(records).toContainText("선택한 공개 파일로 확인한 합성 제품 답변", {
       timeout: 45000,
     });
     await expect(
-      records.getByRole("listitem").filter({ has: requester.getByText("답변", { exact: true }) }),
+      records
+        .getByRole("listitem")
+        .filter({ has: requester.getByText("AI · 답변", { exact: true }) }),
     ).toHaveCount(1);
+    phase = "question-replay";
     const replay = await broker<{ inputs: number }>("drive-question", { scene: scene.id });
     check(replay.inputs === 1);
+    phase = "blocked-recovery";
+    const blocked = await broker<{ state: string; inputs: number }>("drive-blocked", {
+      scene: scene.id,
+    });
+    check(blocked.state === "UNKNOWN" && blocked.inputs === 1);
+    phase = "blocked-status";
+    await owner.reload();
+    const result = owner.getByLabel("연결 확인 결과", { exact: true });
+    await expect(result).toContainText("최근 통신 확인");
+    await expect(result).toContainText("이전 결과를 확인할 수 없음");
+    await expect(settings(owner).getByRole("link", { name: "채팅 시작", exact: true })).toHaveCount(
+      0,
+    );
+    phase = "blocked-recovery-open";
+    const recoverButton = owner.getByRole("button", {
+      name: "기록을 보존하고 다시 연결",
+      exact: true,
+    });
+    await expect(recoverButton).toBeVisible();
+    await recoverButton.click();
+    const recovery = owner.getByRole("region", { name: "이전 요청 보존 복구", exact: true });
+    await expect(recovery).toContainText(scene.deviceId);
+    await expect(
+      recovery.getByRole("button", { name: "확인한 기기만 연결 취소", exact: true }),
+    ).toBeDisabled();
+    await expect(recovery).toContainText("질문을 자동으로 다시 보내지 않습니다");
     check(await owner.locator("body").evaluate((element) => element.scrollWidth <= innerWidth + 1));
+  } catch (error) {
+    process.stderr.write(`SETTINGS_ANSWER_STAGE ${phase}\n`);
+    throw error;
   } finally {
     await requesterContext.close();
     await ownerContext.close();
@@ -495,7 +555,7 @@ test("should show native phase hints and finish one save without implying AI rea
       "한 번 저장 AI",
     );
     await expect(form.getByLabel("PC에 적용된 설정", { exact: true })).toContainText(
-      "AI 응답 준비는 AI 채팅방",
+      "이 화면에서 상태 확인을 눌러 AI 응답 준비를 확인하세요.",
     );
     expect(
       await owner.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth),

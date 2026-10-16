@@ -43,6 +43,7 @@ export const deviceActions = [
   "complete",
   "interrupt-ack",
   "observe",
+  "fail-before-input",
 ] as const;
 export type HumanAction = (typeof humanActions)[number];
 export type DeviceAction = (typeof deviceActions)[number];
@@ -298,6 +299,21 @@ export interface TerminalReceipt {
   adoption: Exclude<Adoption, "NONE">;
   continuationRequestId: string | null;
 }
+export const preinputReasons = [
+  "SNAPSHOT_CHANGED",
+  "POLICY_REJECTED",
+  "LOCAL_VALIDATION_FAILED",
+] as const;
+export interface PreinputFailureReceipt {
+  requestId: string;
+  attemptId: string;
+  fence: number;
+  bindingEpoch: number;
+  state: "FAILED";
+  kind: "PREINPUT_REJECTED";
+  proofHash: string;
+  adoption: "HISTORICAL" | "HUMAN_INPUT_REQUIRED";
+}
 export interface CycleAdmission {
   cycleId: string;
   requestId: string | null;
@@ -451,6 +467,12 @@ const bodies: Record<Action, Shape> = {
   complete: { ...identity, terminal: one(terminals), publicText: text },
   "interrupt-ack": { ...identity, controlId: id },
   observe: { ...identity, terminal: one(terminals), publicText: text },
+  "fail-before-input": {
+    ...identity,
+    proofVersion: one([1]),
+    proofHash: sourceHash,
+    reason: one(preinputReasons),
+  },
 };
 export function validateBody(action: Action, input: unknown): Body {
   let serialized: string;
@@ -904,6 +926,16 @@ const responses: Record<Action, Shape> = {
   complete: receipt,
   "interrupt-ack": { ...control, state: one(["ACKNOWLEDGED"]) },
   observe: receipt,
+  "fail-before-input": {
+    requestId: id,
+    attemptId: id,
+    fence: positive,
+    bindingEpoch: positive,
+    state: one(["FAILED"]),
+    kind: one(["PREINPUT_REJECTED"]),
+    proofHash: sourceHash,
+    adoption: one(["HISTORICAL", "HUMAN_INPUT_REQUIRED"]),
+  },
 };
 export function projectResponse(action: Action, value: unknown): unknown {
   if (

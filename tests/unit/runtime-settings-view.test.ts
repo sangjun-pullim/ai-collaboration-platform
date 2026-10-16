@@ -3,6 +3,8 @@ import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import { runInNewContext } from "node:vm";
 import ts from "typescript";
+import * as readiness from "../../src/features/device-binding/ai-readiness-controller.ts";
+import * as recovery from "../../src/features/device-binding/connection-recovery-controller.ts";
 import { connectionSnapshot } from "../../src/features/device-binding/connection-presence.ts";
 import { consumeConnectionFragment } from "../../src/features/device-binding/local-connection-command.ts";
 import {
@@ -461,6 +463,14 @@ function loadUI(
       if (name === "../connection-setup/setup-status")
         return { SetupStatus: "setup-status", SetupProgress: "setup-progress" };
       if (name === "./connection-presence") return { connectionSnapshot };
+      if (name === "./connection-recovery-controller") return recovery;
+      if (name === "./connection-recovery-panel")
+        return { ConnectionRecoveryPanel: "recovery-panel" };
+      if (
+        name === "./ai-readiness-controller" ||
+        name === "../device-binding/ai-readiness-controller"
+      )
+        return readiness;
       if (Object.hasOwn(replacements, name)) return replacements[name];
       throw new Error(`Unexpected settings UI dependency ${name}`);
     },
@@ -1600,6 +1610,63 @@ test("should use terminal inspection instead of another launch for recent cancel
   );
   assert.match(textContent(tree), /실행 중인 연결 터미널/);
   assert.equal(nodes(tree).find((node) => node.type === "select")!.props.disabled, true);
+});
+
+test("should keep applied settings separate from expired AI readiness and preserve regular chat navigation", () => {
+  const applied = { ...localReceipt("APPLIED"), ...binding };
+  const tree = formTree(
+    formView({ response: response({ applied }), reservedOperationId: null, draft: null }),
+    undefined,
+    { roomHref: `/app/rooms/${rootId}`, aiReadiness: { state: "expired", ready: false } },
+  );
+  assert.equal(
+    nodes(tree).some((node) => node.props["aria-label"] === "채팅 시작"),
+    false,
+  );
+  assert.match(textContent(tree), /설정 저장됨/);
+  assert.ok(nodes(tree).find((node) => node.props["aria-label"] === "일반 채팅으로 이동"));
+});
+
+test("should start AI chat only for the current applied binding and invalidate readiness at display time", () => {
+  const applied = { ...localReceipt("APPLIED"), ...binding };
+  const displayTime = Date.now();
+  const aiReadiness = {
+    ...new readiness.AiReadinessController().getSnapshot(),
+    target: { expectedUserId: operationId, roomId: rootId, deviceId },
+    binding: { agentId, bindingEpoch: 7, configRevision: 0, applied: true },
+    state: "complete",
+    ready: true,
+    selectedReady: true,
+    validUntil: new Date(displayTime + 1000).toISOString(),
+  };
+  const view = formView({
+    response: response({ applied }),
+    reservedOperationId: null,
+    draft: null,
+  });
+  for (const [value, time, enabled] of [
+    [aiReadiness, displayTime, true],
+    [aiReadiness, displayTime + 1000, false],
+    [{ ...aiReadiness, binding: { ...aiReadiness.binding, bindingEpoch: 8 } }, displayTime, false],
+    [
+      { ...aiReadiness, binding: { ...aiReadiness.binding, configRevision: 1 } },
+      displayTime,
+      false,
+    ],
+    [{ ...aiReadiness, target: { ...aiReadiness.target, deviceId: rootId } }, displayTime, false],
+    [{ ...aiReadiness, roomBlocked: true, ready: false }, displayTime, false],
+  ] as const) {
+    const tree = formTree(view, undefined, {
+      roomHref: `/app/rooms/${rootId}`,
+      aiReadiness: value,
+      displayTime: time,
+    });
+    assert.equal(
+      nodes(tree).some((node) => node.props["aria-label"] === "채팅 시작"),
+      enabled,
+    );
+    assert.ok(nodes(tree).some((node) => node.props["aria-label"] === "일반 채팅으로 이동"));
+  }
 });
 
 test("should promote model confirmation then apply and keep applied settings separate", () => {

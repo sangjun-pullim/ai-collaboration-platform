@@ -4,6 +4,8 @@ import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import { runInNewContext } from "node:vm";
 import ts from "typescript";
+import * as readiness from "../../src/features/device-binding/ai-readiness-controller.ts";
+import * as recovery from "../../src/features/device-binding/connection-recovery-controller.ts";
 import * as access from "../../src/features/room-access/contracts.ts";
 import * as connections from "../../src/features/device-binding/contracts.ts";
 
@@ -23,6 +25,10 @@ function load(path: string, dependencies: Record<string, unknown>) {
     Date,
     require(name: string) {
       if (name === "react/jsx-runtime") return { jsx, jsxs: jsx };
+      if (name === "./ai-readiness-controller") return dependencies[name] ?? readiness;
+      if (name === "./connection-recovery-controller") return dependencies[name] ?? recovery;
+      if (name === "./connection-recovery-panel")
+        return { ConnectionRecoveryPanel: "recovery-panel" };
       if (name in dependencies) return dependencies[name];
       throw new Error(`Unexpected connection navigation dependency ${name}`);
     },
@@ -513,12 +519,143 @@ test("should put executable Mac connection before unavailable AI controls for a 
     true,
   );
   const refresh = nodes(tree).find((node) => node.props["aria-label"] === "연결 상태 새로 확인")!;
-  assert.equal(refresh.props.disabled, undefined);
+  assert.equal(refresh.props.disabled, false);
   (refresh.props.onClick as () => void)();
   assert.equal(
     nodes(tree).find((node) => node.props["aria-label"] === "모델 선택과 채팅 시작"),
     undefined,
   );
+});
+
+test("should expose manual connection check feedback independently from router refresh", () => {
+  const tree = manager();
+  assert.ok(nodes(tree).find((node) => node.props["aria-label"] === "연결 확인 결과"));
+});
+
+test("should render checking, same-value completion time and retryable failure without router refresh", async () => {
+  const states: unknown[] = [];
+  const effects: (() => (() => void) | void)[] = [];
+  let cursor = 0;
+  let refreshed = 0;
+  let resolve!: (value: Awaited<ReturnType<typeof readiness.requestConnectionStatus>>) => void;
+  let fail = false;
+  let checkedAt = "2026-10-16T01:00:00.000Z";
+  const device = {
+    deviceId: observerId,
+    roomId: writableId,
+    organizationId,
+    deviceAlias: "본인 Mac",
+    state: "active" as const,
+    lastSeenAt: new Date().toISOString(),
+    expiresAt: new Date(Date.now() + 60_000).toISOString(),
+  };
+  const status = () => ({
+    expectedUserId: organizationId,
+    roomId: writableId,
+    deviceId: observerId,
+    device,
+    checkedAt,
+    executionStatus: null,
+  });
+  const controller = new readiness.AiReadinessController(
+    async () => {
+      if (fail) throw new connections.ConnectionError("UNAVAILABLE");
+      return new Promise((done) => {
+        resolve = done;
+      });
+    },
+    async () =>
+      ({
+        roomId: writableId,
+        bindings: [],
+        runs: [],
+        recovery: { hasBlockingRuns: false, candidate: null, retirements: [] },
+      }) as never,
+  );
+  const component = load("src/features/device-binding/connection-manager.tsx", {
+    react: {
+      useEffect: (effect: () => (() => void) | void) => effects.push(effect),
+      useRef: (current: unknown) => ({ current }),
+      useState: (initial: unknown) => {
+        const slot = cursor++;
+        if (!(slot in states)) states[slot] = typeof initial === "function" ? initial() : initial;
+        return [
+          states[slot],
+          (value: unknown) => {
+            states[slot] = value;
+          },
+        ];
+      },
+    },
+    "./ai-readiness-controller": {
+      ...readiness,
+      AiReadinessController: class {
+        constructor() {
+          return controller;
+        }
+      },
+    },
+    "next/link": { default: "link" },
+    "next/navigation": {
+      useRouter: () => ({
+        refresh: () => {
+          refreshed++;
+        },
+      }),
+    },
+    "./contracts": connections,
+    "../../components/ui/button": { Button: "button" },
+    "../../components/ui/input": { Input: "input" },
+    "../room-access/chat-shell": { ChatShell: "shell" },
+    "../runtime-settings/runtime-settings-form": { RuntimeSettingsForm: "settings-form" },
+    "./local-connection-guide": { LocalConnectionGuide: "connection-guide" },
+    "./local-connection-command": {},
+    "./connection-presence": { connectionSnapshot },
+    "../room-access/access.module.css": { default: {} },
+  }).ConnectionManager as (props: unknown) => UINode;
+  const render = () => {
+    cursor = 0;
+    effects.length = 0;
+    return component({
+      devices: [device],
+      rooms,
+      origin: "https://example.test",
+      userId: organizationId,
+    });
+  };
+  const text = (value: unknown): string =>
+    Array.isArray(value)
+      ? value.map(text).join(" ")
+      : value && typeof value === "object"
+        ? text((value as UINode).props?.children)
+        : String(value ?? "");
+  render();
+  const cleanup = effects[2]();
+  try {
+    assert.match(text(render()), /확인 중/);
+    await Promise.resolve();
+    resolve(status());
+    await controller.check();
+    assert.match(text(render()), /상태 확인 완료/);
+    const first = text(render());
+    checkedAt = "2026-10-16T01:00:00.001Z";
+    (
+      nodes(render()).find((node) => node.props["aria-label"] === "연결 상태 새로 확인")!.props
+        .onClick as () => void
+    )();
+    assert.match(text(render()), /확인 중/);
+    await Promise.resolve();
+    resolve(status());
+    await controller.check();
+    assert.notEqual(text(render()), first);
+    fail = true;
+    await controller.check();
+    assert.match(text(render()), /상태 확인 실패/);
+    assert.ok(nodes(render()).find((node) => node.props.children === "상태 다시 확인"));
+    assert.equal(refreshed, 0);
+  } finally {
+    cleanup?.();
+  }
 });
 
 test("should hide removed records by default and require explicit selection among multiple devices", () => {

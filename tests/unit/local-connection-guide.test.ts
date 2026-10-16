@@ -34,6 +34,163 @@ const manifest = {
   },
 };
 
+test("should guide preserved recovery through terminal confirmation and a fresh selection before copying", async () => {
+  const f = fixture(new Map(), {
+    guidedRecovery: {
+      id: "fixed-recovery",
+      deviceId: userId,
+      deviceAlias: "원래 Mac",
+      requestId: roomId,
+    },
+  });
+  try {
+    await f.settle();
+    assert.equal(f.button("연결 명령 복사").props.disabled, true);
+    assert.equal(f.value(), "");
+    assert.match(text(f.render()), /브라우저는 터미널 종료를 확인할 수 없습니다/);
+    assert.match(text(f.render()), /미확인 기록 보존/);
+    const scopeKey = command.connectionSelectionKey(f.props.origin, userId, roomId);
+    const before = await command.readConnectionSelection(null, f.props.origin, userId, roomId);
+    assert.equal(f.button("새 승인 명령 준비").props.disabled, true);
+    await f.choose();
+    await f.click("새 승인 명령 준비");
+    await f.settle();
+    const after = await command.readConnectionSelection(
+      f.saved.get(scopeKey)!,
+      f.props.origin,
+      userId,
+      roomId,
+    );
+    assert.equal(after.chain[0].previousProfile, before.baseProfile);
+    await f.click("연결 명령 복사");
+    assert.equal(f.copies.length, 1);
+    assert.notEqual(f.value(), "");
+  } finally {
+    f.close();
+  }
+});
+
+test("should leave a cancelled guided approval blocked until the user reopens terminal confirmation", async () => {
+  const f = fixture(new Map(), {
+    guidedRecovery: {
+      id: "fixed-recovery",
+      deviceId: userId,
+      deviceAlias: "원래 Mac",
+      requestId: roomId,
+    },
+  });
+  try {
+    await f.settle();
+    await f.click("취소");
+    assert.equal(f.button("연결 명령 복사").props.disabled, true);
+    await f.click("새 승인으로 다시 연결");
+    assert.equal(f.button("새 승인 명령 준비").props.disabled, true);
+    assert.equal(f.copies.length, 0);
+  } finally {
+    f.close();
+  }
+});
+
+for (const previous of ["regular approval", "another guided target"] as const) {
+  test(`should require terminal confirmation again when ${previous} switches to a new guided recovery`, async () => {
+    const f = fixture(
+      new Map(),
+      previous === "regular approval"
+        ? {}
+        : {
+            guidedRecovery: {
+              id: "previous-recovery",
+              deviceId: userId,
+              deviceAlias: "이전 Mac",
+              requestId: userId,
+            },
+          },
+    );
+    try {
+      await f.settle();
+      await f.choose();
+      assert.equal(f.button("새 승인 명령 준비").props.disabled, false);
+      const before = [...f.saved.entries()];
+      Object.assign(f.props, {
+        guidedRecovery: {
+          id: "new-recovery",
+          deviceId: roomId,
+          deviceAlias: "새 대상 Mac",
+          requestId: roomId,
+        },
+      });
+      const tree = f.render();
+      const checkbox = nodes(tree).find((node) => node.props.type === "checkbox")!;
+      assert.equal(checkbox.props.checked, false);
+      assert.equal(f.button("새 승인 명령 준비").props.disabled, true);
+      assert.equal(f.button("연결 명령 복사").props.disabled, true);
+      await (f.button("새 승인 명령 준비").props.onClick as () => Promise<void>)();
+      assert.deepEqual([...f.saved.entries()], before);
+      assert.equal(f.uuids(), 0);
+      await f.choose();
+      await f.click("새 승인 명령 준비");
+      await f.settle();
+      await f.click("연결 명령 복사");
+      assert.equal(f.copies.length, 1);
+    } finally {
+      f.close();
+    }
+  });
+}
+
+test("should block setup and discard a late command while preserved recovery is pending", async () => {
+  const f = fixture(new Map(), { disabled: false });
+  let release!: () => void;
+  try {
+    await f.settle();
+    f.faults.issue = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    const pending = f.click("연결 명령 복사");
+    Object.assign(f.props, { disabled: true });
+    f.render();
+    release();
+    await pending;
+    await f.settle();
+    assert.equal(f.value(), "");
+    assert.equal(f.copies.length, 0);
+    assert.equal(f.button("연결 명령 복사").props.disabled, true);
+    assert.equal(f.button("새 승인으로 다시 연결").props.disabled, true);
+    assert.match(text(f.render()), /이전 요청 기록 보관을 확인/);
+  } finally {
+    f.close();
+  }
+});
+
+test("should not restore an earlier target confirmation after switching away and back", async () => {
+  const first = {
+    id: "first-recovery",
+    deviceId: userId,
+    deviceAlias: "원래 Mac",
+    requestId: userId,
+  };
+  const f = fixture(new Map(), { guidedRecovery: first });
+  try {
+    await f.settle();
+    await f.choose();
+    Object.assign(f.props, {
+      guidedRecovery: { ...first, id: "second-recovery", deviceId: roomId },
+    });
+    await f.settle();
+    Object.assign(f.props, { guidedRecovery: first });
+    await f.settle();
+    assert.equal(
+      nodes(f.render()).find((node) => node.props.type === "checkbox")!.props.checked,
+      false,
+    );
+    assert.equal(f.button("새 승인 명령 준비").props.disabled, true);
+    assert.equal(f.button("연결 명령 복사").props.disabled, true);
+    assert.equal(f.uuids(), 0);
+  } finally {
+    f.close();
+  }
+});
+
 function fixture(saved = new Map<string, string>(), extra: Record<string, unknown> = {}) {
   const slots: unknown[] = [],
     effects: { deps: unknown[]; cleanup?: () => void }[] = [];

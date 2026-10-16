@@ -6,6 +6,7 @@ import ts from "typescript";
 import * as access from "../../src/features/room-access/contracts.ts";
 import * as connection from "../../src/features/device-binding/contracts.ts";
 import * as workflow from "../../src/features/investigation-coordinator/contracts.ts";
+import * as status from "../../src/features/device-binding/connection-status-contracts.ts";
 
 const origin = "https://collaboration.example";
 const id = "00000000-0000-4000-8000-000000000001";
@@ -55,6 +56,7 @@ function loadPolicy(variant: (typeof variants)[number], settingsFailure?: Error)
       require(name: string) {
         if (name === "server-only") return {};
         if (name === "./contracts") return variant.contracts;
+        if (name === "./connection-status-contracts") return status;
         if (name === "../../lib/supabase/server")
           return {
             serverConfig() {

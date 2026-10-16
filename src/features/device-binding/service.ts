@@ -13,6 +13,11 @@ import {
   type HumanAction,
 } from "./contracts";
 import { projectRoomGitBindings } from "./room-git-report";
+import {
+  projectExecutionStatus,
+  type StatusRequest,
+  type ConnectionStatus,
+} from "./connection-status-contracts";
 const humanRpcs: Record<HumanAction, string> = {
   approve: "connection_approve",
   revoke: "connection_revoke",
@@ -80,6 +85,33 @@ export async function ownedConnections(client: SupabaseClient) {
 export async function roomBindings(client: SupabaseClient, roomId: string) {
   const data = await rpc(client, "connection_room_git_bindings", { p_room_id: roomId });
   return projectRoomGitBindings(data);
+}
+export async function connectionStatus(
+  client: SupabaseClient,
+  body: StatusRequest,
+): Promise<ConnectionStatus> {
+  const {
+    data: { user },
+    error,
+  } = await client.auth.getUser();
+  if (error || !user)
+    throw new ConnectionError(retryableAuthFailure(error) ? "UNAVAILABLE" : "UNAUTHENTICATED");
+  if (user.id !== body.expectedUserId) throw new ConnectionError("FORBIDDEN");
+  const owned = await ownedConnections(client);
+  const device = owned.devices.find(
+    (item: import("./contracts").OwnedDevice) =>
+      item.deviceId === body.deviceId && item.roomId === body.roomId,
+  );
+  if (!device || !owned.rooms.some((room) => room.roomId === body.roomId))
+    throw new ConnectionError("FORBIDDEN");
+  // A missing migration is an unavailable check, never proof of readiness.
+  const executionStatus = projectExecutionStatus(
+    await rpc(client, "connection_execution_status", {
+      p_room_id: body.roomId,
+      p_device_id: body.deviceId,
+    }),
+  );
+  return { ...body, device, executionStatus, checkedAt: new Date().toISOString() };
 }
 export function connectionFailure(error: unknown) {
   const code = error instanceof ConnectionError ? error.code : "UNAVAILABLE";

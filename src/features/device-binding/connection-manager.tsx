@@ -10,6 +10,12 @@ import { LocalConnectionGuide } from "./local-connection-guide";
 import { connectionSnapshot } from "./connection-presence";
 import { consumeConnectionFragment } from "./local-connection-command";
 import { ChatShell } from "../room-access/chat-shell";
+import { AiReadinessController, readinessMessage } from "./ai-readiness-controller";
+import {
+  ConnectionRecoveryController,
+  type RecoveryTarget,
+} from "./connection-recovery-controller";
+import { ConnectionRecoveryPanel } from "./connection-recovery-panel";
 import type { Room } from "../room-access/contracts";
 import styles from "../room-access/access.module.css";
 type RoomOption = {
@@ -235,6 +241,16 @@ export function ConnectionManager({
     }, 2500);
     return () => clearInterval(timer);
   }, [devices, router, settingsDeviceId]);
+  const [recoveryController] = useState(() => new ConnectionRecoveryController());
+  const [recovery, setRecovery] = useState(recoveryController.getSnapshot);
+  const [approvalRecoveryId, setApprovalRecoveryId] = useState<string | null>(null);
+  const pinnedRecovery =
+    recovery.target?.userId === userId && recovery.target.roomId === roomId
+      ? recovery.target
+      : null;
+  const pinnedRecoveryId = pinnedRecovery
+    ? `${userId}:${roomId}:${pinnedRecovery.deviceId}:${pinnedRecovery.candidate.requestId}`
+    : "";
   const availableDevices = devices.filter(
     (device) =>
       device.state === "active" &&
@@ -244,13 +260,62 @@ export function ConnectionManager({
   );
   const settingsDevice =
     availableDevices.find((device) => device.deviceId === settingsDeviceId) ??
-    (availableDevices.length === 1 ? availableDevices[0] : undefined);
+    (availableDevices.length === 1 &&
+    !(pinnedRecovery && settingsDeviceId === pinnedRecovery.deviceId)
+      ? availableDevices[0]
+      : undefined);
+  const [readinessController] = useState(() => new AiReadinessController());
+  const [readiness, setReadiness] = useState(readinessController.getSnapshot);
+  const selectedDeviceId = settingsDevice?.deviceId;
+  useEffect(() => {
+    const unsubscribe = readinessController.subscribe(() =>
+      setReadiness(readinessController.getSnapshot()),
+    );
+    readinessController.start();
+    readinessController.select(
+      selectedDeviceId ? { expectedUserId: userId, roomId, deviceId: selectedDeviceId } : null,
+    );
+    return () => {
+      unsubscribe();
+      readinessController.stop();
+    };
+  }, [readinessController, userId, roomId, selectedDeviceId]);
+  const recoverySelectionId = settingsDeviceId || selectedDeviceId || null;
+  useEffect(() => {
+    let previousPhase = recoveryController.getSnapshot().phase;
+    const unsubscribe = recoveryController.subscribe(() => {
+      const next = recoveryController.getSnapshot();
+      setRecovery(next);
+      if (
+        next.phase !== previousPhase &&
+        (next.phase === "retire-ready" || next.phase === "retired")
+      )
+        router.refresh();
+      previousPhase = next.phase;
+    });
+    recoveryController.setContext(userId, roomId, recoverySelectionId);
+    return () => {
+      unsubscribe();
+      recoveryController.stop();
+    };
+  }, [recoveryController, userId, roomId, recoverySelectionId, router]);
+  const currentReadiness =
+    readiness.target?.expectedUserId === userId &&
+    readiness.target?.roomId === roomId &&
+    readiness.target?.deviceId === settingsDevice?.deviceId
+      ? readiness
+      : null;
+  const observedDevice = currentReadiness?.device ?? settingsDevice;
+  useEffect(() => {
+    if (currentReadiness?.ready) recoveryController.completeReplacement(currentReadiness);
+  }, [currentReadiness, recoveryController, recoverySelectionId]);
   const recent =
-    !!settingsDevice &&
-    connectionSnapshot({ devices: [settingsDevice], rooms }, new Date(now).toISOString()).state ===
+    !!observedDevice &&
+    connectionSnapshot({ devices: [observedDevice], rooms }, new Date(now).toISOString()).state ===
       "connected";
   const awaitingRegistration = registrationRoomId === roomId;
   function changeRoom(value: string) {
+    recoveryController.setContext(userId, value, null);
     pendingRegistration.current = null;
     setRegistrationRoomId(null);
     setRoomId(value);
@@ -261,6 +326,14 @@ export function ConnectionManager({
     setNotice("");
     setError(null);
     if (confirmation.current) confirmation.current.checked = false;
+  }
+  function selectRecoveryDevice(deviceId: string) {
+    recoveryController.setContext(userId, roomId, deviceId || null);
+    setSettingsDeviceId(deviceId);
+  }
+  function openRecovery(target: RecoveryTarget) {
+    selectRecoveryDevice(target.deviceId);
+    recoveryController.open(target);
   }
   useEffect(() => {
     if (pairingCode && pendingApprovalFocus.current) {
@@ -375,14 +448,18 @@ export function ConnectionManager({
                 </select>
               </label>
             )}
-            {availableDevices.length > 0 && (
+            {(availableDevices.length > 0 || pinnedRecovery) && (
               <label className={styles.field}>
                 설정할 본인 기기
                 <select
                   aria-label="설정할 본인 기기"
-                  value={settingsDevice?.deviceId ?? ""}
-                  disabled={busy}
-                  onChange={(event) => setSettingsDeviceId(event.target.value)}
+                  value={
+                    pinnedRecovery && settingsDeviceId === pinnedRecovery.deviceId
+                      ? pinnedRecovery.deviceId
+                      : (settingsDevice?.deviceId ?? "")
+                  }
+                  disabled={busy || recovery.busy}
+                  onChange={(event) => selectRecoveryDevice(event.target.value)}
                 >
                   {availableDevices.length > 1 && !settingsDevice && (
                     <option value="">기기를 선택하세요</option>
@@ -392,6 +469,14 @@ export function ConnectionManager({
                       {device.deviceAlias}
                     </option>
                   ))}
+                  {pinnedRecovery &&
+                    !availableDevices.some(
+                      (device) => device.deviceId === pinnedRecovery.deviceId,
+                    ) && (
+                      <option value={pinnedRecovery.deviceId}>
+                        {pinnedRecovery.deviceAlias} · 보존 복구 대상
+                      </option>
+                    )}
                 </select>
               </label>
             )}
@@ -427,11 +512,93 @@ export function ConnectionManager({
                   variant="ghost"
                   size="sm"
                   aria-label="연결 상태 새로 확인"
-                  onClick={() => router.refresh()}
+                  disabled={currentReadiness?.state === "checking"}
+                  onClick={() => {
+                    if (settingsDevice) void readinessController.check();
+                    else setNotice("확인할 본인 기기를 선택하거나 Mac 연결을 등록하세요.");
+                  }}
                 >
                   상태 확인
                 </Button>
               </div>
+            </div>
+            <ConnectionRecoveryPanel
+              userId={userId}
+              roomId={roomId}
+              availableTarget={
+                settingsDevice && currentReadiness?.candidate
+                  ? {
+                      userId,
+                      roomId,
+                      deviceId: settingsDevice.deviceId,
+                      deviceAlias: settingsDevice.deviceAlias,
+                      candidate: currentReadiness.candidate,
+                    }
+                  : null
+              }
+              view={recovery}
+              controller={recoveryController}
+              onOpen={openRecovery}
+              onSelectTarget={selectRecoveryDevice}
+              onPrepareApproval={() => {
+                setApprovalRecoveryId(pinnedRecoveryId);
+                setShowCommand(true);
+              }}
+            />
+            <div
+              role="status"
+              aria-live="polite"
+              aria-label="연결 확인 결과"
+              className="space-y-1 text-sm"
+            >
+              {!settingsDevice ? (
+                "확인할 본인 기기를 선택하세요."
+              ) : !currentReadiness || currentReadiness.state === "idle" ? (
+                "연결 상태 확인 전"
+              ) : currentReadiness.state === "checking" ? (
+                "확인 중…"
+              ) : (
+                <>
+                  <p>
+                    {currentReadiness.state === "error"
+                      ? "상태 확인 실패"
+                      : currentReadiness.state === "expired"
+                        ? "준비 확인 만료"
+                        : "상태 확인 완료"}
+                  </p>
+                  {currentReadiness.checkedAt && (
+                    <p>
+                      확인 시각:{" "}
+                      {new Date(currentReadiness.checkedAt).toLocaleString("ko-KR", {
+                        year: "numeric",
+                        month: "2-digit",
+                        day: "2-digit",
+                        hour: "2-digit",
+                        minute: "2-digit",
+                        second: "2-digit",
+                        fractionalSecondDigits: 3,
+                      })}
+                    </p>
+                  )}
+                  {currentReadiness.device && (
+                    <p>PC 통신: {recent ? "최근 통신 확인" : "최근 통신 미확인"}</p>
+                  )}
+                  <p>{readinessMessage(currentReadiness, now)}</p>
+                  {currentReadiness.requestId && (
+                    <p className="break-all">확인할 요청: {currentReadiness.requestId}</p>
+                  )}
+                  {!currentReadiness.ready && (
+                    <Button variant="outline" onClick={() => void readinessController.check()}>
+                      상태 다시 확인
+                    </Button>
+                  )}
+                  {(currentReadiness.requestId || currentReadiness.roomBlocked) && (
+                    <p>
+                      복구 안내: 이전 기록을 보존하고 원래 소유자가 연결 상태를 확인해야 합니다.
+                    </p>
+                  )}
+                </>
+              )}
             </div>
             <p
               hidden={recent && !pairingCode && !awaitingRegistration && !showCommand}
@@ -468,6 +635,23 @@ export function ConnectionManager({
                 prominent={!recent && !pairingCode && !awaitingRegistration}
                 deviceAliasHint={settingsDevice?.deviceAlias}
                 deviceIdHint={settingsDevice?.deviceId}
+                disabled={
+                  !!pinnedRecovery &&
+                  (recovery.phase !== "retired" || approvalRecoveryId !== pinnedRecoveryId)
+                }
+                guidedRecovery={
+                  pinnedRecovery &&
+                  recovery.active &&
+                  recovery.phase === "retired" &&
+                  approvalRecoveryId === pinnedRecoveryId
+                    ? {
+                        id: pinnedRecoveryId,
+                        deviceId: pinnedRecovery.deviceId,
+                        deviceAlias: pinnedRecovery.deviceAlias,
+                        requestId: pinnedRecovery.candidate.requestId,
+                      }
+                    : undefined
+                }
                 onLaunch={() => {
                   setNotice("");
                   if (registrationRoomId !== roomId)
@@ -568,6 +752,9 @@ export function ConnectionManager({
                     connectionRecent={recent}
                     roomHref={`/app/rooms/${roomId}`}
                     guidanceActive={!pairingCode && !awaitingRegistration}
+                    aiReadiness={currentReadiness ?? undefined}
+                    displayTime={now}
+                    onBindingChange={(binding) => readinessController.setBinding(binding)}
                   />
                 )}
               </>
@@ -619,7 +806,13 @@ export function ConnectionManager({
                     <ConnectionCard
                       key={device.deviceId}
                       device={device}
-                      busy={busy}
+                      busy={
+                        busy ||
+                        recovery.busy ||
+                        (!!pinnedRecovery &&
+                          pinnedRecovery.deviceId === device.deviceId &&
+                          recovery.phase !== "retired")
+                      }
                       onAction={(action, deviceId) => void send(action, { deviceId })}
                     />
                   ))}
@@ -635,7 +828,7 @@ export function ConnectionManager({
                       <ConnectionCard
                         key={device.deviceId}
                         device={device}
-                        busy={busy}
+                        busy={busy || recovery.busy}
                         onAction={(action, deviceId) => void send(action, { deviceId })}
                       />
                     ))}

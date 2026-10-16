@@ -9,6 +9,11 @@ import { validateSelection, type Capability, type ErrorCode, type State } from "
 import { SetupProgress } from "../connection-setup/setup-status";
 import { parseInspection, requestSetup } from "../connection-setup/setup-controller";
 import { SettingsController, confirmedCatalog, selectionSaved } from "./settings-controller";
+import {
+  readinessMessage,
+  type ReadinessView,
+  type SettingsBinding,
+} from "../device-binding/ai-readiness-controller";
 
 const messages: Record<ErrorCode, string> = {
   INVALID_BODY: "모델, 추론 강도와 공개 세션 별칭을 확인하세요.",
@@ -54,6 +59,9 @@ export function RuntimeSettingsForm({
   connectionRecent = true,
   guidanceActive = true,
   roomHref,
+  aiReadiness,
+  onBindingChange,
+  displayTime,
 }: {
   deviceId: string;
   deviceAlias: string;
@@ -61,9 +69,13 @@ export function RuntimeSettingsForm({
   connectionRecent?: boolean;
   guidanceActive?: boolean;
   roomHref?: string;
+  aiReadiness?: ReadinessView;
+  onBindingChange?: (binding: SettingsBinding | null) => void;
+  displayTime?: number;
 }) {
   const [editing, setEditing] = useState(false);
   const [showTechnical, setShowTechnical] = useState(false);
+  const [enteredAt] = useState(() => Date.now());
   const controller = useMemo(
     () =>
       new SettingsController(
@@ -125,12 +137,41 @@ export function RuntimeSettingsForm({
   } catch {}
   const applied = response?.applied;
   const appliedCurrent =
+    response?.deviceId === deviceId &&
     response?.current &&
     applied?.state === "APPLIED" &&
     applied.configRevision === response.configRevision &&
     applied.agentId === response.currentBinding?.agentId &&
     applied.workspaceId === response.currentBinding?.workspaceId &&
     applied.bindingEpoch === response.currentBinding?.bindingEpoch;
+  const currentAgentId =
+    response?.current && response.deviceId === deviceId
+      ? response.currentBinding?.agentId
+      : undefined;
+  const currentEpoch = currentAgentId ? response?.currentBinding?.bindingEpoch : undefined;
+  const settingsApplied = !!appliedCurrent && !reservedOperationId && !busy;
+  const configRevision = response?.configRevision;
+  useEffect(() => {
+    onBindingChange?.(
+      currentAgentId && currentEpoch
+        ? {
+            agentId: currentAgentId,
+            bindingEpoch: currentEpoch,
+            configRevision: configRevision!,
+            applied: settingsApplied,
+          }
+        : null,
+    );
+  }, [onBindingChange, currentAgentId, currentEpoch, configRevision, settingsApplied]);
+  const aiReady =
+    settingsApplied &&
+    connectionRecent &&
+    aiReadiness?.ready &&
+    Date.parse(aiReadiness.validUntil ?? "") > (displayTime ?? enteredAt) &&
+    aiReadiness.target?.deviceId === deviceId &&
+    aiReadiness.binding?.agentId === currentAgentId &&
+    aiReadiness.binding?.bindingEpoch === currentEpoch &&
+    aiReadiness.binding?.configRevision === response?.configRevision;
 
   const cancellationPending =
     operation?.state === "CANCELLED" && operation.receipt?.state !== "CANCELLED";
@@ -169,8 +210,9 @@ export function RuntimeSettingsForm({
         : "다음: Mac의 폴더 선택 창에서 폴더와 공유 범위를 확인하세요. 연결 터미널을 열어 두세요.",
     model: "모델·추론 강도·공개 세션 별칭을 확인하고 설정 저장을 누르세요.",
     apply: "선택이 확인되었습니다. 공개 세션 별칭을 확인하고 저장 계속을 누르세요.",
-    applied:
-      "PC 설정 적용이 확인되었습니다. 다음: 채팅방에서 질문 대상을 선택하고 AI 응답 준비를 확인하세요.",
+    applied: aiReady
+      ? "AI 준비 완료 · 채팅방에서 질문 대상을 선택하고 질문하세요."
+      : `설정 저장됨 · ${aiReadiness ? readinessMessage(aiReadiness, displayTime ?? enteredAt) : "응답 준비 확인 중"}`,
     folder: view.provider
       ? "다음: Mac에서 폴더 선택을 눌러 폴더와 공유 범위를 확인하세요."
       : "다음: 사용할 AI 프로그램을 선택하세요. 그러면 Mac에서 폴더를 선택할 수 있습니다.",
@@ -187,11 +229,17 @@ export function RuntimeSettingsForm({
       <div className="flex flex-wrap items-center justify-between gap-2">
         <h3 className="flex items-center gap-3 font-semibold">
           <span
-            className={`flex h-7 w-7 items-center justify-center rounded-full text-sm ${phase === "applied" ? "bg-emerald-50 text-emerald-700" : "bg-neutral-900 text-white"}`}
+            className={`flex h-7 w-7 items-center justify-center rounded-full text-sm ${aiReady ? "bg-emerald-50 text-emerald-700" : "bg-neutral-900 text-white"}`}
           >
-            {phase === "applied" ? "✓" : catalog ? "3" : "2"}
+            {aiReady ? "✓" : catalog ? "3" : "2"}
           </span>
-          {phase === "applied" ? "AI 설정 완료" : catalog ? "모델과 답변 설정" : "AI와 폴더 선택"}
+          {phase === "applied"
+            ? aiReady
+              ? "AI 준비 완료"
+              : "설정 저장됨"
+            : catalog
+              ? "모델과 답변 설정"
+              : "AI와 폴더 선택"}
         </h3>
         <Badge variant="secondary">
           {operation
@@ -247,7 +295,7 @@ export function RuntimeSettingsForm({
               {messages[view.error]}
             </p>
           )}
-          {guidanceActive && connectionRecent && phase === "applied" && roomHref && (
+          {guidanceActive && aiReady && phase === "applied" && roomHref && (
             <a
               href={roomHref}
               aria-label="채팅 시작"
@@ -256,7 +304,6 @@ export function RuntimeSettingsForm({
               채팅 시작
             </a>
           )}
-
           {!connectionRecent && (
             <a
               href="#mac-connection"
@@ -279,6 +326,15 @@ export function RuntimeSettingsForm({
             </div>
           )}
         </div>
+      )}
+      {roomHref && (
+        <a
+          href={roomHref}
+          aria-label="일반 채팅으로 이동"
+          className="inline-block text-sm underline"
+        >
+          일반 채팅으로 이동
+        </a>
       )}
       {(operation?.receipt?.readMode === "AUTO_CODE" ||
         (appliedCurrent && applied?.readMode === "AUTO_CODE")) && (
@@ -450,7 +506,7 @@ export function RuntimeSettingsForm({
         ) : (
           <p className="text-sm text-neutral-600">
             {appliedCurrent && !reservedOperationId
-              ? "PC에 적용된 설정은 아래에서 확인하세요. 채팅방의 질문 대상 선택에서 AI 응답 준비를 확인할 수 있습니다."
+              ? "PC에 적용된 설정은 아래에서 확인하세요. 응답 준비 상태는 이 화면에서 확인합니다."
               : "모델 선택과 적용은 Mac에서 AI와 폴더를 확인한 뒤 가능합니다."}
           </p>
         )}
@@ -522,7 +578,7 @@ export function RuntimeSettingsForm({
                 {appliedCurrent
                   ? "PC 설정 적용이 확인되었습니다."
                   : "이전 연결에 적용된 설정입니다."}{" "}
-                AI 응답 준비는 AI 채팅방의 질문 대상 선택에서 확인하세요.
+                이 화면에서 상태 확인을 눌러 AI 응답 준비를 확인하세요.
               </p>
             </>
           ) : (

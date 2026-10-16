@@ -69,6 +69,8 @@ export function LocalConnectionGuide({
   deviceAliasHint,
   deviceIdHint,
   onLaunch,
+  guidedRecovery,
+  disabled = false,
 }: {
   origin: string;
   userId: string;
@@ -80,6 +82,8 @@ export function LocalConnectionGuide({
   deviceAliasHint?: string;
   deviceIdHint?: string;
   onLaunch?: () => void;
+  guidedRecovery?: { id: string; deviceId: string; deviceAlias: string; requestId: string };
+  disabled?: boolean;
 }) {
   const [issued, setIssued] = useState<{ scope: string; value: IssuedLaunch } | null>(null);
   const currentKey = useRef("");
@@ -101,9 +105,15 @@ export function LocalConnectionGuide({
   const preparingRef = useRef(false);
   const [showOptions, setShowOptions] = useState(false);
   const [showRaw, setShowRaw] = useState(false);
+  const [preparedRecoveryId, setPreparedRecoveryId] = useState<string | null>(null);
+  const [dismissedGuidedId, setDismissedGuidedId] = useState<string | null>(null);
+  const guidedId = guidedRecovery?.id;
+  const currentGuidedId = useRef(guidedId);
+  const guidedPending = !!guidedId && preparedRecoveryId !== guidedId;
   const scopeKey = rooms.some((item) => item.roomId === roomId)
     ? connectionSelectionKey(origin, userId, roomId)
     : "";
+  const confirmationKey = JSON.stringify([scopeKey, guidedId ?? null]);
   const [selectionReceipt, setSelection] = useState<{
     key: string;
     raw: string | null;
@@ -115,6 +125,13 @@ export function LocalConnectionGuide({
   const [recoveryDialog, setRecoveryDialog] = useState<{ key: string; confirmed: boolean } | null>(
     null,
   );
+  const [dialogScope, setDialogScope] = useState(confirmationKey);
+  if (dialogScope !== confirmationKey) {
+    setDialogScope(confirmationKey);
+    setRecoveryDialog(null);
+    setPreparedRecoveryId(null);
+    setDismissedGuidedId(null);
+  }
   const [preparing, setPreparing] = useState<string | null>(null);
   const selection = selectionReceipt?.key === scopeKey ? selectionReceipt : null;
   const selectionIdentity = JSON.stringify([
@@ -124,7 +141,12 @@ export function LocalConnectionGuide({
   ]);
   const needsApproval = rejectedSelections.has(selectionIdentity);
   const blocked = storageFailure?.key === scopeKey ? storageFailure.message : "";
-  const recovering = recoveryDialog?.key === scopeKey ? recoveryDialog : null;
+  const recovering =
+    recoveryDialog?.key === confirmationKey
+      ? recoveryDialog
+      : guidedPending && dismissedGuidedId !== guidedId && scopeKey
+        ? { key: confirmationKey, confirmed: false }
+        : null;
   const recoveryKey = recovering?.key;
   const room = rooms.find((item) => item.roomId === roomId);
   const manifest = manifestReceipt?.origin === origin ? manifestReceipt.value : null;
@@ -137,11 +159,15 @@ export function LocalConnectionGuide({
     manifest?.bootstrap.sha256,
     selection?.raw,
     selection?.value.baseProfile,
+    disabled,
+    guidedId,
   ]);
   const command =
     selection &&
     !blocked &&
     !needsApproval &&
+    !guidedPending &&
+    !disabled &&
     !recovering &&
     preparing !== scopeKey &&
     prepared?.key === key
@@ -237,6 +263,12 @@ export function LocalConnectionGuide({
     );
     return () => clearTimeout(timer);
   }, [issued]);
+  useEffect(() => {
+    currentGuidedId.current = guidedId;
+    return () => {
+      if (currentGuidedId.current === guidedId) currentGuidedId.current = undefined;
+    };
+  }, [guidedId]);
   async function confirmSelection() {
     setSelection(null);
     setRecoveryDialog(null);
@@ -255,19 +287,29 @@ export function LocalConnectionGuide({
     }
   }
   async function prepareRecoveryCommand() {
-    if (!selection || !recovering?.confirmed || blocked || preparingRef.current) return;
+    if (!selection || !recovering?.confirmed || blocked || disabled || preparingRef.current) return;
     preparingRef.current = true;
     setPreparing(scopeKey);
+    const requestedSelection = selectionIdentity;
+    const requestedGuidedId = guidedId;
+    const requestedKey = key;
     try {
       if (window.localStorage.getItem(scopeKey) !== selection.raw)
         throw new Error("SELECTION_CHANGED");
       const value = await nextConnectionSelection(selection.value, crypto.randomUUID());
+      if (
+        currentSelection.current !== requestedSelection ||
+        currentGuidedId.current !== requestedGuidedId ||
+        currentKey.current !== requestedKey
+      )
+        return;
       if (window.localStorage.getItem(scopeKey) !== selection.raw)
         throw new Error("SELECTION_CHANGED");
       const raw = JSON.stringify(value);
       window.localStorage.setItem(scopeKey, raw);
       if (window.localStorage.getItem(scopeKey) !== raw) throw new Error("SELECTION_CHANGED");
       setSelection({ key: scopeKey, raw, value });
+      if (requestedGuidedId) setPreparedRecoveryId(requestedGuidedId);
       setRecoveryDialog(null);
     } catch {
       setStorageFailure({
@@ -287,6 +329,8 @@ export function LocalConnectionGuide({
       !selection ||
       blocked ||
       recovering ||
+      guidedPending ||
+      disabled ||
       rejectedRef.current.has(selectionIdentity) ||
       preparingRef.current
     )
@@ -373,10 +417,26 @@ export function LocalConnectionGuide({
         <li>② Mac 터미널에서 실행</li>
         <li>③ 안내에 따라 계정 확인</li>
       </ol>
-      {needsApproval && !recovering && (
+      {disabled && (
+        <p role="status">
+          먼저 위에서 원래 기기 취소와 이전 요청 기록 보관을 확인하세요. 새 승인 명령은 그 다음에
+          준비합니다.
+        </p>
+      )}
+      {guidedRecovery && (
+        <p className="break-all text-sm">
+          보존 복구 대상: {guidedRecovery.deviceAlias} ({guidedRecovery.deviceId}) · 요청{" "}
+          {guidedRecovery.requestId}. 이전 기록은 유지하며 새 승인으로 연결합니다.
+        </p>
+      )}
+      {(needsApproval || guidedPending) && !recovering && (
         <div className="space-y-2 text-sm" role="status">
-          <p>이전 기기 인증이 거절되었습니다. 같은 명령 대신 새 승인을 준비하세요.</p>
-          <Button onClick={() => setRecoveryDialog({ key: scopeKey, confirmed: false })}>
+          <p>
+            {guidedPending
+              ? "이전 기록 보관을 확인했습니다. 터미널 종료를 직접 확인한 뒤 새 승인을 준비하세요."
+              : "이전 기기 인증이 거절되었습니다. 같은 명령 대신 새 승인을 준비하세요."}
+          </p>
+          <Button onClick={() => setRecoveryDialog({ key: confirmationKey, confirmed: false })}>
             새 승인으로 다시 연결
           </Button>
         </div>
@@ -403,19 +463,35 @@ export function LocalConnectionGuide({
             이전에 연결한 터미널이 실행 중이면 먼저 Ctrl+C로 종료하세요. 이미 종료됐다면 아래
             확인란을 선택하세요.
           </p>
+          {guidedRecovery && (
+            <p>
+              브라우저는 터미널 종료를 확인할 수 없습니다. 로컬 명령도 실행 잠금과 원본 기록 보존을
+              확인하며, 미확인 기록 보존을 요구하면 직접 확인하세요. 이전 질문을 다시 보내지
+              않습니다.
+            </p>
+          )}
+          {guidedRecovery && (
+            <p className="break-all">
+              원래 기기 공개 연결 ID: {guidedRecovery.deviceId}. 명령은 이 방의 브라우저 저장 연결을
+              기준으로 만듭니다. 해당 Mac의 터미널 연결 ID가 위 대상과 같은지 직접 확인하세요.
+              다르면 원래 연결 선택을 확인한 뒤 진행하세요.
+            </p>
+          )}
           <label className="flex items-center gap-2">
             <input
               type="checkbox"
               checked={recovering.confirmed}
               onChange={(event) =>
-                setRecoveryDialog({ key: scopeKey, confirmed: event.target.checked })
+                setRecoveryDialog({ key: confirmationKey, confirmed: event.target.checked })
               }
             />
-            이전 연결의 터미널 실행을 종료했습니다
+            {guidedRecovery
+              ? "위 원래 기기의 공개 연결 ID를 확인하고 해당 연결 터미널 실행을 종료했습니다"
+              : "이전 연결의 터미널 실행을 종료했습니다"}
           </label>
           <Button
             type="button"
-            disabled={!recovering.confirmed || preparing === scopeKey || !!blocked}
+            disabled={!recovering.confirmed || preparing === scopeKey || !!blocked || disabled}
             onClick={prepareRecoveryCommand}
           >
             새 승인 명령 준비
@@ -424,7 +500,10 @@ export function LocalConnectionGuide({
             type="button"
             variant="outline"
             disabled={preparing === scopeKey}
-            onClick={() => setRecoveryDialog(null)}
+            onClick={() => {
+              setRecoveryDialog(null);
+              if (guidedId) setDismissedGuidedId(guidedId);
+            }}
           >
             취소
           </Button>
@@ -434,7 +513,16 @@ export function LocalConnectionGuide({
         type="button"
         aria-label="연결 명령 복사"
         variant={prominent ? "default" : "outline"}
-        disabled={!manifest || !selection || !!blocked || needsApproval || !!recovering || copying}
+        disabled={
+          !manifest ||
+          !selection ||
+          !!blocked ||
+          needsApproval ||
+          !!recovering ||
+          guidedPending ||
+          disabled ||
+          copying
+        }
         onClick={() => copy()}
       >
         {copying
@@ -474,10 +562,10 @@ export function LocalConnectionGuide({
               return;
             rejectedRef.current.add(selectionIdentity);
             setRejectedSelections(new Set(rejectedRef.current));
-            setRecoveryDialog({ key: scopeKey, confirmed: false });
+            setRecoveryDialog({ key: confirmationKey, confirmed: false });
           }}
           onFreshApproval={() => {
-            setRecoveryDialog({ key: scopeKey, confirmed: false });
+            setRecoveryDialog({ key: confirmationKey, confirmed: false });
             recoveryPanel.current?.focus();
             recoveryPanel.current?.scrollIntoView({ block: "nearest" });
           }}
@@ -554,8 +642,8 @@ export function LocalConnectionGuide({
           <Button
             type="button"
             variant="outline"
-            disabled={!selection || !!blocked || preparing === scopeKey}
-            onClick={() => setRecoveryDialog({ key: scopeKey, confirmed: false })}
+            disabled={!selection || !!blocked || preparing === scopeKey || disabled}
+            onClick={() => setRecoveryDialog({ key: confirmationKey, confirmed: false })}
           >
             새 승인으로 다시 연결
           </Button>

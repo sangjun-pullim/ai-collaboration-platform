@@ -176,6 +176,12 @@ const codes = one(
   "RUNTIME_CLOSED",
 );
 const closure: Check = (v) =>
+  exact({
+    kind: one("SERVER_PREINPUT_REJECTED"),
+    claimOperationId: isId,
+    proofHash: isHash,
+    receipt: projected("fail-before-input"),
+  })(v) ||
   exact({ kind: one("LOCAL_NOT_TRANSMITTED"), claimOperationId: isId })(v) ||
   exact({ kind: one("SERVER_INPUT_PAUSED"), claimOperationId: isId })(v) ||
   exact({ kind: one("SERVER_ABANDONED"), claimOperationId: isId, snapshot: projected("claim") })(v);
@@ -269,7 +275,22 @@ const journalSchema = (terminalEvidence: Check, allowNativeIntent = false) =>
       claimOperationId: isId,
       unstartedClosure: closure,
       ...(allowNativeIntent
-        ? { nativeIntent, nativeInterruption, toolCancellations: list(nativeToolCancellation, 64) }
+        ? {
+            nativeIntent,
+            nativeInterruption,
+            toolCancellations: list(nativeToolCancellation, 64),
+            preinputRejection: exact({
+              version: one(1),
+              kind: one("PREINPUT_REJECTED"),
+              provider: one("claude"),
+              scope,
+              generation: isId,
+              requestId: isId,
+              attemptId: isId,
+              fence: positive,
+              reason: one("SNAPSHOT_CHANGED", "POLICY_REJECTED", "LOCAL_VALIDATION_FAILED"),
+            }),
+          }
         : {}),
     },
   );
@@ -295,6 +316,7 @@ const operation: Check = (v) => {
         "complete",
         "interrupt-ack",
         "observe",
+        "fail-before-input",
       ),
       body: record,
       payloadHash: isHash,
