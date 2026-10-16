@@ -1,5 +1,5 @@
 ---
-status: active
+status: done
 date: 2026-10-16
 risk-surface: auth, permission, db-schema, public-api
 ---
@@ -99,7 +99,7 @@ risk-surface: auth, permission, db-schema, public-api
 - 캐시는 같은 탭 메모리에 userId/roomId/role별 최대 3개 방, 합계 10MiB, 미사용 5분까지 유지한다. 인증 재확인 전에는 내용을 표시하지 않는다. 새 read-recovery에 expectedUserId를 보내 실제 Auth와 대조 후 cursor 이후를 합친다. 거절·계정/role 변경·logout 때 삭제한다.
 - 첫 진입은 기존 전체 페이지 조회를 유지하되 받은 페이지부터 표시한다. 재진입에서는 기존 cursor 이후만 조회한다. 최신 일부 기록을 완전 이력이라고 표시하지 않는다.
 
-### [ ] Step 5: 통합 검증·문서·배포
+### [x] Step 5: 통합 검증·문서·배포
 
 - 아래 수용 기준 모두 통과해야 세 개선 완료라고 보고한다. 각 기능을 따로 구현 완료/실제 검증/운영 반영으로 기록한다.
 - 독립 reviewer가 auth token 노출 범위·RLS·권한 철회·저장 경합·캐시 접근·가상화 원문 이동을 검토한다. 부하 수치는 명시된 fixture 기준으로 보고한다.
@@ -172,3 +172,11 @@ risk-surface: auth, permission, db-schema, public-api
 구현 독립 리뷰 3차 PASS: 기존 E2E의 저장소 상세 검사를 고정 Dialog로 옮겨도 대상·epoch·소유자·저장소·세션 및 새 저장소 혼입 방지 검사가 유지됨을 확인했다. UNKNOWN 요약은 중단 수신 상태를 표시하고 실행 결과 미확인 설명은 상세 창에서 검증한다. 테스트가 정리된 과거 기록의 문구를 잘못 기대한 HIGH 1건은 실제 UNKNOWN 문구로 보완해 해소 확인을 받았다. 운영 코드는 2차 PASS 이후 변경하지 않았다.
 
 최종 회귀: 기존 브라우저 14개는 전체 실행의 통과 결과와 UNKNOWN·저장소 상세 4개 재검사를 합쳐 통과했다. 상세 조회 응답 본문을 읽는 테스트 단계의 간헐 실패는 같은 코드의 4개 격리 재실행에서 재현되지 않았다. 운영 코드 수정으로 해결했다고 주장하지 않는다. 전체 typecheck와 production build는 통과했다.
+
+## Completion
+
+2026-10-16 승인 범위의 구현·검증·독립 리뷰·운영 배포를 완료했다. 코드 `a96e322`, 문서 `0870b10`을 [PR51](https://github.com/sangjun-pullim/ai-collaboration-platform/pull/51)로 main `386b33330f1728fd0b832e8929cfef40feb338e4`에 병합했다. controller·캐시·전송 보존·실시간 수명 계약이 함께 바뀌므로 기능 코드는 하나의 검증 가능한 커밋으로 묶고 문서 커밋을 분리했다.
+
+운영 DB migration `20261016002300` 선적용 및 RLS 정책을 확인했다. Vercel `dpl_5mp5h9pS8dkdDE8ab6wE8fTjKEtM` Production READY와 운영 별칭을 확인했다. 공개 로그인200, 연결 API 비인증401, 신규 authorize/release 비인증401·no-store, 배포 bootstrap·connector hash 및 코드 내용 일치를 확인했다. 운영 사용자 데이터로 질문을 만들거나 AI를 실행하지 않았다. 실제 WebSocket 양방향 전달과 인가 철회 검증은 격리 로컬 DB·Chromium에서 수행했다.
+
+로컬 검증용 Docker6개와 테스트 웹 서버2개를 종료했다. 구현 워커 터미널을 닫았고 리뷰 결과를 기록했다. 기존 사용자 `next-env.d.ts` 변경은 원본 hash를 대조해 보존했다. 완료 문서 보관 변경에는 기존 코드 검사·독립 리뷰를 재사용한다. 질문61의 실제 실행 미확인과 기존 연결기 전체 테스트 빌드 타입 오류는 별도 후속 범위다.
