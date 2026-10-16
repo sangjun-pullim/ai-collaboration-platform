@@ -6,7 +6,7 @@ import {
   type Candidate,
 } from "./contracts.ts";
 
-export type DirectIntent = { action: "ask" | "cancel" | "retire"; body: Body };
+export type DirectIntent = { action: "speak" | "ask" | "cancel" | "retire"; body: Body };
 
 export function directIntentKey(userId: string, roomId: string) {
   return `human-direct-question:${userId}:${roomId}`;
@@ -29,7 +29,7 @@ export function restoreDirectIntent(
       typeof value !== "object" ||
       Array.isArray(value) ||
       Object.keys(value).length !== 2 ||
-      (value.action !== "ask" && value.action !== "cancel" && value.action !== "retire")
+      !["speak", "ask", "cancel", "retire"].includes(value.action)
     )
       throw new WorkflowError("INVALID_BODY");
     const body = validateBody(value.action, value.body);
@@ -53,7 +53,8 @@ export function mutationBody(
   roomId: string,
   retryBody?: Body,
 ) {
-  const direct = action === "ask" || action === "cancel" || action === "retire";
+  const direct =
+    action === "speak" || action === "ask" || action === "cancel" || action === "retire";
   const body = validateBody(
     action,
     retryBody ?? {

@@ -462,6 +462,13 @@ export function validateBody(action: Action, input: unknown): Body {
   if (new TextEncoder().encode(serialized).length > 16384)
     throw new WorkflowError("BODY_TOO_LARGE");
   let shape = bodies[action];
+  if (
+    action === "speak" &&
+    input &&
+    typeof input === "object" &&
+    Object.hasOwn(input, "expectedUserId")
+  )
+    shape = { ...shape, expectedUserId: id };
   if (action === "resume") {
     const mode = (input as Body)?.mode;
     shape =

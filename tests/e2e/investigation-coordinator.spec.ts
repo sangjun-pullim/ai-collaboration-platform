@@ -641,6 +641,45 @@ test("should retain saved direct identity through completed replacement and deta
     const mode = region.getByLabel("보낼 곳", { exact: true });
     await mode.selectOption("speak");
     const speech = region.getByLabel("공동 발언", { exact: true });
+    const speechTransmissions: Record<string, unknown>[] = [];
+    const speechReceipts: unknown[] = [];
+    await page.route("**/api/investigations/speak", async (route) => {
+      speechTransmissions.push(route.request().postDataJSON() as Record<string, unknown>);
+      const response = await route.fetch();
+      check(response.status() === 200);
+      speechReceipts.push(await response.json());
+      if (speechTransmissions.length === 1) await route.abort("failed");
+      else await route.fulfill({ response });
+    });
+    await speech.fill("합성 일반 발언 응답 유실 복구");
+    await region.getByRole("button", { name: "공동 발언 저장", exact: true }).click();
+    const confirmation = region.getByRole("button", { name: "같은 메시지 확인", exact: true });
+    await expect(confirmation).toBeVisible();
+    await expect(speech).toBeDisabled();
+    await page.reload();
+    await expect(confirmation).toBeEnabled();
+    expect(speechTransmissions).toHaveLength(1);
+    await confirmation.click();
+    await expect(confirmation).toHaveCount(0);
+    expect(speechTransmissions).toHaveLength(2);
+    expect(speechTransmissions[1]).toEqual(speechTransmissions[0]);
+    expect(speechReceipts[1]).toEqual(speechReceipts[0]);
+    check(speechTransmissions[0].expectedUserId === data.requester.id);
+    await expect(
+      list.getByRole("listitem").filter({ hasText: "합성 일반 발언 응답 유실 복구" }),
+    ).toHaveCount(1);
+    const resynced = page.waitForResponse(
+      (response) =>
+        response.url().endsWith("/api/investigations/read-recovery") && response.status() === 200,
+      { timeout: 5_000 },
+    );
+    await page.evaluate(() => {
+      window.dispatchEvent(new Event("online"));
+      document.dispatchEvent(new Event("visibilitychange"));
+    });
+    await resynced;
+    expect(speechTransmissions).toHaveLength(2);
+    await mode.selectOption("speak");
     for (let index = 0; index < 3; index++) {
       await speech.fill(
         `완료 이력의 앞선 발언 ${index}\n` + "읽고 있던 긴 기록입니다.\n".repeat(30),
@@ -657,7 +696,7 @@ test("should retain saved direct identity through completed replacement and deta
     const send = form.getByRole("button", { name: "AI에 질문 보내기", exact: true });
     await expect(target).toHaveValue(data.targetAgentIds[0]);
     await expect(form.getByRole("checkbox")).toHaveCount(0);
-    await expect(form).toContainText("질문과 답변은 채팅방 참가자에게 공유됩니다.");
+    await expect(form).toContainText("질문과 답변은 참가자에게 공유됩니다.");
     let transmissions = 0;
     const askCount = () => transmissions;
     page.on("request", (request) => {
@@ -748,8 +787,10 @@ test("should retain saved direct identity through completed replacement and deta
     check(askCount() === 1);
 
     async function savedHistory() {
-      const records = list.getByRole("listitem").filter({ has: page.getByText(/^(질문|답변)$/) });
-      await expect(records.filter({ has: page.getByText(/^(질문|답변)$/) })).toHaveCount(2);
+      const records = list
+        .getByRole("listitem")
+        .filter({ has: page.getByText(/^(질문|AI · 답변)$/) });
+      await expect(records.filter({ has: page.getByText(/^(질문|AI · 답변)$/) })).toHaveCount(2);
       for (const record of await records.all()) {
         const detail = record.getByRole("button", { name: "저장소·자료", exact: true });
         if (await detail.count()) {
@@ -776,7 +817,7 @@ test("should retain saved direct identity through completed replacement and deta
         await expect(record).not.toContainText("완료 뒤 새 저장소");
       }
       await expect(
-        list.getByRole("listitem").filter({ has: page.getByText("답변", { exact: true }) }),
+        list.getByRole("listitem").filter({ has: page.getByText("AI · 답변", { exact: true }) }),
       ).toHaveCount(1);
       check(askCount() === 1);
     }
@@ -791,11 +832,11 @@ test("should retain saved direct identity through completed replacement and deta
     await expect(form).toContainText("완료 뒤 새 저장소", { timeout: 45_000 });
     await savedHistory();
     await broker("direct-drive", { scene, step: "detach-completed" });
-    await expect(form).toContainText("준비 보고가 유효한 상대가 없습니다", { timeout: 45_000 });
+    await expect(form).toContainText("응답 준비된 AI가 없습니다.", { timeout: 45_000 });
     await expect(form).not.toContainText("완료 뒤 새 저장소");
     await savedHistory();
     await page.reload();
-    await expect(form).toContainText("준비 보고가 유효한 상대가 없습니다", { timeout: 45_000 });
+    await expect(form).toContainText("응답 준비된 AI가 없습니다.", { timeout: 45_000 });
     await savedHistory();
     check(await page.locator("body").evaluate((element) => element.scrollWidth <= innerWidth + 1));
   } finally {

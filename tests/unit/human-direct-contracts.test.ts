@@ -124,3 +124,22 @@ test("should refuse mixed direct summaries and forged human question events", ()
     );
   }
 });
+
+test("should accept only legacy or actor-bound speech exact shapes in both contracts", () => {
+  const body = paired.cases.find((entry: { action: string }) => entry.action === "speak").body;
+  for (const contract of [web, local]) {
+    assert.deepEqual(contract.validateBody("speak", body), body);
+    const bound = { ...body, expectedUserId: fixture.ask.expectedUserId };
+    assert.deepEqual(contract.validateBody("speak", bound), bound);
+    for (const invalid of [null, [], 1, "invalid", undefined])
+      assert.throws(() => contract.validateBody("speak", { ...body, expectedUserId: invalid }), {
+        code: "INVALID_BODY",
+      });
+    assert.throws(
+      () => contract.validateBody("speak", { ...bound, actor: fixture.ask.expectedUserId }),
+      {
+        code: "INVALID_BODY",
+      },
+    );
+  }
+});

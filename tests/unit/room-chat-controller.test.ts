@@ -78,7 +78,13 @@ function setup(t: TestContext, role: "participant" | "observer" = "participant")
   let hidden = false;
   let currentPage = page();
   let behavior: RoomChatRequest = async (action) =>
-    action === "read-recovery" ? currentPage : action === "cancel" ? fixture.cancelResult : {};
+    action === "read-recovery"
+      ? currentPage
+      : action === "cancel"
+        ? fixture.cancelResult
+        : action === "speak"
+          ? { eventId: fixture.ask.operationId, sequence: 1 }
+          : {};
   const calls: {
     action: HumanAction;
     body: Body;
@@ -352,7 +358,7 @@ test("should pause a pending poll and serialize mutations until confirmation", a
   read.resolve({ ...page(), roomRevision: 99 });
   await poll;
   assert.equal(h.controller.getSnapshot().history.snapshot!.roomRevision, page().roomRevision);
-  mutation.resolve({});
+  mutation.resolve({ eventId: fixture.ask.operationId, sequence: 1 });
   assert.equal(await request, true);
   assert.equal(h.controller.getSnapshot().busy, false);
 });
@@ -412,24 +418,23 @@ test("should preserve an unresolved input on unmount even when HTTP resolves lat
   assert.deepEqual(h.controller.getSnapshot().pendingDirect, JSON.parse(saved));
 });
 
-test("should retain an accepted input if local removal fails and never submit if saving fails", async (t) => {
+test("should report an accepted input despite cleanup failure and never submit if saving fails", async (t) => {
   const h = setup(t);
   await h.controller.poll();
   const remove = h.storage.removeItem;
   h.storage.removeItem = () => {
     throw new Error("Storage unavailable");
   };
-  assert.equal(await h.controller.mutate("ask", fields), false);
-  assert.ok(h.controller.getSnapshot().pendingDirect);
+  assert.equal(await h.controller.mutate("ask", fields), true);
+  assert.equal(h.controller.getSnapshot().pendingDirect, null);
+  assert.ok(h.controller.getSnapshot().storageError);
   assert.equal(h.calls.filter((call) => call.action === "ask").length, 1);
   h.storage.removeItem = remove;
-  const pending = h.controller.getSnapshot().pendingDirect!;
-  assert.equal(await h.controller.mutate(pending.action, {}, pending.body), true);
   h.storage.setItem = () => {
     throw new Error("Storage unavailable");
   };
   assert.equal(await h.controller.mutate("ask", fields), false);
-  assert.equal(h.calls.filter((call) => call.action === "ask").length, 2);
+  assert.equal(h.calls.filter((call) => call.action === "ask").length, 1);
 });
 
 test("should clear a confirmed rejected direct intent without generating a replacement", async (t) => {
@@ -813,4 +818,197 @@ test("should clear loaded history and stop backfill immediately when access is d
   assert.deepEqual(h.controller.getSnapshot().history.events, []);
   t.mock.timers.tick(60_000);
   assert.equal(h.calls.length, 2);
+});
+
+const speechReceipt = { eventId: fixture.ask.operationId, sequence: 1 };
+const resync = (controller: RoomChatController) =>
+  (controller as unknown as { requestResync(): void }).requestResync();
+
+test("should reuse the speech operation after a lost response and never retransmit automatically", async (t) => {
+  const h = setup(t);
+  await h.controller.poll();
+  const response = deferred<unknown>();
+  h.setBehavior((action) =>
+    action === "read-recovery" ? Promise.resolve(page()) : response.promise,
+  );
+  const sending = h.controller.mutate("speak", { publicText: "보존할 발언" });
+  const sent = h.calls.at(-1)!;
+  assert.deepEqual(JSON.parse(sent.saved!), { action: "speak", body: sent.body });
+  assert.equal(sent.body.expectedUserId, actor.userId);
+  assert.equal(await h.controller.mutate("speak", { publicText: "중복" }), false);
+  response.reject(new WorkflowError("UNAVAILABLE"));
+  assert.equal(await sending, false);
+  h.controller.stop();
+  h.controller.start();
+  const pending = h.controller.getSnapshot().pendingDirect!;
+  assert.deepEqual(pending.body, sent.body);
+  h.setBehavior(async (action) => (action === "read-recovery" ? page() : speechReceipt));
+  t.mock.timers.tick(0);
+  await flush();
+  assert.equal(h.calls.filter((c) => c.action === "speak").length, 1);
+  assert.equal(await h.controller.mutate("speak", {}, pending.body), true);
+  assert.deepEqual(h.calls.at(-1)!.body, sent.body);
+  assert.equal(h.controller.getSnapshot().pendingDirect, null);
+  assert.equal(h.controller.getSnapshot().history.events.length, 0);
+});
+
+test("should distinguish confirmed speech from storage cleanup failure and restore no rejected intent", async (t) => {
+  const h = setup(t);
+  await h.controller.poll();
+  h.setBehavior(async () => speechReceipt);
+  const remove = h.storage.removeItem;
+  h.storage.removeItem = () => {
+    throw new Error("Storage cleanup denied");
+  };
+  assert.equal(await h.controller.mutate("speak", { publicText: "성공 발언" }), true);
+  assert.equal(h.controller.getSnapshot().pendingDirect, null);
+  assert.equal(h.controller.getSnapshot().actionError, null);
+  h.setBehavior(async () => {
+    throw new WorkflowError("CONFLICT");
+  });
+  assert.equal(await h.controller.mutate("speak", { publicText: "거절 발언" }), false);
+  assert.equal(h.controller.getSnapshot().pendingDirect, null);
+  h.controller.stop();
+  h.storage.removeItem = remove;
+  h.controller.start();
+  assert.equal(h.controller.getSnapshot().pendingDirect, null);
+  assert.match(h.controller.getSnapshot().actionError!, /상태가 바뀌/);
+});
+
+test("should preserve speech draft without sending when storage fails and validate speech receipts", async (t) => {
+  const h = setup(t);
+  await h.controller.poll();
+  const save = h.storage.setItem;
+  h.storage.setItem = () => {
+    throw new Error("Storage full");
+  };
+  assert.equal(await h.controller.mutate("speak", { publicText: "초안" }), false);
+  assert.equal(h.calls.length, 1);
+  assert.equal(h.controller.getSnapshot().pendingDirect, null);
+  assert.match(h.controller.getSnapshot().actionError!, /저장/);
+  h.storage.setItem = save;
+  h.setBehavior(async () => ({}));
+  assert.equal(await h.controller.mutate("speak", { publicText: "초안" }), false);
+  assert.equal(h.controller.getSnapshot().pendingDirect?.action, "speak");
+});
+
+test("should coalesce resync requests during polling and mutation without losing follow-up reads", async (t) => {
+  const h = setup(t);
+  await h.controller.poll();
+  const read = deferred<unknown>();
+  h.setBehavior(() => read.promise);
+  const polling = h.controller.poll();
+  for (let i = 0; i < 10; i++) resync(h.controller);
+  assert.equal(h.calls.length, 2);
+  assert.equal(h.calls[1].signal.aborted, false);
+  h.setBehavior(async () => page());
+  read.resolve(page());
+  await polling;
+  t.mock.timers.tick(1000);
+  await flush();
+  assert.equal(h.calls.length, 3);
+  const response = deferred<unknown>();
+  h.setBehavior((action) =>
+    action === "read-recovery" ? Promise.resolve(page()) : response.promise,
+  );
+  const sending = h.controller.mutate("speak", { publicText: "발언" });
+  resync(h.controller);
+  resync(h.controller);
+  assert.equal(h.calls.length, 4);
+  response.resolve(speechReceipt);
+  assert.equal(await sending, true);
+  t.mock.timers.tick(1000);
+  await flush();
+  assert.equal(h.calls.length, 5);
+  h.controller.stop();
+  resync(h.controller);
+  t.mock.timers.tick(60_000);
+  await flush();
+  assert.equal(h.calls.length, 5);
+});
+
+test("should throttle repeated lifecycle events and preserve poll failure backoff", async (t) => {
+  const h = setup(t);
+  await h.controller.poll();
+  h.setBehavior(async () => {
+    throw new WorkflowError("UNAVAILABLE");
+  });
+  resync(h.controller);
+  t.mock.timers.tick(1000);
+  await flush();
+  assert.equal(h.calls.length, 2);
+  for (let i = 0; i < 20; i++) resync(h.controller);
+  t.mock.timers.tick(19_999);
+  await flush();
+  assert.equal(h.calls.length, 2);
+  t.mock.timers.tick(1);
+  await flush();
+  assert.equal(h.calls.length, 3);
+  h.controller.loseAccess();
+  resync(h.controller);
+  t.mock.timers.tick(60_000);
+  assert.equal(h.calls.length, 3);
+});
+
+test("should retain speech after stopping a request and ignore its late acknowledgement", async (t) => {
+  const h = setup(t);
+  await h.controller.poll();
+  const response = deferred<unknown>();
+  h.setBehavior(() => response.promise);
+  const sending = h.controller.mutate("speak", { publicText: "진행 중 발언" });
+  const saved = h.entries.get(directIntentKey(actor.userId, actor.roomId));
+  h.controller.stop();
+  response.resolve(speechReceipt);
+  assert.equal(await sending, false);
+  assert.equal(h.entries.get(directIntentKey(actor.userId, actor.roomId)), saved);
+  h.controller.start();
+  assert.deepEqual(h.controller.getSnapshot().pendingDirect, JSON.parse(saved!));
+});
+
+test("should clear definitive speech rejection even when cleanup fails and never restore a settled marker", async (t) => {
+  const h = setup(t);
+  await h.controller.poll();
+  const key = directIntentKey(actor.userId, actor.roomId);
+  const remove = h.storage.removeItem;
+  h.storage.removeItem = (name) => {
+    if (name === key) throw new Error("Cleanup unavailable");
+    remove(name);
+  };
+  h.setBehavior(async () => {
+    throw new WorkflowError("INVALID_BODY");
+  });
+  assert.equal(await h.controller.mutate("speak", { publicText: "확정 거절" }), false);
+  assert.equal(h.controller.getSnapshot().pendingDirect, null);
+  assert.equal(JSON.parse(h.entries.get(key)!).settled, true);
+  h.controller.stop();
+  h.controller.start();
+  assert.equal(h.controller.getSnapshot().pendingDirect, null);
+  assert.equal(h.calls.filter((c) => c.action === "speak").length, 1);
+});
+
+test("should preserve lifecycle notifications that arrive during a follow-up read", async (t) => {
+  const h = setup(t);
+  await h.controller.poll();
+  const first = deferred<unknown>();
+  h.setBehavior(() => first.promise);
+  const polling = h.controller.poll();
+  resync(h.controller);
+  const second = deferred<unknown>();
+  h.setBehavior(() => second.promise);
+  first.resolve(page());
+  await polling;
+  t.mock.timers.tick(1000);
+  await flush();
+  assert.equal(h.calls.length, 3);
+  resync(h.controller);
+  resync(h.controller);
+  h.setBehavior(async () => page());
+  second.resolve(page());
+  await flush();
+  t.mock.timers.tick(1000);
+  await flush();
+  assert.equal(h.calls.length, 4);
+  t.mock.timers.tick(1000);
+  await flush();
+  assert.equal(h.calls.length, 4);
 });

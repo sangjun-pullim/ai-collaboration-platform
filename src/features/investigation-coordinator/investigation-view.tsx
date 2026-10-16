@@ -42,6 +42,7 @@ function RoomInvestigation({ userId, roomId, role }: Props) {
     history,
     pollError,
     actionError,
+    storageError,
     permissionDenied,
     busy,
     pendingDirect,
@@ -59,6 +60,7 @@ function RoomInvestigation({ userId, roomId, role }: Props) {
   const errorRef = useRef<HTMLParagraphElement>(null);
   const error = actionError ?? pollError;
   const [draft, setDraft] = useState("");
+  const speechDraft = useRef<string | null>(null);
   const [mode, setMode] = useState<"ask" | "speak">("ask");
   const [unread, setUnread] = useState(false);
   const scrollRef = useRef<HTMLDivElement>(null);
@@ -142,7 +144,8 @@ function RoomInvestigation({ userId, roomId, role }: Props) {
     ["QUEUED", "LEASED", "RUNNING", "UNKNOWN"].includes(status.state),
   );
   const showAnswerStatus =
-    currentStatuses.length > 0 || (writable && (!!retirementCandidate || !!pendingDirect));
+    currentStatuses.length > 0 ||
+    (writable && (!!retirementCandidate || (!!pendingDirect && pendingDirect.action !== "speak")));
   const directStatus = directRun
     ? cycleStatuses.find(
         (status) =>
@@ -159,11 +162,17 @@ function RoomInvestigation({ userId, roomId, role }: Props) {
     event.preventDefault();
     const form = event.currentTarget;
     if (!draft.trim() || busy || pendingDirect) return false;
+    const submittedDraft = draft;
+    speechDraft.current = submittedDraft;
     const sent = await mutate("speak", { publicText: String(new FormData(form).get("speech")) });
-    if (sent) {
-      form.reset();
-      setDraft("");
-    }
+    if (sent) setDraft((current) => (current === submittedDraft ? "" : current));
+    return sent;
+  }
+  async function confirmSpeech() {
+    if (pendingDirect?.action !== "speak") return false;
+    const submittedDraft = speechDraft.current ?? (pendingDirect.body.publicText as string);
+    const sent = await mutate("speak", {}, pendingDirect.body);
+    if (sent) setDraft((current) => (current === submittedDraft ? "" : current));
     return sent;
   }
   async function start(event: FormEvent<HTMLFormElement>, resume = false) {
@@ -378,6 +387,22 @@ function RoomInvestigation({ userId, roomId, role }: Props) {
           요청을 전송 중입니다. 확정된 내용은 공동 이력에 표시됩니다.
         </p>
       )}
+      {storageError && (
+        <p role="status" className="shrink-0 px-5 py-2 text-xs">
+          {storageError}
+        </p>
+      )}
+      {writable && pendingDirect?.action === "speak" && (
+        <section aria-label="일반 발언 전송 상태" className="shrink-0 border-b px-5 py-2 text-xs">
+          <p role="status">{busy ? "메시지 전송 중" : "메시지 전송 결과 확인 필요"}</p>
+          <p className="max-h-32 overflow-y-auto whitespace-pre-wrap">
+            {pendingDirect.body.publicText as string}
+          </p>
+          <Button variant="outline" size="sm" disabled={busy || !snapshot} onClick={confirmSpeech}>
+            같은 메시지 확인
+          </Button>
+        </section>
+      )}
       <ChatTimeline
         events={history.events}
         runs={snapshot?.runs ?? []}
@@ -425,7 +450,7 @@ function RoomInvestigation({ userId, roomId, role }: Props) {
                 disabled={busy || !!pendingDirect || !!pollError}
                 mutate={mutate}
               />{" "}
-              {pendingDirect && (
+              {pendingDirect && pendingDirect.action !== "speak" && (
                 <p role="status">
                   전송 결과 미확정 · 새 질문으로 재전송하지 않습니다.
                   <Button
