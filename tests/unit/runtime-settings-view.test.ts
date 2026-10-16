@@ -2012,3 +2012,54 @@ test("should return to the applied summary after explicitly changing and reapply
   assert.ok(nodes(render()).some((n) => n.type === "button" && textContent(n) === "AI·폴더 변경"));
   assert.equal(requests, 1);
 });
+
+test("should offer explicit fresh approval only for the failed unauthenticated command", () => {
+  const exports = loadUI("src/features/connection-setup/setup-status.tsx", {
+    react: {},
+    "../../components/ui/button": { Button: "button" },
+    "./setup-controller": { setupSummary: () => "status" },
+  });
+  const render = exports.SetupProgress as (props: unknown) => UINode;
+  let approvals = 0,
+    retries = 0;
+  const props = {
+    commandOnly: true,
+    onCheck() {},
+    onFreshApproval() {
+      approvals++;
+    },
+    onRetry() {
+      retries++;
+    },
+    inspection: {
+      expiresAt: new Date(Date.now() + 60000).toISOString(),
+      startup: { stage: "FAILED", reason: "UNAUTHENTICATED", receivedAt: new Date().toISOString() },
+      device: null,
+      settings: null,
+    },
+  };
+  const tree = render(props);
+  const buttons = nodes(tree).filter((n) => n.type === "button");
+  const recovery = buttons.find((n) => textContent(n) === "새 승인으로 다시 연결");
+  assert.ok(recovery);
+  assert.ok(!buttons.some((n) => textContent(n) === "새 명령 복사"));
+  assert.equal(approvals, 0);
+  (recovery.props.onClick as () => void)();
+  assert.equal(approvals, 1);
+  assert.equal(retries, 0);
+  for (const changed of [
+    { commandOnly: false },
+    {
+      inspection: {
+        ...props.inspection,
+        startup: { ...props.inspection.startup, reason: "RUNTIME_BUSY" },
+      },
+    },
+  ]) {
+    assert.ok(
+      !nodes(render({ ...props, ...changed })).some(
+        (n) => n.type === "button" && textContent(n) === "새 승인으로 다시 연결",
+      ),
+    );
+  }
+});

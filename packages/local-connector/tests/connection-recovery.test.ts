@@ -11,6 +11,7 @@ import { RuntimeStore } from "../src/runtime-store.ts";
 import { SettingsStore } from "../src/settings/store.ts";
 import { Connector, main } from "../src/cli.ts";
 import { CentralClient } from "../src/central-client.ts";
+import { ConnectionError } from "../src/contracts.ts";
 import { WorkflowClient } from "../src/workflow-client.ts";
 import { WorkflowRunner } from "../src/workflow-runner.ts";
 import { prepareConnection, type ConnectInteraction } from "../src/cli/connect-command.ts";
@@ -169,6 +170,7 @@ async function fixture(intermediate = false) {
     recoveryId,
     intermediateId,
     baseProfile,
+    runner,
   };
 }
 
@@ -596,10 +598,16 @@ for (const outcome of [
 ] as const)
   test(`should handle initially connected UNKNOWN setup and ${outcome} through the real CLI`, async (t) => {
     const f = await fixture(true);
-    const opener = t.mock.method(childProcess, "execFile", (...args: unknown[]) => {
+    const originalExecFile = childProcess.execFile;
+    let opened = 0;
+    // A mock proxy retains execFile's custom promisifier, which launches the real browser.
+    // Replace the export with a plain function so promisify also uses the isolated stub.
+    childProcess.execFile = ((...args: unknown[]) => {
+      assert.equal(args[0], "/usr/bin/open");
+      opened++;
       (args.at(-1) as (error: Error | null) => void)(null);
       return {};
-    });
+    }) as typeof childProcess.execFile;
     syncBuiltinESMExports();
     try {
       const c = await unappliedSetup(f),
@@ -757,6 +765,7 @@ for (const outcome of [
         assert.equal(confirmations.filter((question) => question.includes("yes")).length, 1);
         assert.match(output.join(""), /미완료 AI 설정과 목록 조회 결과는 확인 불가/);
         assert.equal((await f.next.read())!.status, "connected");
+        assert.equal(opened, 1);
       } else {
         assert.ok(!f.calls.includes("exchange"));
         if (outcome !== "web-scope") assert.ok(!f.calls.includes("begin"));
@@ -764,7 +773,7 @@ for (const outcome of [
       assert.equal(f.adapter.starts, 0);
       assert.equal(f.adapter.prepares, 0);
     } finally {
-      opener.mock.restore();
+      childProcess.execFile = originalExecFile;
       syncBuiltinESMExports();
       await f.close();
     }
@@ -931,6 +940,58 @@ for (const intermediate of [false, true])
       await f.close();
     }
   });
+
+test("should require fresh approval consistently after server rejection and preserve unfinished settings through new approval", async () => {
+  const f = await fixture();
+  try {
+    await f.run();
+    const runtime = new RuntimeStore(f.stateDir, f.next.profile, f.scope.agentId);
+    await runtime.write(f.record);
+    const c = await unappliedSetup({ ...f, previous: f.next, runtime }, false);
+    const owner = (await f.next.read())!;
+    owner.status = "connected";
+    await f.next.write(owner);
+    const journal = await readFile(c.settings.file);
+    const originalCall = f.connector.client.call.bind(f.connector.client);
+    f.connector.client.call = async (...args) => {
+      if (args[0] === "bindings") throw new ConnectionError("UNAUTHENTICATED");
+      return originalCall(...args);
+    };
+    await assert.rejects(f.run(), { code: "UNAUTHENTICATED" });
+    assert.equal((await f.next.read())!.status, "disconnected");
+    const rejected = await readFile(f.next.file);
+    await assert.rejects(f.run(), { code: "UNAUTHENTICATED" });
+    assert.deepEqual(await readFile(c.settings.file), journal);
+    assert.deepEqual(await readFile(f.next.file), rejected);
+    f.connector.client.call = originalCall;
+    const recoveryId = uuid();
+    const profile = `web-${createHash("sha256")
+      .update(JSON.stringify(["connection-recovery", f.next.profile, recoveryId]))
+      .digest("hex")
+      .slice(0, 32)}`;
+    const next = new StateStore(f.stateDir, profile);
+    f.calls.length = 0;
+    await prepareConnection(
+      new Connector(next, f.connector.client),
+      {
+        organizationId: f.scope.organizationId,
+        roomId: f.scope.roomId,
+        deviceAlias: "New Mac",
+        previousProfile: f.next.profile,
+        recoveryId,
+      },
+      f.interaction,
+      f.runner,
+    );
+    assert.deepEqual(f.calls, ["begin", "pairing-status", "exchange"]);
+    assert.equal((await next.read())!.status, "connected");
+    assert.deepEqual(await readFile(c.settings.file), journal);
+    assert.deepEqual(await readFile(f.next.file), rejected);
+    assert.equal(f.adapter.starts, 0);
+  } finally {
+    await f.close();
+  }
+});
 
 async function configured(f: Awaited<ReturnType<typeof fixture>>) {
   const owner = (await f.previous.read())!,

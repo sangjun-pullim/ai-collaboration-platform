@@ -788,6 +788,21 @@ test("should renew an expired command and display first-attempt failure without 
     await expect(status).toContainText("기기 연결 확인과 별도");
     await page.getByRole("button", { name: "새 명령 복사", exact: true }).click();
     await expect.poll(() => issued).toBe(3);
+    await report("33333333-3333-4333-8333-333333333333", 1, "FAILED", "UNAUTHENTICATED");
+    const freshApproval = status.getByRole("button", {
+      name: "새 승인으로 다시 연결",
+      exact: true,
+    });
+    await expect(freshApproval).toBeVisible();
+    await expect(status.getByRole("button", { name: "새 명령 복사", exact: true })).toHaveCount(0);
+    await freshApproval.click();
+    const confirmation = page.getByLabel("새 승인 연결 확인", { exact: true });
+    await expect(confirmation).toBeVisible();
+    await expect(confirmation.getByRole("checkbox")).not.toBeChecked();
+    await expect(
+      confirmation.getByRole("button", { name: "새 승인 명령 준비", exact: true }),
+    ).toBeDisabled();
+    expect(issued).toBe(3);
     expect(
       await page.evaluate(() =>
         Object.entries(localStorage).filter(([name]) => name.startsWith("ai-collab-connection:")),

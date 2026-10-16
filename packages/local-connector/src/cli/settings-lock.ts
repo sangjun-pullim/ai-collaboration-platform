@@ -36,6 +36,18 @@ export async function readConnectSettingsOwner(
       original!.scope?.roomId !== configured.roomId)
   )
     throw new ConnectionError("FORBIDDEN");
+  // A rejected or expired owner needs fresh approval, not a retry of its settings.
+  // This remains a refusal: no journal is resumed, cleared, or treated as idle.
+  if (
+    original &&
+    isId(original.deviceId) &&
+    isHash(original.credential) &&
+    !original.pending &&
+    !original.registration &&
+    (original.status === "disconnected" ||
+      Date.parse(original.credentialExpiresAt ?? "") <= Date.now())
+  )
+    throw new ConnectionError("UNAUTHENTICATED");
   // Only the same registered owner may hand its durable journal to SettingsManager.
   // The device lock still excludes live owners; enrollment and other commands remain idle-only.
   const resumeSettings =

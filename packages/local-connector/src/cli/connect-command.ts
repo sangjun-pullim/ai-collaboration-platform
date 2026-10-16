@@ -89,8 +89,8 @@ export async function prepareConnection(
         ? "저장된 인증 갱신을 같은 명령으로 확인하세요. 새 프로필로 우회하지 마세요.\n"
         : "완료되지 않은 연결 작업이 있습니다. 같은 터미널과 원래 연결 상태를 먼저 확인하세요.\n",
     );
-  if (state && (state.server !== connector.client.origin || state.status === "disconnected"))
-    throw new ConnectionError("CONFLICT");
+  if (state && state.server !== connector.client.origin) throw new ConnectionError("CONFLICT");
+  if (state?.status === "disconnected") throw new ConnectionError("UNAUTHENTICATED");
   const transaction = <T>(job: () => Promise<T>) => connector.store.transaction(job);
   const now = interaction.now ?? Date.now;
   if (state?.status === "pairing" && Date.parse(state.pairingExpiresAt ?? "") <= now()) {
@@ -136,6 +136,8 @@ export async function prepareConnection(
   if (state?.credential) {
     const status = await transaction(() => connector.status());
     check();
+    if (status.state === "disconnected" && !status.pending)
+      throw new ConnectionError("UNAUTHENTICATED");
     if (status.state !== "registered" || status.pending) throw new ConnectionError("CONFLICT");
     scope = checkScope(state.scope, input);
   } else if (state?.pending?.action === "exchange") {
@@ -213,7 +215,9 @@ export function connectionFailureHint(error: unknown): string {
     return "이전 실행·종료 증거를 확인하지 못했습니다. 원래 터미널과 로컬 기록을 확인하세요. 새 이름으로 우회하거나 기록을 삭제하지 마세요.";
   if (code === "QUOTA")
     return "연결 한도에 도달했습니다. 내 AI 연결의 내 연결에서 이전 공개 연결 ID를 대조하고 해당 본인 연결의 연결 취소 여부를 확인하세요.";
-  if (code === "UNAUTHENTICATED" || code === "CONFLICT")
+  if (code === "UNAUTHENTICATED")
+    return "이 기기의 인증은 더 이상 사용할 수 없습니다. 같은 명령을 다시 복사해도 복구되지 않습니다. 웹의 내 AI 연결에서 새 승인으로 다시 연결을 선택하세요. 이전 기록은 보존됩니다.";
+  if (code === "CONFLICT")
     return "만료·끊김 또는 진행 중 연결 작업을 확인하세요. 같은 명령으로 상태를 확인하고, 완전히 만료된 연결은 웹의 내 AI 연결에서 새 승인으로 다시 연결을 선택하세요.";
   if (code === "FORBIDDEN")
     return "선택한 계정·방과 공개 연결 ID의 소유자를 확인하세요. 다른 참가자의 기기는 변경할 수 없습니다.";

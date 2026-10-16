@@ -368,6 +368,10 @@ export function LocalConnectionGuide({
           onRetry={() => {
             void copy(true);
           }}
+          onFreshApproval={() => {
+            setShowOptions(true);
+            setRecoveryDialog({ key: scopeKey, confirmed: false });
+          }}
         />
       )}
       {notice && (

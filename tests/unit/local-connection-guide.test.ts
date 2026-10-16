@@ -470,3 +470,30 @@ test("should keep advanced recovery and raw command out of the default connectio
     f.close();
   }
 });
+
+test("should open explicit fresh approval from a rejected command without issuing or confirming it", async () => {
+  const f = fixture();
+  try {
+    await f.settle();
+    await f.click("연결 명령 복사");
+    const before = f.value(),
+      saved = [...f.saved.entries()];
+    const status = nodes(f.render()).find((n) => n.type === "setup-status")!;
+    assert.equal(typeof status.props.onFreshApproval, "function");
+    (status.props.onFreshApproval as () => void)();
+    const tree = f.render();
+    assert.equal(
+      nodes(tree).find((n) => n.props["aria-label"] === "연결 추가 옵션")!.props.hidden,
+      false,
+    );
+    assert.ok(nodes(tree).some((n) => n.props["aria-label"] === "새 승인 연결 확인"));
+    assert.equal(nodes(tree).find((n) => n.props.type === "checkbox")!.props.checked, false);
+    assert.equal(f.button("새 승인 명령 준비").props.disabled, true);
+    assert.equal(f.value(), "");
+    assert.deepEqual(f.copies, [before]);
+    assert.deepEqual([...f.saved.entries()], saved);
+    assert.equal(f.copies.length, 1);
+  } finally {
+    f.close();
+  }
+});
