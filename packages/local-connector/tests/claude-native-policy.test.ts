@@ -85,7 +85,7 @@ test("should admit the reviewed updated native version without changing personal
   assert.equal(fs.realpathSync(join(f.home, ".local", "bin", "claude")), updated);
 });
 
-test("should reject an unreviewed updated native version before probes or model input", async (t) => {
+test("should never execute an unreviewed personal version when app runtime preparation fails", async (t) => {
   const f = await nativeFixture(t);
   const updated = join(dirname(f.executable), "2.1.294");
   await writeFile(updated, "synthetic unreviewed bytes; do not execute\n", { mode: 0o700 });
@@ -631,4 +631,29 @@ test("should keep using a reviewed current CLI instead of preferring a different
     f.probes.some((probe) => probe.executable === f.reviewed),
     false,
   );
+});
+
+// A newer personal installation must not depend on an updater-retained old binary.
+test("should prepare an app runtime when auto-update removed reviewed personal versions", async (t) => {
+  const f = await nativeFixture(t);
+  const updated = join(dirname(f.executable), "2.1.301");
+  await writeFile(updated, "synthetic current personal CLI\n", { mode: 0o700 });
+  await unlink(join(f.home, ".local", "bin", "claude"));
+  await symlink(updated, join(f.home, ".local", "bin", "claude"));
+  await unlink(f.executable);
+  let downloads = 0;
+  t.mock.method(globalThis, "fetch", async () => {
+    downloads++;
+    throw new Error("synthetic offline; never use real network");
+  });
+  await assert.rejects(
+    new NativeClaudePolicy({}).admit(f.root, () => {}),
+    {
+      code: "POLICY_UNCONFIRMED",
+      stage: "DOWNLOAD",
+    },
+  );
+  assert.equal(downloads, 1);
+  assert.equal(f.probes.length, 0);
+  assert.equal(fs.realpathSync(join(f.home, ".local", "bin", "claude")), updated);
 });

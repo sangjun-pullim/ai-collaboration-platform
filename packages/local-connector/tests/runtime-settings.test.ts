@@ -1,3 +1,5 @@
+import { NativeAdmissionError } from "../src/claude/native-installation.ts";
+import type { SettingsManagerObservation } from "../src/settings/manager.ts";
 import test from "node:test";
 import assert from "node:assert/strict";
 import { readFile, mkdir, writeFile, lstat } from "node:fs/promises";
@@ -3687,6 +3689,35 @@ test("should report folder sharing and model discovery while each local action i
     models.resolve();
     abort.abort();
     await running;
+    await f.close();
+  }
+});
+
+test("should expose admission stage only to the local observer and clear it after cancellation", async (t) => {
+  const f = await fixture("claude");
+  try {
+    t.mock.method(NativeClaudePolicy.prototype, "admit", async () => {
+      throw new NativeAdmissionError("VERSION");
+    });
+    const seen: SettingsManagerObservation[] = [];
+    const manager = f.manager({
+      adapter: undefined,
+      onStatus: (status) => {
+        seen.push(status);
+      },
+    });
+    const result = await manager.run({ once: true });
+    assert.equal(result.reason, "POLICY_UNCONFIRMED");
+    assert.equal(Object.hasOwn(result, "admissionStage"), false);
+    assert.equal(seen.at(-1)!.admissionStage, "VERSION");
+    assert.ok(!JSON.stringify(await f.store.read()).includes("admissionStage"));
+    assert.ok(!JSON.stringify(f.requests).includes("admissionStage"));
+    f.response.operation!.state = "CANCELLED";
+    const cancelled = await manager.run({ once: true });
+    assert.equal(cancelled.state, "CANCELLED");
+    assert.equal(seen.at(-1)!.admissionStage, undefined);
+    assert.equal(f.prepares, 0);
+  } finally {
     await f.close();
   }
 });

@@ -1,6 +1,6 @@
 import { serviceOrigin } from "../central-client.ts";
 import { isId } from "../contracts.ts";
-import type { SettingsManagerStatus } from "../settings/manager.ts";
+import type { SettingsManagerObservation } from "../settings/manager.ts";
 
 const failureHints: Record<string, string> = {
   UNAUTHENTICATED:
@@ -24,18 +24,40 @@ const failureHints: Record<string, string> = {
   QUOTA: "연결 또는 실행 한도에 도달했습니다. 웹의 연결 상태와 한도를 확인하세요.",
 };
 
+const admissionHints: Record<string, string> = {
+  INSTALLATION:
+    "Claude 설치 위치나 실행 파일 권한을 확인하지 못했습니다. 기존 Claude 설치를 확인하세요.",
+  DOWNLOAD:
+    "앱용 Claude 실행 파일을 준비하지 못했습니다. Mac의 네트워크를 확인한 뒤 웹에서 실패한 설정을 취소하고 AI·폴더를 다시 선택하세요. 기기를 제거할 필요는 없습니다.",
+  CACHE_INTEGRITY:
+    "앱용 Claude 실행 파일 검증에 실패했습니다. 같은 명령을 반복하거나 파일을 삭제하지 말고 이 오류를 관리자에게 전달하세요.",
+  PUBLISHER: "Claude 실행 파일의 공식 서명을 확인하지 못했습니다. 이 오류를 관리자에게 전달하세요.",
+  VERSION:
+    "앱이 지원하는 Claude 실행 버전을 확인하지 못했습니다. 최신 연결 명령으로 연결 프로그램을 갱신하세요. 기기를 제거할 필요는 없습니다.",
+  MANAGED_POLICY:
+    "회사에서 관리하는 Claude 실행 정책의 지원 여부를 확인해야 합니다. 회사 정책을 임의로 변경하지 마세요.",
+  LOGIN:
+    "기존 Claude 구독 로그인을 확인하지 못했습니다. Mac의 Claude 로그인과 구독 상태를 확인하세요.",
+};
+
 /** One sink per interactive connect run; only the displayed action determines duplicates. */
 export function createSettingsStatusSink(options: {
   origin: string;
   roomId?: string;
   write: (message: string) => void;
-}): (status: SettingsManagerStatus) => void {
+}): (status: SettingsManagerObservation) => void {
   const connections = new URL("/app/connections", serviceOrigin(options.origin));
   if (isId(options.roomId)) connections.searchParams.set("room", options.roomId);
   let previous: string | undefined;
   return (status) => {
     let message: string;
-    if (status.reason) {
+    if (
+      status.reason === "POLICY_UNCONFIRMED" &&
+      status.admissionStage &&
+      Object.hasOwn(admissionHints, status.admissionStage)
+    ) {
+      message = `${admissionHints[status.admissionStage]}\n진단: CLAUDE_ADMISSION/${status.admissionStage}`;
+    } else if (status.reason) {
       message = Object.hasOwn(failureHints, status.reason)
         ? failureHints[status.reason]
         : "설정 상태를 확인하지 못했습니다. 웹의 연결과 기존 터미널 상태를 확인하세요.";
@@ -46,7 +68,10 @@ export function createSettingsStatusSink(options: {
       message = "웹의 내 AI 연결에서 AI와 폴더를 설정하세요. 이 터미널을 열어 두세요.";
     } else if (status.state === "LOCAL_CONFIRMATION") {
       message = "웹의 내 AI 연결에서 모델과 effort(추론 강도)를 선택한 뒤 적용하세요.";
-    } else if (["CHOOSING", "CATALOG_INTENT"].includes(status.state)) {
+    } else if (status.state === "CATALOG_INTENT") {
+      message =
+        "AI 실행 프로그램과 모델 목록을 준비 중입니다. 처음 준비할 때는 실행 파일 다운로드로 시간이 걸릴 수 있습니다. 이 터미널을 열어 두세요.";
+    } else if (status.state === "CHOOSING") {
       message = "로컬 AI와 폴더 설정을 준비 중입니다. 로컬 폴더 선택과 확인 창을 확인하세요.";
     } else if (
       [

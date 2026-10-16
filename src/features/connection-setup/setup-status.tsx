@@ -14,7 +14,8 @@ const reasons: Record<SetupReason, string> = {
   RUNTIME_BUSY:
     "이전 연결 또는 AI 설정이 정리되지 않았습니다. 터미널의 오류와 연결 실패 진단 파일을 확인하세요.",
   SNAPSHOT_CHANGED: "모델 목록이 변경되었습니다. 같은 요청의 정리 완료를 확인하세요.",
-  POLICY_UNCONFIRMED: "공유 정책 확인이 필요합니다.",
+  POLICY_UNCONFIRMED:
+    "AI 프로그램 검증에 실패했습니다. Mac의 연결 터미널에서 버전·로그인·실행 정책 오류를 확인하세요. 기기를 다시 승인할 필요는 없습니다.",
   CONTEXT_UNCONFIRMED: "이전 실행 확인이 필요합니다.",
   CLEANUP_INCOMPLETE: "PC 정리를 확인하지 못했습니다. 같은 요청의 상태를 확인하세요.",
   FORBIDDEN: "이 방의 참가 권한과 연결한 계정을 확인하세요. 같은 계정과 방으로 연결을 재개하세요.",
