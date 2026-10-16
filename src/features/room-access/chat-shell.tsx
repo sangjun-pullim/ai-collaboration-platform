@@ -99,19 +99,25 @@ export function ChatShell({
     : "/app/connections";
   const navigation = (inSheet = false) => (
     <div
-      className="flex h-full min-w-0 flex-col"
+      className="flex h-full min-w-0 flex-col bg-neutral-100/80"
       onClick={(event) => {
         if ((event.target as HTMLElement).closest("a")) setNavigationOpen(false);
       }}
     >
-      <Link href="/app" className="flex items-center gap-2 px-5 py-6 text-base font-semibold">
-        <MessageSquare className="size-5" /> AI 채팅방
+      <Link
+        href="/app"
+        className="flex items-center gap-3 px-5 py-6 text-sm font-semibold tracking-tight text-neutral-900"
+      >
+        <span className="flex size-8 items-center justify-center rounded-xl bg-teal-800 text-white">
+          <MessageSquare className="size-4" aria-hidden="true" />
+        </span>
+        AI 채팅방
       </Link>
       <div className="px-3 pb-4">
         {inSheet && onNewRoom ? (
           <Button
             variant="outline"
-            className="w-full justify-start"
+            className="w-full justify-start rounded-lg border-neutral-200 bg-white text-sm shadow-none"
             onClick={() => {
               pendingNewRoom.current = true;
               setNavigationOpen(false);
@@ -121,7 +127,11 @@ export function ChatShell({
           </Button>
         ) : (
           (newRoom ?? (
-            <Button variant="outline" className="w-full justify-start" asChild>
+            <Button
+              variant="outline"
+              className="w-full justify-start rounded-lg border-neutral-200 bg-white text-sm shadow-none"
+              asChild
+            >
               <Link href="/app">
                 <Plus className="size-4" />새 채팅방
               </Link>
@@ -130,13 +140,14 @@ export function ChatShell({
         )}
       </div>
       <ScrollArea className="min-h-0 flex-1">
-        <nav aria-label="AI 채팅방 목록" className="space-y-1 px-3">
+        <p className="px-6 pb-2 text-[11px] font-medium text-neutral-500">내 채팅방</p>
+        <nav aria-label="AI 채팅방 목록" className="space-y-1 px-3 pb-4">
           {rooms.map((room) => (
             <Link
               key={room.id}
               href={`/app/rooms/${room.id}`}
               aria-current={page === "chat" && room.id === roomId ? "page" : undefined}
-              className={`flex min-w-0 items-center gap-2 rounded-md px-3 py-2.5 hover:bg-neutral-100 ${page === "chat" && room.id === roomId ? "bg-neutral-100 font-medium" : "text-neutral-600"}`}
+              className={`flex min-w-0 items-center gap-2.5 rounded-lg px-3 py-2.5 text-sm transition-colors focus-visible:outline-2 focus-visible:outline-teal-700 ${page === "chat" && room.id === roomId ? "bg-white font-medium text-teal-900 shadow-sm ring-1 ring-neutral-200/70" : "text-neutral-600 hover:bg-neutral-200/60 hover:text-neutral-900"}`}
             >
               <MessageSquare className="size-4 shrink-0" />
               <span className="truncate">{room.title}</span>
@@ -147,8 +158,14 @@ export function ChatShell({
           )}
         </nav>
       </ScrollArea>
-      <div className={`border-t p-4 ${registerShell && !inSheet ? "pb-20" : ""}`}>
-        <Button variant="ghost" className="w-full justify-start" asChild>
+      <div
+        className={`border-t border-neutral-200/80 p-3 ${registerShell && !inSheet ? "pb-20" : ""}`}
+      >
+        <Button
+          variant="ghost"
+          className="w-full justify-start rounded-lg text-neutral-700 hover:bg-neutral-200/60"
+          asChild
+        >
           <Link href={connectionsHref} aria-current={page === "connections" ? "page" : undefined}>
             <Plug className="size-4" />내 AI 연결{" "}
             <span className="ml-auto text-xs text-neutral-500">선택 사항</span>
@@ -163,12 +180,15 @@ export function ChatShell({
       <main
         className={`grid h-dvh min-h-0 min-w-0 grid-cols-1 overflow-hidden bg-white lg:grid-cols-[240px_minmax(0,1fr)] ${details ? "xl:grid-cols-[240px_minmax(0,1fr)_288px]" : ""}`}
       >
-        <aside aria-label="채팅방 탐색" className="hidden min-h-0 border-r lg:block">
+        <aside
+          aria-label="채팅방 탐색"
+          className="hidden min-h-0 border-r border-neutral-200/80 bg-neutral-100/80 lg:block"
+        >
           {navigation()}
         </aside>
-        <section className="flex min-h-0 min-w-0 flex-col">
+        <section className="flex min-h-0 min-w-0 flex-col bg-[#fdfdfc]">
           <header
-            className={`flex h-14 shrink-0 items-center justify-between gap-1 border-b pl-2 md:pl-6 ${registerShell ? "pr-12 lg:pr-6" : "pr-2 md:pr-6"}`}
+            className={`flex h-14 shrink-0 items-center justify-between gap-1 border-b border-neutral-200/70 bg-white pl-2 md:pl-6 ${registerShell ? "pr-12 lg:pr-6" : "pr-2 md:pr-6"}`}
           >
             <div className="flex min-w-0 items-center gap-1 md:gap-2">
               <Sheet open={navigationOpen} onOpenChange={setNavigationOpen}>
@@ -185,7 +205,7 @@ export function ChatShell({
                 </SheetTrigger>
                 <SheetContent
                   side="left"
-                  className="flex w-[min(320px,90vw)] flex-col p-0"
+                  className="flex w-[min(320px,90vw)] flex-col bg-neutral-100 p-0"
                   onCloseAutoFocus={(event) => {
                     if (!pendingNewRoom.current) return;
                     event.preventDefault();
@@ -200,7 +220,9 @@ export function ChatShell({
                   {navigation(true)}
                 </SheetContent>
               </Sheet>
-              <h1 className="truncate text-base font-semibold">{title}</h1>
+              <h1 className="truncate text-sm font-semibold tracking-tight text-neutral-900 md:text-base">
+                {title}
+              </h1>
               {metadata}
             </div>
             <div className="flex shrink-0 items-center gap-0.5 md:gap-1 max-md:[&_button]:h-8 max-md:[&_button]:w-auto max-md:[&_button]:px-1 max-md:[&_button]:text-[10px]">
@@ -265,7 +287,7 @@ export function ChatShell({
         {details && (
           <aside
             aria-label="참가자 정보"
-            className="hidden min-h-0 overflow-y-auto border-l p-5 xl:block [overflow-wrap:anywhere]"
+            className="hidden min-h-0 overflow-y-auto border-l border-neutral-200/80 bg-neutral-50/70 p-5 xl:block [overflow-wrap:anywhere]"
           >
             {details}
           </aside>

@@ -165,7 +165,7 @@ test("should retain the compact composer without setup links for own or peer rea
   assert.ok(!nodes(h.render()).some((node) => node.type === "a"));
 });
 
-test("should distinguish an owned AI while retaining owner runtime repository and session identity", () => {
+test("should retain complete target identity in selection and a concise readiness hint", () => {
   const h = harness();
   const fixture = JSON.parse(readFileSync("tests/fixtures/human-direct-contracts.json", "utf8"));
   const own: PublicBinding = { ...fixture.history.bindings[0], owned: true };
@@ -190,9 +190,12 @@ test("should distinguish an owned AI while retaining owner runtime repository an
   assert.ok(
     nodes(tree).some(
       (node) =>
-        typeof node.props.children === "string" &&
-        node.props.children.startsWith(`내 AI · ${identity}`),
+        typeof node.props.children === "string" && node.props.children.includes("응답 준비 보고"),
     ),
+  );
+  assert.equal(
+    nodes(tree).find((node) => node.props["aria-label"] === "직접 질문 대상")!.props.value,
+    own.agentId,
   );
 });
 
