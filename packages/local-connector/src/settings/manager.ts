@@ -1,3 +1,4 @@
+import { NativeAdmissionError, type NativeAdmissionStage } from "../claude/native-installation.ts";
 import { randomUUID } from "node:crypto";
 import { createProviderAdapter } from "../provider-adapter.ts";
 import { StateStore, type ConnectorState } from "../state-store.ts";
@@ -53,7 +54,7 @@ type Runner = {
   run(options: { once: boolean; signal: AbortSignal }): Promise<{ ready?: boolean }>;
 };
 export type SettingsManagerOptions = {
-  onStatus?: (status: SettingsManagerStatus) => void;
+  onStatus?: (status: SettingsManagerObservation) => void;
   renewal?: ConnectionRenewalControl;
   adapter?: (provider: Provider, reserveCatalog: CatalogReservation) => RuntimeAdapter;
   folder?: (signal: AbortSignal) => Promise<FolderPickerResult>;
@@ -71,6 +72,9 @@ export type SettingsManagerStatus = {
   operationId: string | null;
   configRevision: number;
   reason: string | null;
+};
+export type SettingsManagerObservation = SettingsManagerStatus & {
+  admissionStage?: NativeAdmissionStage;
 };
 const same = (a: unknown, b: unknown) => stableJson(a) === stableJson(b);
 const closed = (journal: SetupJournal) => ["APPLIED", "CANCELLED"].includes(journal.phase);
@@ -169,6 +173,8 @@ export class SettingsManager {
   private state!: SettingsState;
   private ready = false;
   private reason: string | null = null;
+  private admissionFailure: { operationId: string | null; stage: NativeAdmissionStage } | null =
+    null;
   private pollSucceeded = false;
   private signal: AbortSignal = new AbortController().signal;
   private adapter: RuntimeAdapter | undefined;
@@ -199,6 +205,7 @@ export class SettingsManager {
     await this.setupObserver?.stop();
     this.observedOperation = j.operation.operationId;
     this.setupFailureReason = null;
+    this.admissionFailure = null;
     const identity = {
       deviceId: this.state.deviceId,
       operationId: j.operation.operationId,
@@ -233,7 +240,14 @@ export class SettingsManager {
         (status.reason === "UNAUTHENTICATED" || status.reason === "FORBIDDEN")
       )
         status.reason = this.state?.journal?.reason ?? null;
-      void Promise.resolve(this.options.onStatus(status)).catch(() => {});
+      const observation: SettingsManagerObservation = { ...status };
+      if (
+        status.reason === "POLICY_UNCONFIRMED" &&
+        status.state === "FAILED" &&
+        this.admissionFailure?.operationId === status.operationId
+      )
+        observation.admissionStage = this.admissionFailure.stage;
+      void Promise.resolve(this.options.onStatus(observation)).catch(() => {});
     } catch {
       // Display failures must not become settings failures or interrupt cleanup.
     }
@@ -1156,6 +1170,13 @@ export class SettingsManager {
     }
   }
   private async failure(error: unknown) {
+    this.admissionFailure =
+      error instanceof NativeAdmissionError
+        ? {
+            operationId: this.state?.journal?.operation.operationId ?? null,
+            stage: error.stage,
+          }
+        : null;
     this.ready = false;
     this.reason =
       error instanceof RuntimeError || error instanceof SettingsError ? error.code : "UNKNOWN";
@@ -1246,6 +1267,7 @@ export class SettingsManager {
     this.ready = false;
     this.reason = null;
     this.latestResponse = undefined;
+    this.admissionFailure = null;
     this.pollSucceeded = false;
     return this.store.locked(async () => {
       const stored = await this.store.read();

@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import type { SettingsManagerStatus } from "../src/settings/manager.ts";
+import type { SettingsManagerObservation } from "../src/settings/manager.ts";
 import { uuid } from "./runtime-fixture.ts";
 
 async function fixture() {
@@ -8,12 +8,12 @@ async function fixture() {
   const { createSettingsStatusSink } = await import(helper);
   const messages: string[] = [];
   const roomId = uuid();
-  const sink: (status: SettingsManagerStatus) => void = createSettingsStatusSink({
+  const sink: (status: SettingsManagerObservation) => void = createSettingsStatusSink({
     origin: "https://trusted.invalid",
     roomId,
     write: (message: string) => messages.push(message),
   });
-  const status: SettingsManagerStatus = {
+  const status: SettingsManagerObservation = {
     state: "UNCONFIGURED",
     ready: false,
     reason: null,
@@ -80,4 +80,30 @@ test("should give safe actions for failures without echoing unknown error conten
   assert.equal(f.messages.length, 5);
   assert.ok(f.messages.every((message) => message.includes("확인") || message.includes("선택")));
   assert.ok(!f.messages.join("").includes("session-secret-token"));
+});
+
+test("should report admission stages locally without leaking unknown stage text", async () => {
+  const f = await fixture();
+  for (const admissionStage of [
+    "DOWNLOAD",
+    "CACHE_INTEGRITY",
+    "VERSION",
+    "LOGIN",
+    "PUBLISHER",
+    "MANAGED_POLICY",
+    "INSTALLATION",
+  ] as const) {
+    f.sink({ ...f.status, state: "FAILED", reason: "POLICY_UNCONFIRMED", admissionStage });
+    assert.match(f.messages.at(-1)!, new RegExp(`CLAUDE_ADMISSION/${admissionStage}`));
+  }
+  const fault = {
+    ...f.status,
+    state: "FAILED",
+    reason: "POLICY_UNCONFIRMED",
+    admissionStage: "private-secret",
+  };
+  f.sink(fault as SettingsManagerObservation);
+  assert.ok(!f.messages.join("").includes("private-secret"));
+  f.sink({ ...f.status, state: "APPLIED" });
+  assert.ok(!f.messages.at(-1)!.includes("CLAUDE_ADMISSION"));
 });

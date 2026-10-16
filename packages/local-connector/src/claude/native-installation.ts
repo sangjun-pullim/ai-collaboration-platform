@@ -11,6 +11,12 @@ import {
   type SourceSnapshot,
 } from "./configuration.ts";
 import { object } from "./owned-history.ts";
+import {
+  ensureNativeRuntime,
+  inspectCachedNativeRuntime,
+  reviewedNativeRelease,
+  NativeCacheError,
+} from "./native-runtime-cache.ts";
 import { assertNoManagedSources } from "./native-sources.ts";
 
 const admitted = new WeakSet<object>();
@@ -19,6 +25,7 @@ const publisher =
   'anchor apple generic and identifier "com.anthropic.claude-code" and certificate leaf[subject.OU] = "Q6L2SF6YDW"';
 export interface NativeClaudeInstallation {
   readonly kind: "NATIVE";
+  readonly source: "PERSONAL" | "APP_CACHE";
   readonly version: (typeof supportedVersions)[number];
   readonly home: string;
   readonly entry: string;
@@ -31,7 +38,13 @@ export interface NativeClaudeInstallation {
 }
 type ProbeFailure = Error & { code?: unknown; stdout?: string; stderr?: string };
 export type NativeAdmissionStage =
-  "INSTALLATION" | "PUBLISHER" | "VERSION" | "MANAGED_POLICY" | "LOGIN";
+  | "INSTALLATION"
+  | "PUBLISHER"
+  | "VERSION"
+  | "MANAGED_POLICY"
+  | "LOGIN"
+  | "DOWNLOAD"
+  | "CACHE_INTEGRITY";
 export class NativeAdmissionError extends RuntimeError {
   constructor(readonly stage: NativeAdmissionStage) {
     super("POLICY_UNCONFIRMED");
@@ -120,12 +133,37 @@ function installationEntry(home: string) {
     assertNativeExecutable(target, home);
     const fallbackVersion = supportedVersions.at(-1)!;
     const fallback = join(versionsDirectory, fallbackVersion);
-    if (!existsSync(fallback)) throw unavailable("VERSION");
+    if (!existsSync(fallback)) {
+      const release = reviewedNativeRelease();
+      return {
+        entry,
+        entryIdentity: fileIdentity(link),
+        source: "APP_CACHE" as const,
+        executable: join(
+          home,
+          "Library",
+          "Application Support",
+          "ai-collab",
+          "runtimes",
+          "claude",
+          release.version,
+          release.platform,
+          "claude",
+        ),
+        version: fallbackVersion,
+      };
+    }
     executable = fallback;
     version = fallbackVersion;
   }
   assertNativeExecutable(executable, home);
-  return { entry, executable, entryIdentity: fileIdentity(link), version };
+  return {
+    entry,
+    executable,
+    entryIdentity: fileIdentity(link),
+    version,
+    source: "PERSONAL" as const,
+  };
 }
 
 /** Parent-owned provenance only. JSON objects and environment flags cannot authorize a binary. */
@@ -135,6 +173,22 @@ export function assertNativeInstallation(
 ) {
   if (!admitted.has(installation)) throw unavailable();
   check();
+  if (installation.source === "APP_CACHE") {
+    const cached = inspectCachedNativeRuntime(
+      installation.home,
+      reviewedNativeRelease(),
+      installation.binary,
+    );
+    if (
+      cached.path !== installation.executable ||
+      cached.binary.identity !== installation.binary.identity ||
+      cached.binary.hash !== installation.binary.hash
+    )
+      throw new RuntimeError("SNAPSHOT_CHANGED");
+    assertNoManagedSources(installation.home, installation.configDirectory);
+    check();
+    return;
+  }
   const current = installationEntry(installation.home);
   const binary = snapshotBinary(current.executable, installation.binary);
   if (
@@ -186,10 +240,44 @@ async function verifyInstallation(
   )
     throw unavailable();
   assertNoManagedSources(home, configDirectory);
-  const current = installationEntry(home);
-  const binary = snapshotBinary(current.executable, prior?.binary);
   if (prior) assertNativeInstallation(prior, check);
+  const current =
+    prior?.source === "APP_CACHE"
+      ? {
+          entry: prior.entry,
+          entryIdentity: prior.entryIdentity,
+          executable: prior.executable,
+          version: prior.version,
+          source: prior.source,
+        }
+      : installationEntry(home);
   const env = { ...providerEnvironment(environment), LC_ALL: "C", DISABLE_AUTOUPDATER: "1" };
+  const verifyPublisher = async (path: string) => {
+    try {
+      await probe(
+        "/usr/bin/codesign",
+        ["--verify", "--strict", "--verbose=2", `-R=${publisher}`, path],
+        env,
+        root,
+      );
+      check();
+    } catch (error) {
+      if (error instanceof RuntimeError) throw error;
+      throw unavailable("PUBLISHER");
+    }
+  };
+  if (current.source === "APP_CACHE" && !prior) {
+    try {
+      const path = await ensureNativeRuntime(home, reviewedNativeRelease(), check, verifyPublisher);
+      if (path !== current.executable) throw unavailable("CACHE_INTEGRITY");
+    } catch (error) {
+      if (error instanceof NativeCacheError) throw unavailable(error.stage);
+      // Preserve cancellation, publisher and snapshot errors; classify cache filesystem failures.
+      if (error instanceof RuntimeError && error.code !== "UNSAFE_STORAGE") throw error;
+      throw unavailable("CACHE_INTEGRITY");
+    }
+  }
+  const binary = snapshotBinary(current.executable, prior?.binary);
   let stage: NativeAdmissionStage = "PUBLISHER";
   try {
     if (!prior) {
