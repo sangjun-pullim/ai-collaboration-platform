@@ -24,6 +24,8 @@ function harness() {
   let resolve: (value: boolean) => void = () => {};
   const input = {
     disabled: false,
+    style: { height: "" },
+    scrollHeight: 36,
     focus() {
       focuses++;
     },
@@ -65,6 +67,8 @@ function harness() {
   const props = {
     roomId: "00000000-0000-4000-8000-000000000003",
     readinessUnconfirmed: false,
+    unavailableTargets: [] as PublicBinding[],
+    hasBlockingRun: false,
     mode: "ask",
     onMode() {},
     draft: "직접 질문",
@@ -114,6 +118,7 @@ function harness() {
   }
   return {
     render,
+    input,
     key,
     props,
     requests: () => requests,
@@ -137,7 +142,7 @@ test("should offer room AI settings when no responder is ready without enabling 
   assert.equal(link.props.children, "이 방의 AI 설정");
   assert.ok(nodes(tree).some((node) => node.props.children === "응답 준비된 AI가 없습니다."));
   assert.ok(
-    nodes(tree).some((node) => node.props.children === "PC 연결 후 AI와 폴더 설정을 마치세요."),
+    !nodes(tree).some((node) => node.props.children === "PC 연결 후 AI와 폴더 설정을 마치세요."),
   );
   assert.equal(nodes(tree).find((node) => node.type === "button")!.props.disabled, true);
   h.key(tree);
@@ -289,4 +294,42 @@ test("should leave failed submit focus with the error owner and never focus on l
   await failed;
   h.render();
   assert.equal(h.focuses(), 0);
+});
+
+test("should show a registered unready AI without offering it as a selectable responder", () => {
+  const h = harness();
+  const fixture = JSON.parse(readFileSync("tests/fixtures/human-direct-contracts.json", "utf8"));
+  const binding = { ...fixture.history.bindings[0], owned: true, reportedReady: false };
+  h.props.unavailableTargets = [binding];
+  h.props.hasBlockingRun = true;
+  h.props.disabled = true;
+  const tree = h.render();
+  const option = nodes(tree).find(
+    (node) => node.type === "option" && node.props.value === binding.agentId,
+  );
+  assert.ok(option);
+  assert.equal(option.props.disabled, true);
+  assert.ok(
+    nodes(tree).some((node) => node.props.children === "이전 질문의 실행 결과 확인이 필요합니다."),
+  );
+  assert.ok(
+    !nodes(tree).some((node) => node.props.children === "PC 연결 후 AI와 폴더 설정을 마치세요."),
+  );
+  h.key(tree);
+  assert.equal(h.requests(), 0);
+});
+
+test("should grow only for draft content and shrink after clearing it", () => {
+  const h = harness();
+  h.props.draft = "";
+  h.render();
+  assert.equal(h.input.style.height, "36px");
+  h.props.draft = "긴 문장\n".repeat(20);
+  h.input.scrollHeight = 500;
+  h.render();
+  assert.equal(h.input.style.height, "120px");
+  h.props.draft = "";
+  h.input.scrollHeight = 36;
+  h.render();
+  assert.equal(h.input.style.height, "36px");
 });

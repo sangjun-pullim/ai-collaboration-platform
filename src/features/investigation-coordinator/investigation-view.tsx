@@ -556,6 +556,8 @@ function RoomInvestigation({ userId, roomId, role }: Props) {
         <ChatComposer
           roomId={roomId}
           readinessUnconfirmed={!snapshot || !!pollError}
+          unavailableTargets={bindings.filter((binding) => !ready(binding))}
+          hasBlockingRun={!!recovery?.recovery.hasBlockingRuns}
           mode={mode}
           onMode={setMode}
           draft={draft}
