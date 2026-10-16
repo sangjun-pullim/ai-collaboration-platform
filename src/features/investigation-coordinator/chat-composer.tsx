@@ -9,6 +9,8 @@ import { Send } from "lucide-react";
 export function ChatComposer({
   roomId,
   readinessUnconfirmed,
+  unavailableTargets = [],
+  hasBlockingRun = false,
   mode,
   onMode,
   draft,
@@ -25,6 +27,8 @@ export function ChatComposer({
 }: {
   roomId: string;
   readinessUnconfirmed: boolean;
+  unavailableTargets?: PublicBinding[];
+  hasBlockingRun?: boolean;
   mode: "ask" | "speak";
   onMode: (mode: "ask" | "speak") => void;
   draft: string;
@@ -42,6 +46,12 @@ export function ChatComposer({
   const composing = useRef(false);
   const input = useRef<HTMLTextAreaElement>(null);
   const restoreFocus = useRef(false);
+  useLayoutEffect(() => {
+    const area = input.current;
+    if (!area) return;
+    area.style.height = "36px";
+    area.style.height = `${Math.min(120, Math.max(36, area.scrollHeight))}px`;
+  }, [draft]);
   useLayoutEffect(() => {
     if (restoreFocus.current && !busy && !pending) {
       restoreFocus.current = false;
@@ -61,10 +71,10 @@ export function ChatComposer({
           }
         }
       }}
-      className="shrink-0 bg-[#fdfdfc] px-3 pb-3 pt-2 md:px-6 md:pb-5"
+      className="shrink-0 bg-[#fdfdfc] px-3 py-2 md:px-6"
     >
-      <div className="mx-auto max-w-4xl rounded-2xl border border-neutral-200 bg-white p-3 shadow-[0_2px_12px_0_rgb(0_0_0/0.04)] transition-shadow focus-within:border-teal-600/50 focus-within:ring-2 focus-within:ring-teal-600/10 md:p-4">
-        <div className="grid grid-cols-[auto_minmax(0,1fr)] items-center gap-2 border-b border-neutral-100 pb-3">
+      <div className="mx-auto max-w-4xl rounded-xl border border-neutral-200 bg-white p-2 shadow-[0_2px_12px_0_rgb(0_0_0/0.04)] transition-shadow focus-within:border-teal-600/50 focus-within:ring-2 focus-within:ring-teal-600/10 md:p-2">
+        <div className="grid grid-cols-[auto_minmax(0,1fr)] items-center gap-2 border-b border-neutral-100 pb-1">
           <label className="min-w-0 text-xs text-neutral-500">
             <span className="sr-only">보낼 곳</span>
             <select
@@ -94,6 +104,13 @@ export function ChatComposer({
                     기존 대상 변경 또는 준비 보고 만료 · 다시 선택하세요
                   </option>
                 )}
+                {unavailableTargets.map((binding) => (
+                  <option value={binding.agentId} key={binding.agentId} disabled>
+                    {binding.owned ? "내 AI · " : ""}
+                    {binding.ownerAlias} · {binding.runtime} · {binding.repositoryAlias} · 응답 준비
+                    안 됨
+                  </option>
+                ))}
                 {targets.map((binding) => (
                   <option value={binding.agentId} key={binding.agentId}>
                     {binding.owned ? "내 AI · " : ""}
@@ -105,27 +122,31 @@ export function ChatComposer({
             </label>
           )}
         </div>
-        {mode === "ask" && (
-          <p className={`pt-2 text-[11px] ${target ? "text-teal-800" : "text-neutral-500"}`}>
-            {target
-              ? "응답 준비 보고된 AI가 선택되었습니다."
-              : targets.length
-                ? "질문받을 AI를 선택하세요."
-                : readinessUnconfirmed
-                  ? "AI 응답 준비 확인 필요"
-                  : "응답 준비된 AI가 없습니다."}
-          </p>
-        )}
-        {mode === "ask" && !targets.length && (
-          <div className="mt-2 flex flex-wrap items-center gap-x-2 gap-y-1 rounded-lg bg-neutral-50 px-3 py-2 text-xs text-neutral-600">
-            <p>PC 연결 후 AI와 폴더 설정을 마치세요.</p>
-            <Link
-              href={`/app/connections?room=${encodeURIComponent(roomId)}#ai-settings`}
-              className="inline-block font-medium text-teal-800 underline underline-offset-2"
-            >
-              이 방의 AI 설정
-            </Link>
+        {mode === "ask" && !target && (
+          <div className="flex flex-wrap items-center gap-x-2 gap-y-0.5 pt-1 text-[11px] text-neutral-500">
+            <p>
+              {readinessUnconfirmed
+                ? "AI 응답 준비 확인 필요"
+                : targets.length
+                  ? "질문받을 AI를 선택하세요."
+                  : hasBlockingRun
+                    ? "이전 질문의 실행 결과 확인이 필요합니다."
+                    : unavailableTargets.length
+                      ? "AI는 등록되어 있지만 응답 준비가 확인되지 않았습니다."
+                      : "응답 준비된 AI가 없습니다."}
+            </p>
+            {!targets.length && (
+              <Link
+                href={`/app/connections?room=${encodeURIComponent(roomId)}#ai-settings`}
+                className="font-medium text-teal-800 underline underline-offset-2"
+              >
+                {hasBlockingRun ? "AI 연결 상태 확인" : "이 방의 AI 설정"}
+              </Link>
+            )}
           </div>
+        )}
+        {mode === "ask" && target && (
+          <span className="sr-only">응답 준비 보고된 AI가 선택되었습니다.</span>
         )}
         <label className="sr-only" htmlFor="chat-message">
           {mode === "ask" ? "AI에게 보낼 질문" : "공동 발언"}
@@ -138,12 +159,12 @@ export function ChatComposer({
           onChange={(event) => onDraft(event.target.value)}
           required
           maxLength={4000}
-          rows={2}
+          rows={1}
           disabled={pending || busy}
           placeholder={
             mode === "ask" ? "선택한 AI에게 질문하세요…" : "방 참가자에게 메시지를 남기세요…"
           }
-          className="mt-2 max-h-32 min-h-16 resize-y rounded-none border-0 bg-transparent px-1 py-2 text-sm leading-relaxed shadow-none placeholder:text-neutral-400 focus-visible:border-transparent focus-visible:ring-0 md:text-sm"
+          className="mt-1 max-h-[120px] min-h-9 resize-none rounded-none border-0 bg-transparent px-1 py-1.5 text-sm leading-6 shadow-none placeholder:text-neutral-400 focus-visible:border-transparent focus-visible:ring-0 md:text-sm"
           aria-describedby="chat-input-help"
           onCompositionStart={() => {
             composing.current = true;
@@ -165,7 +186,7 @@ export function ChatComposer({
             }
           }}
         />
-        <div className="mt-2 flex items-end justify-between gap-3">
+        <div className="mt-1 flex items-center justify-between gap-2">
           <p
             id="chat-input-help"
             className="min-w-0 flex-1 text-[11px] leading-relaxed text-neutral-500"
@@ -173,7 +194,7 @@ export function ChatComposer({
             {mode === "ask"
               ? "질문과 답변은 참가자에게 공유됩니다."
               : "참가자에게 공유하며 AI 답변을 시작하지 않습니다."}{" "}
-            <span className="sr-only md:not-sr-only md:block">
+            <span className="sr-only">
               Enter 전송 · Shift+Enter 줄바꿈 · 한글 입력 중에는 전송하지 않습니다.
             </span>
           </p>
