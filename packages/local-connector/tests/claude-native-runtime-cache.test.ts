@@ -247,8 +247,10 @@ test("should bound total download time even while bytes keep arriving", async (t
 test("should reject foreign-owned cache ancestry without another download", async (t) => {
   const f = await fixture(t);
   await f.prepare();
-  const uid = process.getuid!();
-  t.mock.method(process, "getuid", () => uid + 1);
+  assert.ok(process.getuid);
+  const identity = process as NodeJS.Process & { getuid(): number };
+  const uid = identity.getuid();
+  t.mock.method(identity, "getuid", () => uid + 1);
   await assert.rejects(f.prepare(), { code: "POLICY_UNCONFIRMED" });
   assert.equal(f.counts().downloads, 1);
 });

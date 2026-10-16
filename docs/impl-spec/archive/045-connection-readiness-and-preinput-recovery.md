@@ -1,5 +1,5 @@
 ---
-status: active
+status: done
 date: 2026-10-16
 risk-surface: permission, public-api, db-schema
 ---
@@ -94,11 +94,11 @@ risk-surface: permission, public-api, db-schema
 
 실제 #61 원본은 UNKNOWN/SNAPSHOT_CHANGED, nativeIntent·종결·새 입력 전 증거 없음으로 재확인했다. 이전 PID는 종료됐으나 다른 현재 연결 프로세스가 실행 중이며, 이를 임의 종료하거나 웹 본인 확인을 대신하지 않는다. 기록 보존 복구 UI는 실제 DB와 합성 실행으로 desktop/mobile에서 검증했다. 운영 기기 연결 취소와 새 승인은 원래 소유자의 명시적 화면 확인으로 진행한다.
 
-### [ ] Step 4: 검증·정본·배포
+### [x] Step 4: 검증·정본·배포
 
-필수 전체 연결기 테스트 build에는 변경 전부터 있던 `claude-native-runtime-cache.test.ts:251`의 TS2769가 남아 있다. 운영·배포 연결기 build와 변경 관련 검사는 통과했으나 전체 검사 완료로 표시하지 않는다. 기존 중단 ACK 경합 테스트의 기준 코드 재현과 검증 수치는 delivery-and-validation에 기록한다.
+전체 연결기 테스트 build의 TS2769를 테스트 타입 보정으로 해소했다. 중단 ACK 테스트의 합성 실행 순서를 고정하고 최종 전체 순차 검사를 통과했다. 병렬 실행 실패 로그와 최종 검증 수치는 delivery-and-validation에 기록한다.
 
-구현·독립 리뷰·변경 관련 브라우저/DB 검증과 승인된 main 병합·운영 배포는 완료했다. 운영 배포와 공개 검증 결과는 [진행 기록](../planning/delivery-and-validation.md#2026-10-16-연결-확인-피드백입력-전-실패-복구)을 따른다. 기존 필수 검사 실패 때문에 이 단계와 계획 전체 완료 표시는 보류한다.
+구현·독립 리뷰·전체 연결기 검사·브라우저/DB 검증과 승인된 main 병합·운영 배포는 완료했다. 운영 배포와 공개 검증 결과는 [진행 기록](../../planning/delivery-and-validation.md#2026-10-16-연결-확인-피드백입력-전-실패-복구)을 따른다. 실제 공급자 AI 호출과 운영 기기 소유자 대신 복구 확인은 수행하지 않았다.
 
 - 아래 검사와 독립 리뷰를 완료한다. 승인된 병합·배포 범위에서 GitHub Flow를 따른다.
 - 코드 반영 후 ARCHITECTURE, BUSINESS-LOGIC, DB-SCHEMA, API-SPEC, FRONTEND-ARCHITECTURE, BUG-FIXES의 관련 절과 onboarding 안내를 갱신한다. 상태·검증 수치는 delivery-and-validation 한 곳에 둔다.
@@ -164,3 +164,7 @@ risk-surface: permission, public-api, db-schema
 ### 최종 브라우저 검사 검토
 
 실제 격리 Auth·DB와 합성 adapter의 desktop/mobile 검사는 설정 적용과 준비 완료 구분, 수동 확인 결과, 질문만 하는 참가자의 답변, 입력 0회 실패 뒤 기한 만료 UNKNOWN·PC 통신 생존·보존 복구 확인을 검증한다. 두 테스트 파일의 추가 독립 리뷰는 PASS이며 운영 코드의 기존 리뷰 결과를 재사용했다. 실제 공급자 AI 입력은 없다.
+
+### 전체 검사 보완 검토
+
+캐시 소유자 테스트에서 선택적 `process.getuid`의 존재를 확인하고 mock 대상 타입을 좁혔다. 중단 권한 테스트는 서버의 interrupt-ack 반영 후 합성 provider를 종료하도록 순서를 고정했다. 기존 권한·종결·영수증 단언과 종결 우선 경합 테스트는 유지한다. 두 테스트 파일의 새 독립 리뷰는 PASS이며 차단 지적·MEDIUM/LOW·REJECTED는 없다. 운영 코드는 변경하지 않았으므로 기존 구현 리뷰와 웹·DB·브라우저·배포 검증을 재사용한다.
