@@ -1,5 +1,6 @@
 "use client";
 
+import { memo } from "react";
 import ReactMarkdown, { defaultUrlTransform } from "react-markdown";
 import remarkGfm from "remark-gfm";
 
@@ -15,7 +16,13 @@ function safeUrl(url: string) {
   }
 }
 
-export function ChatMarkdown({ text, messageId }: { text: string; messageId: string }) {
+export const ChatMarkdown = memo(function ChatMarkdown({
+  text,
+  messageId,
+}: {
+  text: string;
+  messageId: string;
+}) {
   const prefix = `chat-${messageId}-`;
   const labelId = `${prefix}footnote-label`;
   return (
@@ -86,4 +93,6 @@ export function ChatMarkdown({ text, messageId }: { text: string; messageId: str
       </ReactMarkdown>
     </div>
   );
-}
+});
+
+ChatMarkdown.displayName = "ChatMarkdown";

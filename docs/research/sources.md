@@ -310,3 +310,8 @@ cookie/bearer durable polling과 서버 내부 JWT를 사용하는 bounded SSE h
 
 - [A2A specification](https://a2a-protocol.org/latest/specification/): 표준 agent 간 메시지·task·artifact·취소 모델. 공급자 세션 연결·로컬 권한·사내 UI를 대신하지 않으며 MVP의 필수 기술로 확정하지 않았다.
 - [Claude Managed Agents events](https://platform.claude.com/docs/en/managed-agents/events-and-streaming): cloud 관리 session의 관찰·개입 대안. 기존 로컬 session에 연결하는 것과 실행 위치가 다르다.
+
+
+## 2026-10-16 웹 채팅 Realtime 채택 근거
+
+[공식 Authorization](https://supabase.com/docs/guides/realtime/authorization)과 [Broadcast](https://supabase.com/docs/guides/realtime/broadcast)를 확인했다. private 구독의 join/JWT 시 권한 계산과 캐시를 고려해 발행 시 session·참가 권한·lease 만료를 다시 검사한다. 이전 조사 당시 브라우저 JWT 비노출은 당시 코드의 설명이며, 승인된 웹 access token 메모리 전달 예외와 현재 계약은 [API 정본](../API-SPEC.md#채팅-실시간-알림)을 따른다.

@@ -83,16 +83,27 @@ export function nearTimelineBottom(scrollTop: number, clientHeight: number, scro
   return scrollHeight - scrollTop - clientHeight < 64;
 }
 
+const questionIndexes = new WeakMap<PublicEvent[], Map<string, PublicEvent>>();
+export function questionIndex(events: PublicEvent[]) {
+  let index = questionIndexes.get(events);
+  if (!index) {
+    index = new Map();
+    for (const event of events)
+      if (event.kind === "QUESTION") {
+        if (!index.has(event.eventId)) index.set(event.eventId, event);
+        if (event.questionId && !index.has(event.questionId)) index.set(event.questionId, event);
+      }
+    questionIndexes.set(events, index);
+  }
+  return index;
+}
 export function questionForReply(event: PublicEvent, events: PublicEvent[]) {
   if (event.kind !== "ANSWER") return null;
+  const index = questionIndex(events);
   return (
-    events.find(
-      (other) =>
-        other.kind === "QUESTION" &&
-        (other.eventId === event.replyTo ||
-          other.questionId === event.replyTo ||
-          (!!event.questionId && other.questionId === event.questionId)),
-    ) ?? null
+    (event.replyTo ? index.get(event.replyTo) : null) ??
+    (event.questionId ? index.get(event.questionId) : null) ??
+    null
   );
 }
 

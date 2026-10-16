@@ -19,6 +19,9 @@ import {
   restoreDirectIntent,
   type DirectIntent,
 } from "./direct-intents.ts";
+import { speechOutbox, speechIntent, announceOutbox, type SpeechOutbox } from "./chat-outbox.ts";
+import { cacheChatHistory, cachedChatHistory, clearChatHistory } from "./chat-history-cache.ts";
+import type { RealtimeState } from "./room-realtime.ts";
 import { pollingDelay } from "./polling-policy.ts";
 
 export type RoomChatActor = {
@@ -39,6 +42,8 @@ export type RoomChatState = {
   permissionDenied: boolean;
   busy: boolean;
   pendingDirect: DirectIntent | null;
+  outboxConflict: DirectIntent | null;
+  realtimeState: RealtimeState;
   observedAt: number;
   requiredRecoveryRevision: number;
   cancelReceipts: CancelReceipt[];
@@ -50,7 +55,13 @@ export type CancelReceipt = {
   epoch: number;
   state: "REQUESTED" | "NO_ACTIVE_RUN";
 };
-type Environment = { storage: () => Storage; hidden: () => boolean; now: () => number };
+type Environment = {
+  storage: () => Storage;
+  hidden: () => boolean;
+  now: () => number;
+  outbox?: SpeechOutbox;
+  cache?: boolean;
+};
 const accessDenied = (code: string) => ["FORBIDDEN", "UNAUTHENTICATED", "NOT_FOUND"].includes(code);
 const codeOf = (failure: unknown) =>
   failure instanceof WorkflowError ? failure.code : "UNAVAILABLE";
@@ -68,6 +79,10 @@ export class RoomChatController {
   private readonly pendingKey: string;
   private resyncRequested = false;
   private resyncNotBefore = 0;
+  private restored = false;
+  private validated = false;
+  private preserveSavedIntent = false;
+  private cached: HistoryState | null = null;
 
   constructor(
     private readonly actor: RoomChatActor,
@@ -76,6 +91,8 @@ export class RoomChatController {
       storage: () => sessionStorage,
       hidden: () => document.hidden,
       now: () => Date.now(),
+      outbox: speechOutbox,
+      cache: true,
     },
   ) {
     this.pendingKey = directIntentKey(actor.userId, actor.roomId);
@@ -87,6 +104,8 @@ export class RoomChatController {
       permissionDenied: false,
       busy: false,
       pendingDirect: null,
+      outboxConflict: null,
+      realtimeState: "connecting",
       observedAt: 0,
       requiredRecoveryRevision: 0,
       cancelReceipts: [],
@@ -111,22 +130,28 @@ export class RoomChatController {
     this.failures = 0;
     this.resyncRequested = false;
     this.resyncNotBefore = 0;
-    this.update({ busy: false });
-    try {
-      this.update({
-        pendingDirect: restoreDirectIntent(
-          this.environment.storage(),
-          this.actor.userId,
-          this.actor.roomId,
-        ),
-      });
-    } catch {
-      // An inaccessible storage object cannot authorize restoration or a new direct input.
-    }
+    const previousHistory =
+      !this.state.permissionDenied && this.state.history.snapshot ? this.state.history : null;
+    this.restored = false;
+    this.validated = false;
+    this.cached = this.environment.cache
+      ? (cachedChatHistory(this.actor, this.environment.now()) ?? previousHistory)
+      : previousHistory;
+    this.update({
+      busy: false,
+      history: emptyHistory(this.actor.roomId),
+      pendingDirect: null,
+      outboxConflict: null,
+      cancelReceipts: [],
+      observedAt: 0,
+      realtimeState: "connecting",
+    });
     this.schedule(0);
   }
 
   stop() {
+    if (this.environment.cache && this.validated && !this.state.permissionDenied)
+      cacheChatHistory(this.actor, this.state.history, this.environment.now());
     this.active = false;
     this.resyncRequested = false;
     this.generation++;
@@ -174,7 +199,26 @@ export class RoomChatController {
     this.schedule(Math.max(0, this.resyncNotBefore - this.environment.now()));
   };
 
-  loseAccess = () => {
+  loseAccess = () => this.revokeAccess(false);
+  invalidateSession = (nextUserId?: string) => this.revokeAccess(nextUserId === this.actor.userId);
+
+  private revokeAccess(preserveSavedIntent: boolean) {
+    this.preserveSavedIntent = preserveSavedIntent;
+    clearChatHistory(this.actor.userId, this.actor.roomId);
+    this.cached = null;
+    this.validated = false;
+    if (!preserveSavedIntent)
+      void this.environment.outbox
+        ?.clear(this.actor.userId, this.actor.roomId)
+        .then(announceOutbox)
+        .catch(() =>
+          this.update({ storageError: "권한이 사라진 방의 저장 메시지를 정리하지 못했습니다." }),
+        );
+    try {
+      if (!preserveSavedIntent) this.environment.storage().removeItem(this.pendingKey);
+    } catch {
+      /* Access is hidden regardless of cleanup availability. */
+    }
     this.resyncRequested = false;
     this.clearTimer();
     this.pollAbort?.abort();
@@ -183,10 +227,13 @@ export class RoomChatController {
       history: emptyHistory(this.actor.roomId),
       requiredRecoveryRevision: 0,
       permissionDenied: true,
+      pendingDirect: null,
+      outboxConflict: null,
+      busy: false,
       cancelReceipts: [],
       pollError: "접근 권한을 확인해 주세요.",
     });
-  };
+  }
 
   async poll() {
     if (!this.active || this.state.permissionDenied || this.pollAbort || this.mutationAbort) return;
@@ -198,11 +245,18 @@ export class RoomChatController {
     let backfill = false;
     let progressed = false;
     try {
-      const afterSequence = this.state.history.cursor;
-      const afterRetirementSequence = this.state.history.retirementCursor;
+      const previousHistory = this.cached ?? this.state.history;
+      const afterSequence = previousHistory.cursor;
+      const afterRetirementSequence = previousHistory.retirementCursor;
       const result = await this.request(
         "read-recovery",
-        { protocol: 1, roomId: this.actor.roomId, afterSequence, afterRetirementSequence },
+        {
+          protocol: 1,
+          roomId: this.actor.roomId,
+          expectedUserId: this.actor.userId,
+          afterSequence,
+          afterRetirementSequence,
+        },
         abort.signal,
       );
       if (!this.current(generation, abort)) return;
@@ -217,7 +271,14 @@ export class RoomChatController {
           page.recovery.nextRetirementCursor !== afterRetirementSequence)
       )
         throw new WorkflowError("UNAVAILABLE");
-      const history = mergeHistory(this.state.history, page);
+      const history = mergeHistory(previousHistory, page);
+      this.cached = null;
+      this.validated = true;
+      if (!this.restored) {
+        await this.restorePending();
+        if (!this.current(generation, abort)) return;
+        this.restored = true;
+      }
       progressed =
         history.cursor > afterSequence || history.retirementCursor > afterRetirementSequence;
       const cancelReceipts = this.state.cancelReceipts.filter((receipt) => {
@@ -273,25 +334,124 @@ export class RoomChatController {
             ? Math.max(0, this.resyncNotBefore - this.environment.now())
             : backfill && progressed && !hidden && this.failures === 0
               ? 0
-              : pollingDelay(backfill || running, hidden, this.failures),
+              : this.nextPollDelay(backfill || running, hidden),
         );
       }
     }
   }
 
-  private clearIntent() {
+  setRealtimeState = (realtimeState: RealtimeState) => {
+    if (!this.active || this.state.permissionDenied) return;
+    this.update({ realtimeState });
+    if (realtimeState !== "connected") this.requestResync();
+  };
+
+  private nextPollDelay(running: boolean, hidden: boolean) {
+    const base =
+      this.state.realtimeState === "connected" && !this.failures
+        ? 30_000
+        : pollingDelay(running, hidden, this.failures);
+    const snapshot = this.state.history.snapshot;
+    const deadlines = [
+      ...(snapshot?.bindings.map((binding) => binding.validUntil) ?? []),
+      snapshot?.cycle?.deadline,
+    ]
+      .filter((value): value is string => !!value)
+      .map(Date.parse)
+      .filter((value) => value > this.environment.now());
+    return Math.max(1, Math.min(base, ...deadlines.map((value) => value - this.environment.now())));
+  }
+
+  private async restorePending() {
+    const generation = this.generation;
+    let legacy: DirectIntent | null = null;
+    try {
+      legacy = restoreDirectIntent(
+        this.environment.storage(),
+        this.actor.userId,
+        this.actor.roomId,
+      );
+      if (!this.environment.outbox) {
+        if (this.active && generation === this.generation) this.update({ pendingDirect: legacy });
+        return;
+      }
+      const stored = await this.environment.outbox.read(this.actor.userId, this.actor.roomId);
+      if (!this.active || generation !== this.generation || this.state.permissionDenied) return;
+      if (stored.expired)
+        this.update({
+          storageError: "저장된 메시지의 로컬 보관 기간 7일이 만료되어 제거했습니다.",
+        });
+      if (legacy?.action === "speak") {
+        if (
+          stored.entry &&
+          (stored.entry.operationId !== legacy.body.operationId ||
+            stored.entry.body.publicText !== legacy.body.publicText)
+        ) {
+          this.update({ pendingDirect: speechIntent(stored.entry), outboxConflict: legacy });
+          return;
+        }
+        await this.environment.outbox.reserve(legacy.body);
+        if (!this.active || generation !== this.generation || this.state.permissionDenied) {
+          if (this.state.permissionDenied && !this.preserveSavedIntent)
+            await this.environment.outbox.remove(
+              this.actor.userId,
+              this.actor.roomId,
+              legacy.body.operationId as string,
+            );
+          return;
+        }
+        // Transfer only after the IndexedDB transaction has committed.
+        this.environment.storage().removeItem(this.pendingKey);
+        this.update({ pendingDirect: legacy, outboxConflict: null });
+        announceOutbox();
+        return;
+      }
+      this.update({
+        pendingDirect: legacy ?? (stored.entry ? speechIntent(stored.entry) : null),
+        outboxConflict: null,
+      });
+    } catch {
+      if (this.active && generation === this.generation)
+        this.update({
+          ...(legacy && legacy.action !== "speak" ? { pendingDirect: legacy } : {}),
+          storageError: "저장된 요청을 확인하지 못했습니다. 저장 공간과 다른 탭을 확인하세요.",
+        });
+    }
+  }
+  refreshOutbox = async () => {
+    if (!this.active || !this.validated || this.state.permissionDenied || this.mutationAbort)
+      return;
+    await this.restorePending();
+  };
+  confirmStoredConflict = () => {
+    this.update({ outboxConflict: null });
+  };
+
+  private async clearIntent() {
     const pending = this.state.pendingDirect;
+    if (!pending) return;
     this.update({ pendingDirect: null });
     try {
-      const storage = this.environment.storage();
-      // A settled marker is deliberately not a restorable intent. Write it first so
-      // failed removal cannot revive a known success or definitive rejection.
-      try {
-        storage.setItem(this.pendingKey, JSON.stringify({ ...pending, settled: true }));
-      } catch {
-        // Removal can still succeed when writes are unavailable (for example quota).
+      if (pending.action === "speak" && this.environment.outbox) {
+        await this.environment.outbox.remove(
+          this.actor.userId,
+          this.actor.roomId,
+          pending.body.operationId as string,
+        );
+        announceOutbox();
+      } else {
+        const storage = this.environment.storage();
+        try {
+          storage.setItem(this.pendingKey, JSON.stringify({ ...pending, settled: true }));
+        } catch {
+          /* Removal may still succeed at quota. */
+        }
+        storage.removeItem(this.pendingKey);
       }
-      storage.removeItem(this.pendingKey);
+      if (!this.state.permissionDenied) {
+        this.update({ pendingDirect: null });
+        if (this.environment.outbox) await this.restorePending();
+      }
     } catch {
       this.update({
         storageError: "전송 결과는 확정되었습니다. 저장된 요청을 정리하지 못했습니다.",
@@ -301,8 +461,25 @@ export class RoomChatController {
 
   private persistIntent(action: DirectIntent["action"], body: Body) {
     const pendingDirect = { action, body };
-    this.environment.storage().setItem(this.pendingKey, JSON.stringify(pendingDirect));
-    this.update({ pendingDirect });
+    const generation = this.generation;
+    if (action === "speak" && this.environment.outbox) {
+      return this.environment.outbox.reserve(body).then(async (entry) => {
+        if (!this.active || generation !== this.generation || this.state.permissionDenied) {
+          if (this.state.permissionDenied && !this.preserveSavedIntent)
+            await this.environment.outbox?.remove(
+              this.actor.userId,
+              this.actor.roomId,
+              entry.operationId,
+            );
+          return;
+        }
+        this.update({ pendingDirect: speechIntent(entry) });
+        announceOutbox();
+      });
+    } else {
+      this.environment.storage().setItem(this.pendingKey, JSON.stringify(pendingDirect));
+      this.update({ pendingDirect });
+    }
   }
 
   mutate = async (action: HumanAction, fields: Body, retryBody?: Body): Promise<boolean> => {
@@ -312,6 +489,7 @@ export class RoomChatController {
       this.actor.role === "observer" ||
       this.state.permissionDenied ||
       this.mutationAbort ||
+      (this.environment.outbox && (!this.restored || !!this.state.outboxConflict)) ||
       (this.state.pendingDirect && !retryBody)
     )
       return false;
@@ -373,7 +551,9 @@ export class RoomChatController {
       }
       if (action === "speak" || action === "ask" || action === "cancel" || action === "retire") {
         savingIntent = true;
-        this.persistIntent(action, body);
+        const persistence = this.persistIntent(action, body);
+        if (persistence) await persistence;
+        if (!this.current(generation, abort)) return false;
         savingIntent = false;
         directIntent = true;
       }
@@ -425,17 +605,19 @@ export class RoomChatController {
           });
         }
       }
-      if (directIntent) this.clearIntent();
+      if (directIntent) await this.clearIntent();
       return true;
     } catch (failure) {
       if (!this.current(generation, abort)) return false;
       const code = codeOf(failure);
       if (directIntent && code !== "UNAVAILABLE") {
-        this.clearIntent();
+        await this.clearIntent();
       }
+      if (savingIntent && action === "speak" && this.environment.outbox)
+        await this.restorePending();
       this.update({
         actionError: savingIntent
-          ? "요청을 이 탭에 저장할 수 없어 전송하지 않았습니다. 초안을 보관하고 저장 공간을 확인해 주세요."
+          ? "요청을 브라우저에 저장할 수 없어 전송하지 않았습니다. 초안을 보관하고 저장 공간을 확인해 주세요."
           : code === "CONFLICT"
             ? "상태가 바뀌었습니다. 기록을 갱신한 뒤 다시 시도해 주세요."
             : "요청을 완료할 수 없습니다. 접근 권한과 연결 보고를 확인해 주세요.",

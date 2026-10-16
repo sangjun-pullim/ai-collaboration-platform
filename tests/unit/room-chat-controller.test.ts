@@ -253,7 +253,7 @@ test("should never fill cancel receipts after stop restart access loss or actor 
       async () => page(),
     );
     assert.deepEqual(receipts(replacement), []);
-    assert.ok(h.controller.getSnapshot().pendingDirect);
+    assert.equal(h.controller.getSnapshot().pendingDirect, null);
     h.controller.stop();
   }
 });
@@ -381,7 +381,7 @@ test("should abort every owned request and permanently clear history on source a
   await polling;
   assert.equal(await sending, false);
   assert.equal(h.controller.getSnapshot().history.snapshot, null);
-  assert.ok(h.controller.getSnapshot().pendingDirect);
+  assert.equal(h.controller.getSnapshot().pendingDirect, null);
   assert.equal(await h.controller.mutate("ask", fields), false);
   t.mock.timers.tick(60_000);
   assert.equal(h.calls.length, 3);
@@ -415,6 +415,9 @@ test("should preserve an unresolved input on unmount even when HTTP resolves lat
   assert.equal(await sending, false);
   assert.equal(h.entries.get(directIntentKey(actor.userId, actor.roomId)), saved);
   h.controller.start();
+  assert.equal(h.controller.getSnapshot().pendingDirect, null);
+  h.setBehavior(async () => page());
+  await h.controller.poll();
   assert.deepEqual(h.controller.getSnapshot().pendingDirect, JSON.parse(saved));
 });
 
@@ -667,8 +670,15 @@ test("should refuse observer retirement and protect saved retirement intents on 
   assert.equal(await sending, false);
   assert.equal(h.controller.getSnapshot().history.retirements.length, 0);
   h.controller.start();
+  assert.equal(h.controller.getSnapshot().pendingDirect, null);
+  // Revalidate against the same authoritative snapshot and preserved cursor.
+  h.setBehavior(async (action, body) =>
+    action === "read-recovery"
+      ? { ...retirementFixture.history, events: [], nextCursor: body.afterSequence }
+      : retirementFixture.receipt,
+  );
+  await h.controller.poll();
   assert.deepEqual(h.controller.getSnapshot().pendingDirect, saved);
-  h.setBehavior(async () => retirementFixture.receipt);
   assert.equal(await h.controller.mutate("retire", {}, saved.body), true);
 });
 
@@ -840,12 +850,13 @@ test("should reuse the speech operation after a lost response and never retransm
   assert.equal(await sending, false);
   h.controller.stop();
   h.controller.start();
-  const pending = h.controller.getSnapshot().pendingDirect!;
-  assert.deepEqual(pending.body, sent.body);
+  assert.equal(h.controller.getSnapshot().pendingDirect, null);
   h.setBehavior(async (action) => (action === "read-recovery" ? page() : speechReceipt));
   t.mock.timers.tick(0);
   await flush();
   assert.equal(h.calls.filter((c) => c.action === "speak").length, 1);
+  const pending = h.controller.getSnapshot().pendingDirect!;
+  assert.deepEqual(pending.body, sent.body);
   assert.equal(await h.controller.mutate("speak", {}, pending.body), true);
   assert.deepEqual(h.calls.at(-1)!.body, sent.body);
   assert.equal(h.controller.getSnapshot().pendingDirect, null);
@@ -962,6 +973,9 @@ test("should retain speech after stopping a request and ignore its late acknowle
   assert.equal(await sending, false);
   assert.equal(h.entries.get(directIntentKey(actor.userId, actor.roomId)), saved);
   h.controller.start();
+  assert.equal(h.controller.getSnapshot().pendingDirect, null);
+  h.setBehavior(async () => page());
+  await h.controller.poll();
   assert.deepEqual(h.controller.getSnapshot().pendingDirect, JSON.parse(saved!));
 });
 

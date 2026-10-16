@@ -24,7 +24,7 @@
 
 ## 검토 중인 기술 선택
 
-첫 구현의 제품 분리·Next.js/TypeScript·Node 24·Supabase Auth/Postgres·outbound connector는 [ADR-002](../ADR.md#adr-002--첫-구현의-언어와-중앙로컬-경계)로 채택했다. 아래는 그 선택의 연구 배경과 남은 후속 통합 대안이다. 실제 Realtime·클라우드 배포·provider 실행까지 완료한 결정 기록은 아니다.
+첫 구현의 제품 분리·Next.js/TypeScript·Node 24·Supabase Auth/Postgres·outbound connector는 [ADR-002](../ADR.md#adr-002--첫-구현의-언어와-중앙로컬-경계)로 채택했다. 아래는 그 선택의 연구 배경과 남은 후속 통합 대안이다. 이는 초기 결정의 배경이다. 웹 Realtime의 현재 선택은 ADR의 채팅 실시간 알림 결정을, 클라우드·provider 검증 상태는 개발·검증 정본을 따른다.
 
 ### 기존 백엔드와 분리된 제품 경계
 

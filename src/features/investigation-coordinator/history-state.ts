@@ -96,16 +96,39 @@ export function mergeHistory(state: HistoryState, page: HistoryPage): HistorySta
       retirementCursor: Math.max(state.retirementCursor, recovery.nextRetirementCursor),
     };
   }
-  const ids = new Map(state.events.map((event) => [event.eventId, event]));
+  const index = eventIndex(state.events);
+  const additions: PublicEvent[] = [];
+  const newIds = new Map<string, PublicEvent>();
+  const newSequences = new Map<number, PublicEvent>();
   for (const event of page.events) {
-    if (event.roomId === page.roomId && !ids.has(event.eventId)) ids.set(event.eventId, event);
+    if (event.roomId !== page.roomId) throw new WorkflowError("UNAVAILABLE");
+    const previous = index.ids.get(event.eventId) ?? newIds.get(event.eventId);
+    const sequence = index.sequences.get(event.sequence) ?? newSequences.get(event.sequence);
+    if (
+      (previous && JSON.stringify(previous) !== JSON.stringify(event)) ||
+      (sequence && sequence.eventId !== event.eventId)
+    )
+      throw new WorkflowError("UNAVAILABLE");
+    if (!previous) {
+      additions.push(event);
+      newIds.set(event.eventId, event);
+      newSequences.set(event.sequence, event);
+    }
   }
-  const events = [...ids.values()].sort((a, b) => a.sequence - b.sequence);
-  let cursor = 0;
-  for (const event of events) {
-    if (event.sequence === cursor + 1) cursor = event.sequence;
-    else if (event.sequence > cursor + 1) break;
+  const events = additions.length
+    ? [...state.events, ...additions].sort((a, b) => a.sequence - b.sequence)
+    : state.events;
+  if (additions.length) {
+    const ids = new Map(index.ids),
+      sequences = new Map(index.sequences);
+    for (const event of additions) {
+      ids.set(event.eventId, event);
+      sequences.set(event.sequence, event);
+    }
+    eventIndexes.set(events, { ids, sequences });
   }
+  let cursor = state.cursor;
+  while (index.sequences.has(cursor + 1) || newSequences.has(cursor + 1)) cursor++;
   // Delayed backfill still contributes events; its older snapshot cannot undo current state.
   const snapshot =
     state.snapshot &&
@@ -114,7 +137,7 @@ export function mergeHistory(state: HistoryState, page: HistoryPage): HistorySta
       ? state.snapshot
       : page;
   const runs = new Map<string, HistoricalRun>(state.runs.map((run) => [run.requestId, run]));
-  for (const event of events) {
+  for (const event of additions) {
     if (
       event.kind === "RUN_STATE" &&
       event.requestId &&
@@ -137,7 +160,7 @@ export function mergeHistory(state: HistoryState, page: HistoryPage): HistorySta
       });
     }
   }
-  for (const run of snapshot.runs) {
+  for (const run of snapshot === state.snapshot ? [] : snapshot.runs) {
     runs.set(run.requestId, {
       requestId: run.requestId,
       cycleId: run.cycleId,
@@ -165,4 +188,20 @@ export function mergeHistory(state: HistoryState, page: HistoryPage): HistorySta
     snapshot,
     gap: cursor < Math.max(page.nextCursor, snapshot.nextCursor),
   };
+}
+
+const eventIndexes = new WeakMap<
+  PublicEvent[],
+  { ids: Map<string, PublicEvent>; sequences: Map<number, PublicEvent> }
+>();
+function eventIndex(events: PublicEvent[]) {
+  let index = eventIndexes.get(events);
+  if (!index) {
+    index = {
+      ids: new Map(events.map((event) => [event.eventId, event])),
+      sequences: new Map(events.map((event) => [event.sequence, event])),
+    };
+    eventIndexes.set(events, index);
+  }
+  return index;
 }

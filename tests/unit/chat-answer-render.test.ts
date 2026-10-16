@@ -5,6 +5,7 @@ import { runInNewContext } from "node:vm";
 import ts from "typescript";
 import { createElement, type ComponentType } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
+import * as React from "react";
 import * as jsxRuntime from "react/jsx-runtime";
 import * as presentation from "../../src/features/investigation-coordinator/chat-presentation.ts";
 import type { HistoryPage } from "../../src/features/investigation-coordinator/contracts.ts";
@@ -32,6 +33,22 @@ function component(
     {
       exports,
       require(id: string) {
+        if (id === "react") return React;
+        if (id === "../../components/ui/dialog")
+          return {
+            Dialog: () => null,
+            DialogContent: "div",
+            DialogDescription: "p",
+            DialogTitle: "h2",
+          };
+        if (id === "./use-virtual-history")
+          return {
+            useVirtualHistory: (ids: string[]) => ({
+              virtualizer: { getTotalSize: () => ids.length * 220, measureElement: () => {} },
+              items: ids.map((id, index) => ({ index, start: index * 220, key: id })),
+              jump: () => true,
+            }),
+          };
         if (id === "react/jsx-runtime") return jsxRuntime;
         if (id === "./chat-presentation") return dependencies;
         if (id === "./chat-markdown") return { ChatMarkdown };
@@ -86,9 +103,9 @@ test("should render a system explanation inline without the duplicate human-inpu
   const html = timeline({ events: [required], runs: [] });
   assert.match(html, /시스템/);
   assert.match(html, /#13/);
-  assert.match(html, /정확한 사유.*기록되지/);
-  assert.match(html, /같은 질문.*상태/);
-  assert.match(html, /소유자.*Mac.*터미널/);
+  assert.match(html, /안내 상세/);
+  assert.doesNotMatch(html, /정확한 사유.*기록되지/);
+  assert.doesNotMatch(html, /소유자.*Mac.*터미널/);
   assert.equal((html.match(/사람 확인 필요/g) ?? []).length, 1);
 });
 test("should render a question recipient and unknown evidence without a loading indicator", () => {

@@ -539,6 +539,7 @@ test("should attach historical event addresses even outside thirty-two current r
     senderKind: "AGENT",
     publicText: "오래된 확정 답변",
   };
+  let selected: unknown = null;
   const exports: { ChatTimeline?: (props: unknown) => Element } = {};
   runInNewContext(
     ts.transpileModule(
@@ -554,12 +555,35 @@ test("should attach historical event addresses even outside thirty-two current r
     {
       exports,
       require(name: string) {
+        if (name === "react")
+          return {
+            memo: (component: unknown) => component,
+            useMemo: (create: () => unknown) => create(),
+            useState: () => [
+              selected,
+              (value: unknown) => {
+                selected = value;
+              },
+            ],
+          };
+        if (name === "./use-virtual-history")
+          return {
+            useVirtualHistory: (ids: string[]) => ({
+              virtualizer: { getTotalSize: () => ids.length * 220, measureElement: () => {} },
+              items: ids.map((id, index) => ({ key: id, index, start: index * 220 })),
+              jump: () => true,
+            }),
+          };
         if (name === "react/jsx-runtime") return { jsx, jsxs: jsx };
         if (name === "./chat-presentation") return presentation;
         if (name === "./run-source-view") return { RunSourceView: "source-view" };
         if (name === "./chat-markdown") return { ChatMarkdown };
         if (name.startsWith("../../components/ui/"))
           return {
+            Dialog: "dialog",
+            DialogContent: "dialog-content",
+            DialogTitle: "h2",
+            DialogDescription: "p",
             Avatar: "avatar",
             AvatarFallback: "avatar-fallback",
             Badge: "badge",
@@ -571,7 +595,7 @@ test("should attach historical event addresses even outside thirty-two current r
     { timeout: 1000 },
   );
   const lost = () => {};
-  const rendered = exports.ChatTimeline!({
+  const props = {
     events: [historical],
     runs: Array.from({ length: 32 }, (_, index) => ({
       ...direct.history.runs[0],
@@ -585,7 +609,19 @@ test("should attach historical event addresses even outside thirty-two current r
     onLatest: () => {},
     onScroll: () => {},
     onAccessLost: lost,
-  });
+  };
+  const first = exports.ChatTimeline!(props);
+  function expand(node: unknown): unknown {
+    if (Array.isArray(node)) return node.map(expand);
+    if (!node || typeof node !== "object") return node;
+    const item = node as Element;
+    if (typeof item.type === "function")
+      return expand((item.type as (props: unknown) => unknown)(item.props));
+    return { ...item, props: { ...item.props, children: expand(item.props?.children) } };
+  }
+  const button = nodes(expand(first), "button").find((button) => text(button) === "저장소·자료")!;
+  (button.props.onClick as () => void)();
+  const rendered = exports.ChatTimeline!(props);
   const source = nodes(rendered, "source-view");
   assert.equal(source.length, 1);
   assert.equal(source[0].props.roomId, roomId);

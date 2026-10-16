@@ -140,3 +140,33 @@ test("should merge durable history without leaking state across rooms", () => {
   assert.equal(state.runs.length, 0);
   assert.equal(state.cursor, 0);
 });
+
+test("should preserve event references on empty pages and reject conflicting event identities", () => {
+  const fixture = JSON.parse(readFileSync("tests/fixtures/workflow-contracts.json", "utf8"));
+  const page = { ...fixture.cases[0].response, runs: [] } as HistoryPage;
+  const state = mergeHistory(emptyHistory(page.roomId), page);
+  const same = mergeHistory(state, { ...page, events: [] });
+  assert.equal(same.events, state.events);
+  assert.throws(
+    () =>
+      mergeHistory(state, { ...page, events: [{ ...page.events[0], eventId: "different-id" }] }),
+    { code: "UNAVAILABLE" },
+  );
+  assert.throws(
+    () =>
+      mergeHistory(state, {
+        ...page,
+        events: [{ ...page.events[0], publicText: "conflicting-text" }],
+      }),
+    { code: "UNAVAILABLE" },
+  );
+  const second = { ...page.events[0], eventId: "second-event", sequence: 2 };
+  const merged = mergeHistory(state, {
+    ...page,
+    events: [second],
+    nextCursor: 2,
+    highWaterSequence: 2,
+  });
+  assert.equal(merged.events[0], state.events[0]);
+  assert.equal(merged.cursor, 2);
+});

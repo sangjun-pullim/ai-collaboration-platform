@@ -1,11 +1,12 @@
 "use client";
 
-import { useEffect, useLayoutEffect, useRef, useState, type FormEvent } from "react";
+import { useEffect, useLayoutEffect, useMemo, useRef, useState, type FormEvent } from "react";
 import { type PublicBinding } from "./contracts";
 import { useRoomChat } from "./use-room-chat";
 
 import { OwnInputControls } from "./own-input-controls";
-import { ChatTimeline, ChatAnswerStatus } from "./chat-timeline";
+import { ChatTimeline } from "./chat-timeline";
+import { ChatAnswerStatusPanel } from "./chat-answer-status-panel";
 import { ChatComposer } from "./chat-composer";
 import { RequestRetirementControls } from "./request-retirement-controls";
 import { recoverySnapshot } from "./history-state";
@@ -46,6 +47,9 @@ function RoomInvestigation({ userId, roomId, role }: Props) {
     permissionDenied,
     busy,
     pendingDirect,
+    outboxConflict,
+    confirmStoredConflict,
+    realtimeState,
     observedAt,
     cancelReceipts,
     requiredRecoveryRevision,
@@ -82,7 +86,7 @@ function RoomInvestigation({ userId, roomId, role }: Props) {
   }, [error]);
 
   const snapshot = history.snapshot;
-  const bindings = snapshot?.bindings ?? [];
+  const bindings = useMemo(() => snapshot?.bindings ?? [], [snapshot]);
   const origin = bindings.find((binding) => binding.agentId === originId);
   const peer = bindings.find((binding) => binding.agentId === peerId);
   const cycle = snapshot?.cycle;
@@ -124,19 +128,35 @@ function RoomInvestigation({ userId, roomId, role }: Props) {
     ? snapshot?.runs.find((run) => run.cycleId === directCycle.cycleId)
     : undefined;
 
-  const presentation = answerStatuses({
-    events: history.events,
-    runs: snapshot?.runs ?? [],
-    historicalRuns: history.runs,
-    bindings,
-    cycle: cycle ?? null,
-    observedAt,
-    pollError,
-    gap: history.gap,
-    role,
-    cancelReceipts,
-    retirements: history.retirements,
-  });
+  const presentation = useMemo(
+    () =>
+      answerStatuses({
+        events: history.events,
+        runs: snapshot?.runs ?? [],
+        historicalRuns: history.runs,
+        bindings,
+        cycle: cycle ?? null,
+        observedAt,
+        pollError,
+        gap: history.gap,
+        role,
+        cancelReceipts,
+        retirements: history.retirements,
+      }),
+    [
+      history.events,
+      history.runs,
+      history.retirements,
+      snapshot,
+      bindings,
+      cycle,
+      observedAt,
+      pollError,
+      history.gap,
+      role,
+      cancelReceipts,
+    ],
+  );
   const cycleStatuses = cycle
     ? presentation.statuses.filter((status) => status.cycleId === cycle.cycleId)
     : [];
@@ -244,6 +264,13 @@ function RoomInvestigation({ userId, roomId, role }: Props) {
           )}
           {pollError && snapshot && <span className="sr-only"> · 조회 실패</span>}
         </p>
+        <span role="status" aria-label="실시간 연결 상태" className="text-[10px] text-neutral-500">
+          {realtimeState === "connected"
+            ? "실시간 연결"
+            : realtimeState === "connecting"
+              ? "연결 중"
+              : "재연결 중"}
+        </span>
         {writable && (
           <AdvancedControls>
             {" "}
@@ -392,19 +419,44 @@ function RoomInvestigation({ userId, roomId, role }: Props) {
           {storageError}
         </p>
       )}
+      {writable && outboxConflict && (
+        <section aria-label="저장 메시지 충돌" className="shrink-0 border-b px-5 py-2 text-xs">
+          <p>이 탭과 브라우저에 서로 다른 메시지가 있습니다. 두 원문을 보존했습니다.</p>
+          <p className="max-h-24 overflow-auto whitespace-pre-wrap">
+            이 탭: {outboxConflict.body.publicText as string}
+          </p>
+          <p>
+            브라우저에 저장된 메시지를 먼저 확인하면 이 탭의 메시지도 같은 작업 번호로 이어서
+            보관합니다.
+          </p>
+          <Button variant="outline" size="sm" onClick={confirmStoredConflict}>
+            브라우저 저장 메시지 먼저 선택
+          </Button>
+        </section>
+      )}
       {writable && pendingDirect?.action === "speak" && (
         <section aria-label="일반 발언 전송 상태" className="shrink-0 border-b px-5 py-2 text-xs">
+          <p>
+            일반 발언 원문은 이 기기에 최대 7일 보관합니다. 브라우저가 저장소를 지우면 복구할 수
+            없습니다.
+          </p>
           <p role="status">{busy ? "메시지 전송 중" : "메시지 전송 결과 확인 필요"}</p>
           <p className="max-h-32 overflow-y-auto whitespace-pre-wrap">
             {pendingDirect.body.publicText as string}
           </p>
-          <Button variant="outline" size="sm" disabled={busy || !snapshot} onClick={confirmSpeech}>
+          <Button
+            variant="outline"
+            size="sm"
+            disabled={busy || !snapshot || !!outboxConflict}
+            onClick={confirmSpeech}
+          >
             같은 메시지 확인
           </Button>
         </section>
       )}
       <ChatTimeline
         events={history.events}
+        loading={history.gap || !!history.snapshot?.hasMore}
         runs={snapshot?.runs ?? []}
         historicalRuns={history.runs}
         bindings={bindings}
@@ -432,15 +484,7 @@ function RoomInvestigation({ userId, roomId, role }: Props) {
         }}
       />
       {showAnswerStatus && (
-        <section
-          aria-label="AI 답변 상태"
-          className="max-h-[min(10rem,30dvh)] shrink-0 space-y-2 overflow-y-auto border-t bg-neutral-50 px-4 py-2 md:px-6"
-          aria-live="polite"
-        >
-          <h2 className="sr-only">AI 답변 상태</h2>
-          {currentStatuses.map((status) => (
-            <ChatAnswerStatus key={status.requestId} status={status} compact />
-          ))}
+        <ChatAnswerStatusPanel statuses={currentStatuses}>
           {writable && (
             <>
               <RequestRetirementControls
@@ -506,7 +550,7 @@ function RoomInvestigation({ userId, roomId, role }: Props) {
               )}
             </>
           )}
-        </section>
+        </ChatAnswerStatusPanel>
       )}
       {writable ? (
         <ChatComposer

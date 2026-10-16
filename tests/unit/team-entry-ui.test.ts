@@ -19,6 +19,13 @@ function load(path: string, dependencies: Record<string, unknown>, globals = {})
   runInNewContext(source, {
     exports,
     require(name: string) {
+      if (name in dependencies) return dependencies[name];
+      if (name === "../investigation-coordinator/chat-session-cleanup")
+        return {
+          clearChatSession: async () => true,
+          chatCleanupNotice: () => false,
+          subscribeChatCleanup: () => () => {},
+        };
       if (name === "react/jsx-runtime") return { jsx, jsxs: jsx };
       if (name in dependencies) return dependencies[name];
       throw new Error(`Unexpected entry UI dependency ${name}`);
@@ -33,7 +40,7 @@ function nodes(node: unknown): UINode[] {
   const element = node as UINode;
   return [element, ...nodes(element.props?.children)];
 }
-function formHarness() {
+function formHarness(cleanupResult = true) {
   const states: unknown[] = [],
     refs: { current: unknown }[] = [];
   let stateIndex = 0,
@@ -51,6 +58,7 @@ function formHarness() {
   const code = new Input("fixture-company-code"),
     name = new Input("테스트 사용자");
   const react = {
+    useSyncExternalStore: (_subscribe: unknown, get: () => unknown) => get(),
     useState(initial: unknown) {
       const index = stateIndex++;
       if (!(index in states)) states[index] = initial;
@@ -106,6 +114,12 @@ function formHarness() {
   const component = load(
     "src/features/room-access/login-form.tsx",
     {
+      "../investigation-coordinator/chat-session-cleanup": {
+        clearChatSession: async () => cleanupResult,
+        chatCleanupNotice: () => !cleanupResult,
+        subscribeChatCleanup: () => () => {},
+      },
+      react,
       "next/navigation": router,
       "next/link": { default: "link" },
       "./client-actions": actions,
@@ -121,7 +135,7 @@ function formHarness() {
     effects = [];
     const tree = component({ destination: `/app?invite=${"a".repeat(64)}` });
     for (const node of nodes(tree))
-      if (node.props.role === "alert") {
+      if (node.props.role === "alert" && node.props.ref) {
         (node.props.ref as { current: unknown }).current = {
           focus() {
             focused = true;
@@ -151,6 +165,9 @@ function formHarness() {
   };
 }
 
+async function flushAdmission() {
+  for (let index = 0; index < 8; index++) await Promise.resolve();
+}
 test("should clear the code before awaiting admission and retain the exact submitted body", async () => {
   const h = formHarness();
   const inputs = nodes(h.render()).filter((n) => n.type === "input");
@@ -159,6 +176,7 @@ test("should clear the code before awaiting admission and retain the exact submi
   assert.equal(inputs[0].props.maxLength, 128);
   assert.equal(inputs[1].props.maxLength, 80);
   const request = h.submit();
+  await flushAdmission();
   assert.equal(h.code.value, "");
   assert.equal(h.name.value, "테스트 사용자");
   assert.deepEqual(h.calls, [
@@ -177,6 +195,7 @@ for (const error of ["CODE_REJECTED", "CODE_COOLDOWN", "UNAVAILABLE"] as const) 
   test(`should clear a ${error} submission and focus its fixed error without losing the name`, async () => {
     const h = formHarness();
     const request = h.submit();
+    await flushAdmission();
     h.respond({ ok: false, error: { code: error, privateDetail: "must not render" } });
     await request;
     const alert = nodes(h.render()).find((n) => n.props.role === "alert");
@@ -191,6 +210,7 @@ for (const error of ["CODE_REJECTED", "CODE_COOLDOWN", "UNAVAILABLE"] as const) 
 test("should retain a cleared code and focus unavailable after a network rejection", async () => {
   const h = formHarness();
   const request = h.submit();
+  await flushAdmission();
   h.reject();
   await request;
   assert.equal(
@@ -211,6 +231,7 @@ function resetAction(tree: UINode) {
 test("should preserve a rejected identity until explicit logout and never automatically enter a new user", async () => {
   const h = formHarness();
   const request = h.submit();
+  await flushAdmission();
   h.respond({ ok: false, error: { code: "UNAUTHENTICATED" } });
   await request;
   const tree = h.render();
@@ -248,6 +269,7 @@ test("should preserve a rejected identity until explicit logout and never automa
 test("should retain identity on unavailable admission and retry without offering logout", async () => {
   const h = formHarness();
   const request = h.submit();
+  await flushAdmission();
   h.respond({ ok: false, error: { code: "UNAVAILABLE" } });
   await request;
   assert.equal(resetAction(h.render()), undefined);
@@ -255,6 +277,7 @@ test("should retain identity on unavailable admission and retry without offering
   assert.equal(h.refreshes(), 0);
   h.code.value = "retry-company-code";
   const retry = h.submit();
+  await flushAdmission();
   h.respond({ ok: true, data: { userId: "same-fixture-id" } });
   await retry;
   assert.deepEqual(
@@ -268,6 +291,7 @@ test("should retain identity on unavailable admission and retry without offering
 test("should leave failed explicit logout on login without entering another identity", async () => {
   const h = formHarness();
   const request = h.submit();
+  await flushAdmission();
   h.respond({ ok: false, error: { code: "UNAUTHENTICATED" } });
   await request;
   const reset = resetAction(h.render());
@@ -287,6 +311,7 @@ test("should not offer identity reset for an unknown error or a network failure"
   for (const network of [false, true]) {
     const h = formHarness();
     const request = h.submit();
+    await flushAdmission();
     if (network) h.reject();
     else h.respond({ ok: false, error: { code: "UNKNOWN_PROVIDER_FAILURE" } });
     await request;
@@ -697,4 +722,13 @@ test("should defer mobile room creation until the Sheet closes and retain its vi
   });
   assert.equal(returns.length, 1);
   assert.equal(prevented, 1);
+});
+
+test("should refuse explicit admission before Auth when local cleanup fails even after form remount", async () => {
+  for (let reload = 0; reload < 2; reload++) {
+    const h = formHarness(false);
+    await h.submit();
+    assert.deepEqual(h.calls, []);
+    assert.deepEqual(h.destinations, []);
+  }
 });

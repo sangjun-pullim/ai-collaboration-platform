@@ -167,12 +167,14 @@ export function RunSourceView({
   bindings,
   onAccessLost,
   call = callInvestigation,
+  initialOpen = false,
 }: {
   roomId: string;
   eventId: string;
   bindings: PublicBinding[];
   onAccessLost: () => void;
   call?: SourceRequest;
+  initialOpen?: boolean;
 }) {
   const [controller] = useState(
     () => new SourceViewController(roomId, eventId, call, onAccessLost),
@@ -183,24 +185,27 @@ export function RunSourceView({
   const [view, setView] = useState<SourceViewState>(controller.getSnapshot);
   useEffect(() => {
     controller.start();
+    if (initialOpen) void controller.open();
     const unsubscribe = controller.subscribe(() => setView(controller.getSnapshot()));
     return () => {
       unsubscribe();
       controller.stop();
     };
-  }, [controller]);
+  }, [controller, initialOpen]);
   const panelId = `source-${eventId}`;
   return (
     <div className="mt-2">
-      <Button
-        variant="ghost"
-        size="sm"
-        aria-expanded={view.open}
-        aria-controls={panelId}
-        onClick={() => (view.open ? controller.close() : void controller.open())}
-      >
-        {view.open ? "저장소·자료 닫기" : "저장소·자료"}
-      </Button>
+      {!initialOpen && (
+        <Button
+          variant="ghost"
+          size="sm"
+          aria-expanded={view.open}
+          aria-controls={panelId}
+          onClick={() => (view.open ? controller.close() : void controller.open())}
+        >
+          {view.open ? "저장소·자료 닫기" : "저장소·자료"}
+        </Button>
+      )}
       {view.open && (
         <section
           id={panelId}

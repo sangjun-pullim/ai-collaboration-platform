@@ -71,7 +71,7 @@ test("should lazily show the same historical source for two people and clear roo
       await expect(record).toBeVisible();
       expect(reads).toHaveLength(0);
       await record.getByRole("button", { name: "저장소·자료", exact: true }).click();
-      const details = record.getByRole("region", { name: "당시 저장소·자료" });
+      const details = page.getByRole("dialog", { name: "당시 저장소·자료", exact: true });
       await expect(details).toContainText(original.manifestHash!);
       await expect(details).toContainText(original.target!.sessionAlias);
       await expect(details).toContainText(original.target!.repositoryAlias);
@@ -87,40 +87,48 @@ test("should lazily show the same historical source for two people and clear roo
       await expect(
         details.getByRole("button", { name: "다음 파일 관찰", exact: true }),
       ).toHaveCount(0);
-      await record.getByRole("button", { name: "저장소·자료 닫기", exact: true }).click();
+      await page.keyboard.press("Escape");
       await expect(details).toHaveCount(0);
       await record.getByRole("button", { name: "저장소·자료", exact: true }).click();
       await expect(details).toContainText(original.manifestHash!);
-      expect(reads).toHaveLength(2);
+      expect(reads).toHaveLength(3);
+      await page.keyboard.press("Escape");
       const peerRecord = region
         .getByLabel("확정 공동 이력")
         .getByRole("listitem")
         .filter({ has: page.getByText(question.publicText, { exact: true }) });
       await peerRecord.getByRole("button", { name: "저장소·자료", exact: true }).click();
-      const peerDetails = peerRecord.getByRole("region", { name: "당시 저장소·자료" });
+      const peerDetails = page.getByRole("dialog", { name: "당시 저장소·자료", exact: true });
       await expect(peerDetails).toContainText(recipient.target!.ownerAlias);
       await expect(peerDetails).toContainText(recipient.target!.repositoryAlias);
       await expect(peerDetails).toContainText(recipient.target!.sessionAlias);
-      await expect(peerRecord).toContainText(
+      await expect(peerDetails).toContainText(
         "당시 대상은 저장되어 있으나 파일 관찰 자료는 없습니다.",
       );
       if (person === scene.owner) {
-        await peerRecord.getByRole("button", { name: "저장소·자료 닫기", exact: true }).click();
+        await page.keyboard.press("Escape");
         await page.reload();
         await expect(record).toBeVisible();
         await record.getByRole("button", { name: "저장소·자료", exact: true }).click();
         await expect(
-          record.getByRole("button", { name: "다음 파일 관찰", exact: true }),
+          page
+            .getByRole("dialog", { name: "당시 저장소·자료", exact: true })
+            .getByRole("button", { name: "다음 파일 관찰", exact: true }),
         ).toBeVisible();
         await clearAuthCookies(context);
-        await record.getByRole("button", { name: "다음 파일 관찰", exact: true }).click();
+        await page
+          .getByRole("dialog", { name: "당시 저장소·자료", exact: true })
+          .getByRole("button", { name: "다음 파일 관찰", exact: true })
+          .click();
         await expect(region.getByRole("alert", { name: "조사 오류", exact: true })).toBeVisible();
-        await expect(region.getByLabel("확정 공동 이력")).toContainText("대화를 시작하세요.");
+        await expect(region.getByLabel("확정 공동 이력")).toContainText("함께 코드를 살펴볼까요?");
         await expect(region.getByLabel("확정 공동 이력")).not.toContainText(
           "당시 저장소의 공개 답변",
         );
         await expect(region.getByRole("form", { name: "AI에게 질문" })).toHaveCount(0);
-        await expect(region.getByRole("region", { name: "당시 저장소·자료" })).toHaveCount(0);
+        await expect(
+          page.getByRole("dialog", { name: "당시 저장소·자료", exact: true }),
+        ).toHaveCount(0);
       }
     }
   } finally {

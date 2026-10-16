@@ -23,6 +23,7 @@ runInNewContext(
     exports,
     URL,
     require(id: string) {
+      if (id === "react") return { memo: (component: unknown) => component };
       if (id === "react/jsx-runtime") return jsxRuntime;
       if (id === "react-markdown") return { default: ReactMarkdown, defaultUrlTransform };
       if (id === "remark-gfm") return { default: remarkGfm };

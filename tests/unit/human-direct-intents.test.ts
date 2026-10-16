@@ -23,8 +23,26 @@ async function restore(
   const storage = new Map(entries);
   const controller = new RoomChatController(
     { userId, roomId, role: "participant" },
-    async () => {
-      throw new Error("Restoration must not submit a request");
+    async (action) => {
+      assert.equal(action, "read-recovery");
+      return {
+        ...fixture.history,
+        roomId,
+        events: [],
+        runs: [],
+        cycle: null,
+        nextCursor: 0,
+        highWaterSequence: 0,
+        hasMore: false,
+        recovery: {
+          hasBlockingRuns: false,
+          candidate: null,
+          retirements: [],
+          nextRetirementCursor: 0,
+          highWaterRetirementSequence: 0,
+          hasMoreRetirements: false,
+        },
+      };
     },
     {
       storage: () => {
@@ -49,6 +67,8 @@ async function restore(
     },
   );
   controller.start();
+  assert.equal(controller.getSnapshot().pendingDirect, null);
+  await controller.poll();
   const pending = controller.getSnapshot().pendingDirect;
   controller.stop();
   return { pending: pending ? JSON.parse(JSON.stringify(pending)) : null, storage };

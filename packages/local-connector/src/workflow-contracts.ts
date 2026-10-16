@@ -463,7 +463,7 @@ export function validateBody(action: Action, input: unknown): Body {
     throw new WorkflowError("BODY_TOO_LARGE");
   let shape = bodies[action];
   if (
-    action === "speak" &&
+    (action === "speak" || action === "read-recovery") &&
     input &&
     typeof input === "object" &&
     Object.hasOwn(input, "expectedUserId")
