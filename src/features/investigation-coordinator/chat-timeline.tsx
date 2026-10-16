@@ -69,13 +69,24 @@ export function ChatTimeline({
         ref={scrollRef}
         onScroll={onScroll}
         aria-label="대화 기록 스크롤"
-        className="min-h-0 flex-1 overflow-y-auto overscroll-contain px-4 py-4 md:px-6"
+        className="min-h-0 flex-1 overflow-y-auto overscroll-contain px-4 py-6 md:px-8 md:py-8"
         style={{ overflowAnchor: "none" }}
       >
-        <ol aria-label="확정 공동 이력" className="mx-auto max-w-4xl space-y-5">
+        <ol aria-label="확정 공동 이력" className="mx-auto max-w-4xl space-y-7 md:space-y-8">
           {!events.some((event) => event.kind !== "RUN_STATE") && (
-            <li className="py-12 text-center text-sm text-neutral-500">
-              대화를 시작하세요. 내 AI나 동료 AI에게 질문할 수 있습니다.
+            <li className="mx-auto flex max-w-md flex-col items-center px-4 py-16 text-center md:py-24">
+              <span
+                aria-hidden="true"
+                className="mb-5 flex size-12 items-center justify-center rounded-2xl border border-teal-800/10 bg-teal-50 text-sm font-semibold text-teal-800"
+              >
+                AI
+              </span>
+              <p className="text-lg font-semibold tracking-tight text-neutral-900">
+                함께 코드를 살펴볼까요?
+              </p>
+              <p className="mt-2 text-sm leading-relaxed text-neutral-500">
+                내 AI나 동료 AI를 선택하고 궁금한 점을 질문하세요.
+              </p>
             </li>
           )}
           {timelineEvents(events).map((event) => {
@@ -85,6 +96,8 @@ export function ChatTimeline({
             const questionStatuses =
               event.kind === "QUESTION" ? (projected.byQuestion.get(event.eventId) ?? []) : [];
             const sender = event.senderKind === "SYSTEM" ? "시스템" : event.senderAlias;
+            const isAgent = event.senderKind === "AGENT";
+            const isSystem = event.senderKind === "SYSTEM";
             const kind =
               event.kind === "SPEECH"
                 ? event.senderKind === "AGENT"
@@ -100,25 +113,55 @@ export function ChatTimeline({
                         ? "사람 확인 필요"
                         : "공개 기록";
             return (
-              <li key={event.eventId} className="flex min-w-0 gap-3">
-                <Avatar className="mt-1 size-8 shrink-0">
-                  <AvatarFallback>
-                    {event.senderKind === "AGENT" ? "AI" : sender.slice(0, 1)}
+              <li key={event.eventId} className="flex min-w-0 gap-2.5 md:gap-3.5">
+                <Avatar className="mt-0.5 size-8 shrink-0 rounded-xl">
+                  <AvatarFallback
+                    className={`rounded-xl text-[11px] font-semibold ${isAgent ? "bg-teal-800 text-white" : isSystem ? "bg-neutral-100 text-neutral-500" : "bg-neutral-200/80 text-neutral-700"}`}
+                  >
+                    {isAgent ? "AI" : isSystem ? "·" : sender.slice(0, 1)}
                   </AvatarFallback>
                 </Avatar>
-                <article className="min-w-0 flex-1">
-                  <header className="flex flex-wrap items-baseline gap-2">
-                    <span className="text-sm font-semibold">{sender}</span>
-                    <span className="text-xs text-neutral-500">{kind}</span>
-                    <span className="text-xs text-neutral-400">#{event.sequence}</span>
+                <article
+                  id={`message-${event.eventId}`}
+                  tabIndex={-1}
+                  className="min-w-0 flex-1 scroll-mt-6 rounded-lg outline-none focus-visible:ring-2 focus-visible:ring-teal-600"
+                >
+                  <header className="flex min-h-7 flex-wrap items-baseline gap-x-2 gap-y-1">
+                    <span className="text-sm font-semibold text-neutral-900">{sender}</span>
+                    <span
+                      className={`text-[11px] ${isAgent ? "text-teal-800" : "text-neutral-500"}`}
+                    >
+                      {isAgent ? "AI · " : ""}
+                      {kind}
+                    </span>
+                    <span className="ml-auto text-[10px] tabular-nums text-neutral-500">
+                      #{event.sequence}
+                    </span>
                   </header>
                   {question && (
-                    <p className="mt-2 border-l-2 pl-3 text-xs text-neutral-500">
-                      질문 #{question.sequence}: {question.publicText}
-                    </p>
+                    <a
+                      href={`#message-${question.eventId}`}
+                      aria-label={`질문 #${question.sequence} 원문 보기`}
+                      className="my-2 flex min-w-0 items-center gap-3 rounded-r-lg border-l-2 border-teal-700/30 bg-neutral-100/60 px-3 py-2 text-xs text-neutral-600 hover:bg-neutral-100 focus-visible:outline-2 focus-visible:outline-teal-700"
+                    >
+                      <span className="line-clamp-1 min-w-0 flex-1">
+                        질문 #{question.sequence}: {question.publicText}
+                      </span>
+                      <span className="shrink-0 text-[11px] text-teal-800">원문 보기</span>
+                    </a>
                   )}
                   {event.publicText && (
-                    <ChatMarkdown text={event.publicText} messageId={event.eventId} />
+                    <div
+                      className={
+                        isAgent
+                          ? "pt-1 text-neutral-800 [&>div]:mt-0 [&_h1]:mt-5 [&_h2]:mt-5 [&_h3]:mt-4 [&_p]:leading-7 [&_pre]:my-4 [&_pre]:rounded-xl [&_pre]:border [&_pre]:border-neutral-200/70 [&_pre]:bg-neutral-50"
+                          : isSystem
+                            ? "pt-1 text-neutral-600"
+                            : "mt-1 w-fit max-w-full rounded-2xl rounded-tl-sm border border-neutral-200/60 bg-neutral-100/80 px-4 py-3 text-neutral-800 [&>div]:mt-0"
+                      }
+                    >
+                      <ChatMarkdown text={event.publicText} messageId={event.eventId} />
+                    </div>
                   )}
                   {notice && (
                     <div className="mt-2 space-y-2 rounded-md border border-amber-200 bg-amber-50 p-3 text-xs text-amber-950">
@@ -134,7 +177,7 @@ export function ChatTimeline({
                   {event.kind === "QUESTION" && (
                     <div
                       aria-label={`질문 #${event.sequence} 답변 상태`}
-                      className="mt-2 space-y-2 rounded-md border bg-neutral-50 p-3"
+                      className="mt-3 space-y-2 rounded-xl border border-neutral-200/70 bg-white/80 p-3"
                     >
                       {questionStatuses.length ? (
                         questionStatuses.map((status) => (
@@ -191,7 +234,7 @@ export function ChatTimeline({
         <Button
           variant="outline"
           size="sm"
-          className="absolute bottom-3 left-1/2 -translate-x-1/2 shadow-sm"
+          className="absolute bottom-3 left-1/2 -translate-x-1/2 rounded-full border-neutral-200 bg-white text-teal-900 shadow-md"
           onClick={onLatest}
         >
           새 메시지 · 아래로 이동
@@ -273,7 +316,7 @@ export function ChatAnswerStatus({
         {status.spinning && (
           <span
             aria-hidden="true"
-            className="size-3 shrink-0 animate-spin rounded-full border-2 border-neutral-300 border-t-neutral-700 motion-reduce:animate-none"
+            className="size-3 shrink-0 animate-spin rounded-full border-2 border-teal-800/20 border-t-teal-800 motion-reduce:animate-none"
           />
         )}
         <span>{status.target}</span>

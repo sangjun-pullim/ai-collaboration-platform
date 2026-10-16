@@ -100,6 +100,30 @@ test("should render a question recipient and unknown evidence without a loading 
   assert.doesNotMatch(html, /animate-spin/);
   assert.match(html, /저장소·자료/);
 });
+test("should link an answer preview to its full original question without another disclosure", () => {
+  const question = {
+    ...page.events[0],
+    publicText: "긴 질문 첫 부분\n\n" + "상세한 질문 내용 ".repeat(80) + "원문 끝",
+  };
+  const answer = {
+    ...question,
+    eventId: "linked-answer",
+    sequence: question.sequence + 1,
+    kind: "ANSWER",
+    senderKind: "AGENT",
+    publicText: "질문에 대한 답변입니다.",
+    replyTo: question.eventId,
+  };
+  const html = timeline({ events: [question, answer], runs: [] });
+  const targetId = `message-${question.eventId}`;
+  assert.ok(html.includes(`<article id="${targetId}" tabindex="-1"`));
+  assert.ok(html.includes(`href="#${targetId}"`));
+  assert.ok(html.includes(`aria-label="질문 #${question.sequence} 원문 보기"`));
+  assert.match(html, /<p>긴 질문 첫 부분<\/p>/);
+  assert.match(html, /원문 끝<\/p>/);
+  assert.match(html, /질문에 대한 답변입니다\./);
+  assert.doesNotMatch(html, /<details/);
+});
 test("should render motion only for fresh active states and preserve known state during gaps", () => {
   const active = timeline();
   assert.match(active, /질문 접수 · AI 응답 대기/);
