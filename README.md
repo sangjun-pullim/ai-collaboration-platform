@@ -62,7 +62,7 @@ npm run dev
 
 ## 실제 로컬 로그인과 방 접근
 
-`/login`에서 회사 공용 입장 코드와 표시 이름으로 접속하고 `/app`에서 AI 채팅방 생성과 초대 참가를 사용한다. `/app/connections`의 명령 한 번 연결로 기기를 승인하고 폴더·Claude/Codex·모델·effort를 설정한다. 채팅방에서는 준비된 상대 AI에게 직접 질문하며 질문자 자신의 AI 연결은 선택 사항이다. [제품/검사 설정](docs/guides/onboarding-and-settings.md#현재-구현한-로컬-로그인과-조사방), [로컬 등록 순서](docs/guides/onboarding-and-settings.md#현재-로컬-기기와-저장소-등록), [고정 API](docs/API-SPEC.md), [DB/RLS](docs/DB-SCHEMA.md)를 따른다. 제품 서버에는 Supabase URL·publishable key·신뢰 app origin만 전달한다. 로컬 Codex 실행 명령과 남은 검증은 [실행 준비](docs/guides/onboarding-and-settings.md#로컬-codex-실행-준비)에 기록한다. Realtime·개인 설명은 후속 구현이다.
+`/login`에서 회사 공용 입장 코드와 표시 이름으로 접속하고 `/app`에서 AI 채팅방 생성과 초대 참가를 사용한다. `/app/connections`의 명령 한 번 연결로 기기를 승인하고 폴더·Claude/Codex·모델·effort를 설정한다. 채팅방에서는 준비된 상대 AI에게 직접 질문하며 질문자 자신의 AI 연결은 선택 사항이다. [제품/검사 설정](docs/guides/onboarding-and-settings.md#현재-구현한-로컬-로그인과-조사방), [로컬 등록 순서](docs/guides/onboarding-and-settings.md#현재-로컬-기기와-저장소-등록), [고정 API](docs/API-SPEC.md), [DB/RLS](docs/DB-SCHEMA.md)를 따른다. 제품 서버에는 Supabase URL·publishable key·신뢰 app origin만 전달한다. 로컬 Codex 실행 명령과 남은 검증은 [실행 준비](docs/guides/onboarding-and-settings.md#로컬-codex-실행-준비)에 기록한다. 채팅 실시간 알림은 Supabase Realtime을 사용하고, 개인 설명은 후속 범위다. 운영 반영과 검증은 개발·검증 상태 문서를 따른다.
 
 ## 로컬 런타임 실험 도구
 

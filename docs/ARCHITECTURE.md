@@ -15,7 +15,7 @@ sources:
 
 제품 범위는 [PRD](PRD.md), 실행·복구 불변식은 [비즈니스 로직](BUSINESS-LOGIC.md)이 정본이다. 확정된 중요한 결정의 이유는 [ADR](ADR.md), 미선택 기술안과 대안은 [미결 선택](planning/decisions-and-open-items.md#검토-중인-기술-선택)을 따른다.
 
-루트 Next.js 웹은 `experiments/local-ai-runtime/`의 독립 TypeScript 실험을 import하거나 실행하지 않는다. 실제 웹 route·state·검사 범위는 [FRONTEND-ARCHITECTURE](FRONTEND-ARCHITECTURE.md), 중앙 모델과 HTTP 계약은 [DB-SCHEMA](DB-SCHEMA.md)·[API-SPEC](API-SPEC.md), 공급자 실험 증거는 [로컬 AI 연결 조사](research/local-ai-connection-research.md#이번에-실제-확인한-로컬-증거)를 따른다. 그림의 Realtime와 두 PC의 실제 provider 연결은 후속 수용 범위다.
+루트 Next.js 웹은 `experiments/local-ai-runtime/`의 독립 TypeScript 실험을 import하거나 실행하지 않는다. 실제 웹 route·state·검사 범위는 [FRONTEND-ARCHITECTURE](FRONTEND-ARCHITECTURE.md), 중앙 모델과 HTTP 계약은 [DB-SCHEMA](DB-SCHEMA.md)·[API-SPEC](API-SPEC.md), 공급자 실험 증거는 [로컬 AI 연결 조사](research/local-ai-connection-research.md#이번에-실제-확인한-로컬-증거)를 따른다. 웹 채팅의 변경 알림은 Supabase Realtime을 사용한다. 두 PC의 실제 provider 수용과 운영 검증은 진행 정본을 따른다.
 
 연결 시작 설명서와 진행 관찰은 `connection-setup` 모듈이 담당한다. 짧은 조회 키는 기존 bootstrap의 검증·승인 흐름으로 이어지며 실행 권한을 대신하지 않는다. Mac의 `SetupObserver`는 설정 관리자의 실제 단계만 별도 보고하고 네트워크 실패가 설정 실행을 막지 않도록 제한한다. 실행·취소 완료의 정본은 기존 settings receipt다. [관찰 API](API-SPEC.md#연결-시작과-진행-관찰)를 따른다.
 
@@ -202,9 +202,9 @@ Claude 읽기 도구 중단은 입력·도구·control ID와 payload·취소 프
 
 `experiments/claude-code-runtime/`의 합성 실행기는 제품 연결기와 분리한다. `NativeRuntime`이 입력·예산·선택 파일·입출력·정리를 소유하고, 내부 `NativeInputProof`는 입력 하나의 신원·ACK·도구 연결·실제 응답 완료·종결 검증만 소유한다. 입력 증명은 파일·프로세스·타이머·예산을 만들지 않는다. 재개 전에는 관찰한 소유 이력과 저장된 전체 기록의 순서·개수·hash를 대조한다. 기존 transport와 잠금·저장 형식은 유지하며 합성 검사로 실제 Claude 실행 허가나 제품 등록을 만들지 않는다. 실제 실행의 제한과 검증 범위는 [실험 설명](../experiments/claude-code-runtime/README.md)과 [진행 정본](planning/delivery-and-validation.md#현재-진행-상태)을 따른다.
 
-opaque device bearer를 Supabase Realtime JWT로 사용할 수 있다고 가정하지 않는다. Realtime 인증과 사람 HttpOnly cookie의 연결은 후속 단계에서 검증하며 중앙 signing/admin key를 로컬 앱에 배포하지 않는다. 현재 등록 프로그램은 고정 HTTP API만 사용한다.
+opaque device bearer를 Supabase Realtime JWT로 사용할 수 있다고 가정하지 않는다. 웹 Realtime는 아래 사람 인증 경계를 사용하며 중앙 signing/admin key를 로컬 앱에 배포하지 않는다. 현재 등록 프로그램은 고정 HTTP API만 사용한다.
 
-현재 브라우저에도 session JWT를 읽는 경로가 없다. 후속 전달 후보는 사람 cookie/기기 bearer로 인증한 durable 조회와 서버 내부 JWT를 사용하는 제한된 Realtime 알림 중계다. 위 그림의 Realtime→웹 연결은 아직 구현하지 않았다. 변경 알림은 공개 hint만 전달하고 정본을 재조회하며, 열린 연결의 권한 취소·만료·cookie 갱신과 종료를 실제 검증한다. 공식/설치 소스 조사 범위는 [S19](research/sources.md#s19)를 따른다.
+웹은 검증된 사용자 access token을 브라우저 메모리에만 받아 Supabase private Broadcast에 연결한다. refresh token과 기존 session cookie는 HttpOnly로 유지한다. access token은 Realtime 전용 권한이 아니며 현재 사용자의 기존 RLS 권한을 갖는다. 사용자·session·방·탭별로 만료되는 구독 lease를 발급하고, 발행 때도 현재 session과 참가 권한을 재검사한다. 알림은 본문 없는 변경 힌트이며 RoomChatController가 DB 정본을 직렬 재조회한다. 구독 직후와 재연결 후 재조회하고 HTTP 보완 조회를 유지한다. AI 연결 프로그램은 기존 HTTP를 사용한다. [Realtime 계약](API-SPEC.md#채팅-실시간-알림)을 따른다.
 
 공유 binding ID는 서버의 opaque 식별자이고 공급자 native session ID·절대 경로는 로컬 매핑에 둔다. 원래 session 제목을 자동 공유하지 않고 사용자가 확인한 별칭을 쓴다.
 

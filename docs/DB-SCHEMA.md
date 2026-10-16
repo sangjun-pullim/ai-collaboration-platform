@@ -152,3 +152,10 @@ binding 교체·epoch 증가·설정 revision·`COMMITTED` receipt는 같은 DB 
 자료 쓰기는 현재 device bearer·소유 agent·epoch와 해당 attempt/fence를 확인한다. 사람 조회는 현재 회사 입장·Auth·그룹·방 membership을 다시 확인하며 observer의 읽기를 허용한다. public/anon/authenticated/service-role의 private schema·테이블·함수 직접 접근은 차단하고 고정 RPC만 노출한다. Auth·device·workspace의 물리 삭제로 과거 대상을 지우는 FK를 추가하지 않는다. 과거 요청에 snapshot이 없으면 현재 정보를 채우지 않는다.
 
 조회 주소는 `roomId/eventId`이며 다음 페이지에도 같은 대상·자료 hash·요약을 사용한다. 응답은 파일 관찰 최대 4개와 실제 외부 JSON 16KiB 안에서 구성한다. 기존 화면의 run 요약 개수와 독립적이다. 소스 정의와 실제 설치·warm upgrade·권한·동시성·브라우저 통과는 [검증 정본](planning/delivery-and-validation.md#현재-진행-상태)에서 구분한다.
+
+
+## 채팅 실시간 구독
+
+[구독 migration](../supabase/migrations/20261016002300-chat-realtime-leases.sql)의 private lease는 사용자·Auth session·방·탭과 무작위 topic을 연결한다. 최대5분이고 사용자·방·session당 활성4개까지다. 생성·갱신·해제는 현재 참가 권한과 소유 범위를 확인한다. 일반 사용자는 lease 테이블을 직접 읽거나 쓸 수 없다.
+
+Realtime 정책은 해당 lease의 Broadcast 수신만 허용하며 앱 topic의 송신·Presence를 허용하지 않는다. 구독 시 권한이 캐시되는 서비스 특성을 보완하기 위해 발행 함수가 session·사용자·참가 권한·만료를 매번 확인한다. 동일 transaction·방의 힌트는 합치고 알림 실패가 정상 채팅 저장을 롤백하지 않게 한다. 확정 기록과 순서는 기존 workflow DB 계약이 정본이다.

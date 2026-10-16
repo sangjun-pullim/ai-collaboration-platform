@@ -30,7 +30,7 @@ Git 기준과 작업트리의 사람 cookie Auth·기기 bearer·내구 조사·
 
 성공은 `{"ok":true,"data":{...}}`, 실패는 `{"ok":false,"error":{"code":"..."}}`이며 예외 원문이나 SQL 오류를 반환하지 않는다. 응답은 `private, no-store`다. 사람 응답은 Cookie/Origin, connector 성공은 Authorization을 Vary에 포함하며 framework 토큰이 함께 올 수 있다. connector는 Cookie Vary·Set-Cookie를 사용하지 않는다.
 
-인증 session은 서버가 관리하는 HttpOnly·SameSite=Lax cookie로 전달하고 HTTPS에서는 Secure를 적용한다. 브라우저 JSON에 session 원문을 반환하지 않는다. 보호 화면의 미인증 redirect는 `/login`으로 보낸다. `/app?invite=<64자리 hex>`의 유효한 초대 목적지는 `/login?invite=...`를 거쳐 복원한다. 외부 redirect를 받지 않는다. API에서는 proxy가 인증을 먼저 갱신하지 않으며 각 route가 Origin·본문·인증과 응답 쿠키를 처리한다.
+인증 session은 서버가 관리하는 HttpOnly·SameSite=Lax cookie로 전달하고 HTTPS에서는 Secure를 적용한다. 브라우저 JSON에 전체 session·refresh token을 반환하지 않는다. 예외적으로 아래 채팅 실시간 authorize 응답에 검증된 access token만 반환하며 메모리에서만 사용한다. 보호 화면의 미인증 redirect는 `/login`으로 보낸다. `/app?invite=<64자리 hex>`의 유효한 초대 목적지는 `/login?invite=...`를 거쳐 복원한다. 외부 redirect를 받지 않는다. API에서는 proxy가 인증을 먼저 갱신하지 않으며 각 route가 Origin·본문·인증과 응답 쿠키를 처리한다.
 
 ## Auth action
 
@@ -122,7 +122,7 @@ Git 기준과 작업트리의 사람 cookie Auth·기기 bearer·내구 조사·
 
 SQL018 적용 후 exchange·rotate의 expiresAt은 신규 발급 시각부터 7일이다. 기존 만료 인증을 되살리거나 RPC의 입력·권한·signature를 바꾸지 않는다. 입력 ACK와 lease의 원래 기한은 인증 기간과 별개다. 연결기가 인증 교체 경쟁을 복구할 때도 같은 본문·operation을 최대 한 번 재전달하며 새 AI 입력을 만들지 않는다. 이전 기기 연결 취소와 새 승인은 기존 사람 API를 사용한다.
 
-기존 Codex 등록과 v1 로컬 profile은 유지한다. 설정 migration의 공개 runtime은 `codex` 또는 `claude`이며 `registered/unverified` 표시는 유지한다. owned context·native session·선택 파일의 원문은 로컬 private 계약이다. 모델/effort의 웹 선택은 별도의 runtime-settings 계약으로 전달하며 실행 명령을 받지 않는다. 실제 Claude 수용·Realtime는 후속 범위다. 내구 질문·실행 보고는 별도의 workflow 계약을 사용한다. 제품의 device upstream과 CLI server는 HTTPS 또는 canonical loopback HTTP만 허용하고 redirect를 거절한다. CLI의 private state와 복구 순서는 [온보딩](guides/onboarding-and-settings.md#현재-로컬-기기와-저장소-등록)을 따른다.
+기존 Codex 등록과 v1 로컬 profile은 유지한다. 설정 migration의 공개 runtime은 `codex` 또는 `claude`이며 `registered/unverified` 표시는 유지한다. owned context·native session·선택 파일의 원문은 로컬 private 계약이다. 모델/effort의 웹 선택은 별도의 runtime-settings 계약으로 전달하며 실행 명령을 받지 않는다. 실제 Claude 수용은 검증 정본을, 웹 Realtime는 아래 채팅 실시간 계약을 따른다. 내구 질문·실행 보고는 별도의 workflow 계약을 사용한다. 제품의 device upstream과 CLI server는 HTTPS 또는 canonical loopback HTTP만 허용하고 redirect를 거절한다. CLI의 private state와 복구 순서는 [온보딩](guides/onboarding-and-settings.md#현재-로컬-기기와-저장소-등록)을 따른다.
 
 
 ## 현재 저장소의 Git 보고
@@ -181,3 +181,12 @@ PC가 확인한 capability는 provider·설치 버전·모델·허용 effort·�
 `source-read`는 `roomId/eventId`에 고정한 당시 대상과 `NO_TARGET_SNAPSHOT`, `NO_SOURCE`, `CONFIRMED`를 반환한다. 확정 응답의 `manifestHash`·`summary`와 페이지별 파일 관찰은 같은 자료다. 파일은 순서대로 최대 4개이며 16KiB에 맞추면 더 적을 수 있다. `nextIndex`는 마지막 반환 index이며 마지막 페이지는 null이다. 자료 없음이나 조회 실패에서 현재 binding·최신 실행을 과거 대상으로 대신 사용하지 않는다. 공동 AI 질문은 event의 발신 request와 별도로 예약한 수신 대상을 사용한다.
 
 `INPUT`은 입력 전 허용 파일, `REPOSITORY`는 도구가 반환한 발췌, `PEER`는 상대 질문 전에 검증한 근거다. 반복 파일의 서로 다른 발췌를 보존한다. 결과 hash와 question operation ID는 보고된 자료이며 실제 모델 사용·인용·상대 수락·전달 완료·검증 통과를 뜻하지 않는다. 현재 접근 거절과 일시적 조회 오류를 구분하며 과거 자료의 직접 조회 권한은 부여하지 않는다. 실제 설치·HTTP·브라우저 검증은 [검증 정본](planning/delivery-and-validation.md#현재-진행-상태)을 따른다.
+
+
+## 채팅 실시간 알림
+
+`POST /api/chat-realtime/authorize`와 `release`는 기존 동일 Origin·JSON·16KiB·HttpOnly 인증을 적용한다. authorize는 `protocol`, `roomId`, `expectedUserId`, 탭별 `clientId`와 선택적 `leaseId`를 받고 release는 `leaseId`도 필수다. 서버가 실제 사용자와 session을 확인하며 갱신·해제는 사용자·session·방·client·lease 전체를 대조한다. 같은 client의 응답 유실 재조회는 활성 lease를 재사용한다.
+
+허가 응답에는 불투명 private topic, lease 만료, Supabase 공개 URL/key와 사용자 access token·만료가 있다. 전체 session이나 refresh token은 없다. access token은 Realtime 전용 권한이 아니며 기존 사용자 권한을 가진다. 브라우저는 메모리에서만 사용하고 storage·URL·로그에 넣지 않는다. `CHAT_REALTIME_ENABLED=false`는 실시간 허가를 끄며 기존 HTTP 조회는 유지한다.
+
+알림 payload는 `{version:1}`뿐이다. 확정 이벤트·정리·유효한 준비 변경을 알리고 단순 heartbeat는 제외한다. 알림을 정본으로 채택하지 않고 두 cursor 기반 read-recovery로 복구한다. 새 웹의 read-recovery는 `expectedUserId`를 보내며 서버가 실제 Auth와 대조한 뒤 기존 RPC에 전달할 때 제거한다. 구형 읽기 계약은 호환한다.
