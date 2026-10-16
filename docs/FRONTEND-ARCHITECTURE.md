@@ -31,7 +31,7 @@ sources:
 
 `RequestRetirementControls`는 대상 소유자의 **이전 요청 정리** 안내와 확인창을 담당한다. 확인은 사용자·방·request/cycle/attempt/fence·agent/epoch·revision에 고정한다. 해제되지 않은 원래 기기는 연결 관리로 안내한다. 정확한 receipt를 확인하면 현재 카드를 제외하고 질문의 과거 상세에 **답변 미확인 · 이전 기록**을 남긴다. 새 질문은 receipt revision 이상인 최신 회복 조회와 서버의 hasBlockingRuns를 확인한 뒤 허용한다. 조회 실패·늦은 snapshot·계정/방 전환이 이 조건을 우회하지 않는다.
 
-controller는 기존 순차 조회에서 read-recovery를 사용하고 이벤트·정리 커서를 각각 누적한다. 최근32개 run 밖의 정리도 독립 페이지로 수신한다. retire 의도는 사용자/방별 sessionStorage에 정확히 저장하며 응답 유실 시 **같은 요청 확인**만 제공한다. 기존 read/events·로컬 CLI와 현재 polling 주기는 유지한다.
+controller는 기존 순차 조회에서 read-recovery를 사용하고 이벤트·정리 커서를 각각 누적한다. 최근32개 run 밖의 정리도 독립 페이지로 수신한다. retire 의도는 사용자/방별 sessionStorage에 정확히 저장하며 응답 유실 시 **같은 요청 확인**만 제공한다. 기존 read/events·로컬 CLI 계약은 유지한다. 화면은 WebSocket 대신 HTTP polling으로 새 기록을 조회한다. 전경에서 검증한 이벤트 또는 정리 커서가 전진했고 남은 페이지가 있으면 다음 페이지를 대기 없이 순차 조회한다. 커서가 전진하지 않으면 즉시 반복하지 않는다. 기록을 모두 읽은 뒤 실행 중에는2초, 대기 중에는10초, 숨긴 탭에서는30초 간격이며 오류에는 기존 지연 재시도를 적용한다. 방을 나가면 진행 중 조회를 중단하고 접근 거절 시 누적 기록을 비운다.
 
 시스템의 `HUMAN_INPUT_REQUIRED` 기록은 정확한 원인 코드가 없어 이를 만들어 내지 않는다. `humanInputNotice`가 같은 조사와 해당 sequence까지의 근거로 당시 상태를 안내한다. 현재 상태나 다른 조사로 과거 원인을 덮어쓰지 않는다. 소유자가 확인할 Mac 터미널·실행 기록과 본인 연결 관리 위치를 안내하며 과거 기록을 새 질문의 현재 차단으로 표시하지 않는다. 사용 절차는 [AI 답변 상태와 확인 방법](guides/onboarding-and-settings.md#ai-답변-상태와-확인-방법)을 따른다.
 
