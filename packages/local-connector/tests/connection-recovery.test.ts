@@ -206,6 +206,7 @@ async function unappliedSetup(
   f: Awaited<ReturnType<typeof fixture>>,
   apply = true,
   prepareAt?: "intent" | "context" | "commit",
+  discoveryFailure = false,
 ) {
   await unlink(f.runtime.file);
   const owner = (await f.previous.read())!;
@@ -248,7 +249,7 @@ async function unappliedSetup(
       return Response.json({ ok: false, error: { code: "UNAUTHENTICATED" } }, { status: 401 });
     if (action === "receipt") {
       const receipt = JSON.parse(String(init?.body)) as Receipt;
-      assert.equal(receipt.state, "LOCAL_CONFIRMATION");
+      assert.equal(receipt.state, discoveryFailure ? "FAILED" : "LOCAL_CONFIRMATION");
       response = {
         ...response,
         catalog: receipt.catalog,
@@ -273,6 +274,7 @@ async function unappliedSetup(
       capabilities: async (root, check) => {
         check();
         catalogs++;
+        if (discoveryFailure) throw new RuntimeError("PROVIDER_UNAVAILABLE");
         await reserve(root, capabilities.version, digest("verified-policy-fixture"));
         if (catalogs === 2 && !prepareAt) {
           // The second metadata lookup outcome never reached durable settings.
@@ -305,7 +307,10 @@ async function unappliedSetup(
     }),
     runner: () => assert.fail("initial setup must not start a runner"),
   });
-  assert.equal((await manager.run({ once: true })).state, "LOCAL_CONFIRMATION");
+  assert.equal(
+    (await manager.run({ once: true })).state,
+    discoveryFailure ? "FAILED" : "LOCAL_CONFIRMATION",
+  );
   const confirmed = (await settings.read())!.journal!;
   if (apply)
     response.operation = {
@@ -327,14 +332,14 @@ async function unappliedSetup(
   owner.status = "disconnected";
   await f.previous.write(owner);
   const state = (await settings.read())!;
-  assert.equal(state.journal!.receipt!.state, "LOCAL_CONFIRMATION");
+  assert.equal(state.journal!.receipt!.state, discoveryFailure ? "FAILED" : "LOCAL_CONFIRMATION");
   assert.equal(!!state.journal!.applyBody, apply);
   if (!prepareAt) {
     assert.equal(state.journal!.settings, null);
     assert.equal(state.journal!.context, null);
   }
   assert.equal(f.adapter.prepares, 0);
-  return { settings, state, requests, catalogs: () => catalogs };
+  return { settings, state, initialJournal: confirmed, requests, catalogs: () => catalogs };
 }
 
 for (const apply of [true, false])
@@ -364,6 +369,84 @@ for (const apply of [true, false])
       assert.deepEqual(await Promise.all(files.map((file) => readFile(file))), before);
       assert.deepEqual(c.requests, requests);
       assert.equal(c.catalogs(), catalogs);
+    } finally {
+      await f.close();
+    }
+  });
+
+for (const phase of ["FAILED", "UNKNOWN"] as const)
+  test(`should preserve failed discovery in ${phase} and complete fresh approval`, async () => {
+    const f = await fixture();
+    try {
+      const c = await unappliedSetup(f, false, undefined, true);
+      assert.equal(c.state.journal!.phase, "UNKNOWN");
+      if (phase === "FAILED")
+        await writeFile(
+          c.settings.file,
+          JSON.stringify({ ...c.state, journal: c.initialJournal }),
+          { mode: 0o600 },
+        );
+      assert.equal((await c.settings.read())!.journal!.phase, phase);
+      assert.equal(c.state.journal!.receipt!.state, "FAILED");
+      assert.equal(c.state.journal!.catalogContext, undefined);
+      assert.equal(c.state.journal!.context, null);
+      assert.equal(c.state.journal!.settings, null);
+      const files = [f.previous.file, c.settings.file];
+      const before = await Promise.all(files.map((file) => readFile(file)));
+      const requests = [...c.requests];
+      await f.run();
+      assert.deepEqual(f.calls, ["begin", "pairing-status", "exchange"]);
+      assert.deepEqual(await Promise.all(files.map((file) => readFile(file))), before);
+      assert.deepEqual(c.requests, requests);
+      assert.equal(c.catalogs(), 1);
+      assert.equal(f.adapter.prepares, 0);
+      assert.equal(f.adapter.starts, 0);
+      await f.run();
+      assert.deepEqual(f.calls, ["begin", "pairing-status", "exchange", "bindings"]);
+      assert.deepEqual(await Promise.all(files.map((file) => readFile(file))), before);
+    } finally {
+      await f.close();
+    }
+  });
+
+for (const fault of [
+  "declined",
+  "live-owner",
+  "live-lock",
+  "scope",
+  "generation",
+  "legacy-record",
+  "ordinary-removal",
+] as const)
+  test(`should preserve failed discovery protection for ${fault}`, async () => {
+    const f = await fixture();
+    try {
+      const c = await unappliedSetup(f, false, undefined, true);
+      if (fault === "declined") f.interaction.confirmPreviousRevoked = async () => false;
+      if (fault === "live-owner" || fault === "scope") {
+        const owner = (await f.previous.read())!;
+        if (fault === "live-owner") owner.status = "connected";
+        else owner.scope!.roomId = uuid();
+        await f.previous.write(owner);
+      }
+      if (fault === "generation")
+        await mkdir(join(c.settings.dir, "generations", c.state.journal!.generation), {
+          recursive: true,
+          mode: 0o700,
+        });
+      if (fault === "legacy-record") await f.runtime.write(f.record);
+      const files = [f.previous.file, c.settings.file];
+      const before = await Promise.all(files.map((file) => readFile(file)));
+      const run =
+        fault === "live-lock"
+          ? () => c.settings.locked(() => f.run())
+          : fault === "ordinary-removal"
+            ? () => c.settings.locked(() => revokeConfiguredProfile(f.previous, c.settings))
+            : () => f.run();
+      await assert.rejects(run());
+      assert.equal(await f.next.read(), undefined);
+      assert.deepEqual(f.calls, []);
+      assert.deepEqual(await Promise.all(files.map((file) => readFile(file))), before);
     } finally {
       await f.close();
     }

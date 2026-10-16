@@ -191,7 +191,8 @@ export async function withConfiguredProfileProtection<T>(
   return guard(0);
 }
 
-/** SettingsManager persists settings before calling prepare, even if no runtime is created.
+/** Initial discovery can fail before confirmation, then become UNKNOWN after auth loss.
+ * SettingsManager persists settings before calling prepare, even if no runtime is created.
  * A metadata reservation alone proves neither catalog completion nor process termination.
  * SettingsStore.read has already validated journal, receipt, root and catalog ownership.
  */
@@ -199,8 +200,12 @@ function isUnappliedInitialSetup(state: SettingsState, owner: ConnectorState) {
   const journal = state.journal;
   if (
     !journal ||
-    journal.phase !== "UNKNOWN" ||
-    journal.receipt?.state !== "LOCAL_CONFIRMATION" ||
+    !(
+      journal.phase === "UNKNOWN" ||
+      (journal.phase === "FAILED" && journal.receipt?.state === "FAILED")
+    ) ||
+    !journal.receipt ||
+    !["LOCAL_CONFIRMATION", "FAILED"].includes(journal.receipt.state) ||
     journal.operation.expectedConfigRevision !== 0 ||
     journal.receipt.configRevision !== 0 ||
     journal.receipt.runtime !== journal.operation.requested.runtime ||
@@ -208,7 +213,8 @@ function isUnappliedInitialSetup(state: SettingsState, owner: ConnectorState) {
     journal.receipt.workspaceId !== null ||
     journal.receipt.bindingEpoch !== null ||
     (journal.operation.receipt &&
-      (journal.operation.receipt.state !== "LOCAL_CONFIRMATION" ||
+      (!["LOCAL_CONFIRMATION", "FAILED"].includes(journal.operation.receipt.state) ||
+        journal.operation.receipt.configRevision !== 0 ||
         journal.operation.receipt.agentId !== null ||
         journal.operation.receipt.workspaceId !== null ||
         journal.operation.receipt.bindingEpoch !== null)) ||
