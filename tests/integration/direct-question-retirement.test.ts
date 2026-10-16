@@ -668,11 +668,17 @@ test(
         const page = await desktop.newPage();
         const roomURL = f.stack.config.app + "/app/rooms/" + s.scope.roomId;
         await page.goto(roomURL);
+        await page
+          .getByRole("region", { name: "AI 답변 상태", exact: true })
+          .getByRole("button", { name: "상세", exact: true })
+          .click();
         await expect(
           page.getByRole("button", { name: "이전 요청 정리", exact: true }),
         ).toBeEnabled();
         await page.getByRole("button", { name: "이전 요청 정리", exact: true }).click();
-        await expect(page.getByRole("dialog")).toBeVisible();
+        await expect(
+          page.getByRole("dialog", { name: "이전 요청 정리", exact: true }),
+        ).toBeVisible();
         await page.getByRole("button", { name: "취소", exact: true }).click();
         assert.equal((await recovery(f, s)).recovery.retirements.length, 1);
         await desktop.close();
@@ -696,6 +702,10 @@ test(
         );
         const mobilePage = await mobile.newPage();
         await mobilePage.goto(roomURL);
+        await mobilePage
+          .getByRole("region", { name: "AI 답변 상태", exact: true })
+          .getByRole("button", { name: "상세", exact: true })
+          .click();
         await expect(
           mobilePage.getByRole("button", { name: "이전 요청 정리", exact: true }),
         ).toBeEnabled();

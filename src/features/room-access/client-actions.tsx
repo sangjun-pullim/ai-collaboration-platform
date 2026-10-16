@@ -1,4 +1,5 @@
 "use client";
+import { clearChatSession } from "../investigation-coordinator/chat-session-cleanup";
 import { useRouter } from "next/navigation";
 import { useEffect, useRef, useState } from "react";
 import { messages, type AccessErrorCode } from "./contracts";
@@ -67,6 +68,7 @@ export function LogoutButton() {
         disabled={busy}
         onClick={async () => {
           if (await send("/api/auth/logout", {})) {
+            await clearChatSession();
             router.replace("/login");
             router.refresh();
           }

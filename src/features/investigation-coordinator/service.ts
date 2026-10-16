@@ -29,14 +29,17 @@ export async function humanWorkflow(client: SupabaseClient, action: HumanAction,
   if (error || !user)
     throw new WorkflowError(retryableAuthFailure(error) ? "UNAVAILABLE" : "UNAUTHENTICATED");
   if (
-    action === "input-control" &&
+    (action === "input-control" ||
+      (action === "read-recovery" && Object.hasOwn(body, "expectedUserId"))) &&
     (typeof body.expectedUserId !== "string" ||
       body.expectedUserId.toLowerCase() !== user.id.toLowerCase())
   )
     throw new WorkflowError("FORBIDDEN");
+  const rpcBody = action === "read-recovery" ? { ...body } : body;
+  if (action === "read-recovery") delete rpcBody.expectedUserId;
   return projectRpcResponse(
     action,
-    await rpc(client, `workflow_human_${action.replaceAll("-", "_")}`, { p_body: body }),
+    await rpc(client, `workflow_human_${action.replaceAll("-", "_")}`, { p_body: rpcBody }),
   );
 }
 export async function deviceWorkflow(action: DeviceAction, body: Body, secret: string) {

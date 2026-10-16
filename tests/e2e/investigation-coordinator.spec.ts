@@ -1,5 +1,14 @@
 import { test, expect, type Browser, type Page, type TestInfo } from "@playwright/test";
 import { installAuthArtifactPolicy } from "../helpers/auth-browser-artifact-policy.js";
+async function openAnswerDetails(page: Page) {
+  const dialog = page.getByRole("dialog", { name: "AI 답변 상태 상세", exact: true });
+  if (!(await dialog.isVisible()))
+    await page
+      .getByRole("region", { name: "AI 답변 상태", exact: true })
+      .getByRole("button", { name: "상세", exact: true })
+      .click();
+  return dialog;
+}
 async function revealRoomActions(page: Page) {
   const summary = page.getByLabel("채팅방 기능 열기", { exact: true });
   if (await summary.isVisible()) {
@@ -146,8 +155,10 @@ test("should distinguish reported execution unknown and confirmed pause in the b
     );
     const answerStatus = region.getByRole("region", { name: "AI 답변 상태", exact: true });
     await expect(answerStatus).toBeVisible();
-    await expect(answerStatus).toContainText("공개 세션");
-    await expect(answerStatus).toContainText("로컬 실행 시작");
+    const details = await openAnswerDetails(page);
+    await expect(details).toContainText("공개 세션");
+    await expect(details).toContainText("로컬 실행 시작");
+    await page.keyboard.press("Escape");
     await page.getByRole("button", { name: "공동 조사", exact: true }).click();
     const advanced = page.getByRole("dialog", { name: "공동 조사", exact: true });
     const pause = advanced.getByRole("button", { name: "방 일시정지 요청", exact: true });
@@ -165,16 +176,19 @@ test("should distinguish reported execution unknown and confirmed pause in the b
     await expect(answerStatus.getByText("중단 확인", { exact: true })).toHaveCount(0);
     await broker("drive", { scene, step: "unknown" });
     await expect(region.getByRole("region", { name: "AI 답변 상태", exact: true })).toContainText(
-      "실행 결과 확인 필요",
+      "중단 수신 확인 · 종료 확인 대기",
       { timeout: 45000 },
     );
-    await expect(answerStatus).toContainText("성공이나 중단이 확인되지");
-    await expect(answerStatus).toContainText("내 Mac의 기존 AI 연결 터미널");
-    await expect(answerStatus.getByRole("link", { name: "내 AI 연결 관리" })).toHaveAttribute(
+    await openAnswerDetails(page);
+    await expect(details).toContainText("실행 결과가 확인되지 않았습니다.");
+    await expect(details).toContainText("성공이나 중단이 확인되지");
+    await expect(details).toContainText("내 Mac의 기존 AI 연결 터미널");
+    await expect(details.getByRole("link", { name: "내 AI 연결 관리" })).toHaveAttribute(
       "href",
       "/app/connections",
     );
-    await expect(answerStatus.locator(".animate-spin")).toHaveCount(0);
+    await expect(details.locator(".animate-spin")).toHaveCount(0);
+    await page.keyboard.press("Escape");
     await page.getByRole("button", { name: "공동 조사", exact: true }).click();
     const resume = advanced.getByRole("button", { name: "방 발언·조사 접수 재개", exact: true });
     await expect(resume).toBeDisabled();
@@ -405,22 +419,31 @@ test("should show a direct question form without an own AI connection", async ({
         await region.getByRole("button", { name: "새 메시지 · 아래로 이동", exact: true }).click();
       }
       await questionRecord.getByRole("button", { name: "저장소·자료", exact: true }).click();
-      const questionSources = questionRecord.getByRole("region", { name: "당시 저장소·자료" });
+      const questionSources = page.getByRole("dialog", { name: "당시 저장소·자료", exact: true });
       await expect(questionSources).toContainText("당시 공유 저장소:");
-      await expect(questionRecord).toContainText(
+      await expect(questionSources).toContainText(
         "당시 대상은 저장되어 있으나 파일 관찰 자료는 없습니다.",
       );
-      await questionRecord.getByRole("button", { name: "저장소·자료 닫기", exact: true }).click();
+      await page.keyboard.press("Escape");
       if (variant === "single") {
         process.stdout.write("010_DIRECT_STAGE RECOVERY_VISIBLE_BEFORE\n");
+        await openAnswerDetails(page);
         await expect(
-          region.getByRole("button", { name: "같은 요청 확인", exact: true }),
+          page
+            .getByRole("dialog", { name: "AI 답변 상태 상세", exact: true })
+            .getByRole("button", { name: "같은 요청 확인", exact: true }),
         ).toBeVisible();
         await page.reload();
         process.stdout.write("010_DIRECT_STAGE RECOVERY_REPLAY_BEFORE\n");
-        await region.getByRole("button", { name: "같은 요청 확인", exact: true }).click();
+        await openAnswerDetails(page);
+        await page
+          .getByRole("dialog", { name: "AI 답변 상태 상세", exact: true })
+          .getByRole("button", { name: "같은 요청 확인", exact: true })
+          .click();
         await expect(
-          region.getByRole("button", { name: "같은 요청 확인", exact: true }),
+          page
+            .getByRole("dialog", { name: "AI 답변 상태 상세", exact: true })
+            .getByRole("button", { name: "같은 요청 확인", exact: true }),
         ).toHaveCount(0);
         check(bodies.length === 2 && JSON.stringify(bodies[0]) === JSON.stringify(bodies[1]));
         process.stdout.write("010_DIRECT_STAGE RECOVERY_REPLAY_AFTER\n");
@@ -463,13 +486,20 @@ test("should show a direct question form without an own AI connection", async ({
         for (const status of [visibleStatus, observedStatus]) {
           await expect(status).toBeVisible();
           await expect(status).toContainText("답변 생성 중", pollingWait);
-          await expect(status).toContainText("공개 세션");
-          await expect(status).toContainText("한국어 키보드 직접 질문 😀");
+          const statusPage = status === visibleStatus ? page : observer;
+          const details = await openAnswerDetails(statusPage);
+          await expect(details).toContainText("공개 세션");
+          await expect(details).toContainText("한국어 키보드 직접 질문 😀");
+          await statusPage.keyboard.press("Escape");
         }
         process.stdout.write("010_DIRECT_STAGE CANCEL_BEFORE\n");
-        const stop = region.getByRole("button", { name: "이 직접 질문 중단 요청", exact: true });
+        const stop = (await openAnswerDetails(page)).getByRole("button", {
+          name: "이 직접 질문 중단 요청",
+          exact: true,
+        });
         await stop.focus();
         await page.keyboard.press("Enter");
+        await page.keyboard.press("Escape");
         await expect(
           page
             .getByRole("status", { name: "방 상태", exact: true })
@@ -478,11 +508,17 @@ test("should show a direct question form without an own AI connection", async ({
         const requiredRecord = region
           .getByLabel("확정 공동 이력")
           .getByRole("listitem")
-          .filter({ hasText: "정확한 사유는 기록되지 않았습니다." })
+          .filter({ hasText: "당시 실행 상태" })
           .last();
         await expect(requiredRecord).toContainText("시스템");
-        await expect(requiredRecord).toContainText("같은 질문의 현재 답변 상태");
-        await expect(requiredRecord).toContainText("대상 AI 소유자에게 Mac의 기존 AI 연결 터미널");
+        await requiredRecord.getByRole("button", { name: "안내 상세", exact: true }).click();
+        const noticeDetails = page.getByRole("dialog", {
+          name: "사람 확인 필요 상세",
+          exact: true,
+        });
+        await expect(noticeDetails).toContainText("같은 질문의 현재 답변 상태");
+        await expect(noticeDetails).toContainText("대상 AI 소유자에게 Mac의 기존 AI 연결 터미널");
+        await page.keyboard.press("Escape");
         process.stdout.write("010_DIRECT_STAGE CANCEL_ACK_BEFORE\n");
         await broker("direct-drive", { scene, step: "ack" });
         await expect(
@@ -556,9 +592,13 @@ test("should isolate unresolved direct intents across authenticated users", asyn
       const form = region.getByRole("form", { name: "AI에게 질문" });
       await form.getByLabel("AI에게 보낼 질문", { exact: true }).fill("계정 전환의 확정된 첫 질문");
       await form.getByRole("button", { name: "AI에 질문 보내기", exact: true }).click();
+      await openAnswerDetails(page);
       await expect(
-        region.getByRole("button", { name: "같은 요청 확인", exact: true }),
+        page
+          .getByRole("dialog", { name: "AI 답변 상태 상세", exact: true })
+          .getByRole("button", { name: "같은 요청 확인", exact: true }),
       ).toBeVisible();
+      await page.keyboard.press("Escape");
       await broker("direct-drive", { scene, step: "answer" });
       await expect(region.getByLabel("확정 공동 이력")).toContainText("답변 완료", {
         timeout: 45_000,
@@ -580,7 +620,9 @@ test("should isolate unresolved direct intents across authenticated users", asyn
         );
         await expect(region.getByLabel("확정 공동 이력")).toContainText("답변 완료");
         await expect(
-          region.getByRole("button", { name: "같은 요청 확인", exact: true }),
+          page
+            .getByRole("dialog", { name: "AI 답변 상태 상세", exact: true })
+            .getByRole("button", { name: "같은 요청 확인", exact: true }),
         ).toHaveCount(0);
         check(transmissions === 1);
       } else {
@@ -601,7 +643,11 @@ test("should isolate unresolved direct intents across authenticated users", asyn
           await replacement.close();
         }
         await page.bringToFront();
-        await region.getByRole("button", { name: "같은 요청 확인", exact: true }).click();
+        await openAnswerDetails(page);
+        await page
+          .getByRole("dialog", { name: "AI 답변 상태 상세", exact: true })
+          .getByRole("button", { name: "같은 요청 확인", exact: true })
+          .click();
         await expect(region.getByRole("alert", { name: "조사 오류", exact: true })).toBeVisible({
           timeout: 45_000,
         });
@@ -750,7 +796,12 @@ test("should retain saved direct identity through completed replacement and deta
         storedTarget.bindingEpoch > 0,
     );
     const epoch = storedTarget.bindingEpoch;
-    await expect(question).toContainText("당시 대상은 저장되어 있으나 파일 관찰 자료는 없습니다.");
+    const sourceDialog = page.getByRole("dialog", { name: "당시 저장소·자료", exact: true });
+    await expect(sourceDialog).toContainText(
+      "당시 대상은 저장되어 있으나 파일 관찰 자료는 없습니다.",
+    );
+    await page.keyboard.press("Escape");
+    await expect(sourceDialog).toHaveCount(0);
 
     const draft = "답변을 읽으며 쓰는 다음 질문";
     await input.fill(draft);
@@ -807,14 +858,16 @@ test("should retain saved direct identity through completed replacement and deta
               source.data.target.bindingEpoch === epoch,
           );
         }
-        await expect(record).toContainText(storedTarget.ownerAlias);
-        await expect(record).toContainText(storedTarget.repositoryAlias);
-        await expect(record).toContainText(storedTarget.sessionAlias);
-        await expect(record).toContainText("현재 같은 연결 없음");
-        await expect(record).toContainText(
+        await expect(sourceDialog).toContainText(storedTarget.ownerAlias);
+        await expect(sourceDialog).toContainText(storedTarget.repositoryAlias);
+        await expect(sourceDialog).toContainText(storedTarget.sessionAlias);
+        await expect(sourceDialog).toContainText("현재 같은 연결 없음");
+        await expect(sourceDialog).toContainText(
           "당시 대상은 저장되어 있으나 파일 관찰 자료는 없습니다.",
         );
-        await expect(record).not.toContainText("완료 뒤 새 저장소");
+        await expect(sourceDialog).not.toContainText("완료 뒤 새 저장소");
+        await page.keyboard.press("Escape");
+        await expect(sourceDialog).toHaveCount(0);
       }
       await expect(
         list.getByRole("listitem").filter({ has: page.getByText("AI · 답변", { exact: true }) }),

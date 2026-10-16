@@ -130,9 +130,19 @@ async function harness(
       const index = refIndex++;
       return refs[index] ?? (refs[index] = { current });
     },
-    useMemo(create: () => unknown) {
+    memo: (component: unknown) => component,
+    useMemo(create: () => unknown, deps: unknown[]) {
       const index = memoIndex++;
-      return memos[index] ?? (memos[index] = create());
+      const previous = memos[index] as { deps: unknown[]; value: unknown } | undefined;
+      if (
+        previous &&
+        deps.length === previous.deps.length &&
+        deps.every((value, i) => Object.is(value, previous.deps[i]))
+      )
+        return previous.value;
+      const value = create();
+      memos[index] = { deps, value };
+      return value;
     },
     useSyncExternalStore(_subscribe: unknown, getSnapshot: () => unknown) {
       return getSnapshot();
@@ -162,6 +172,52 @@ async function harness(
     require(name: string): unknown {
       if (name === "react/jsx-runtime") return { jsx, jsxs: jsx };
       if (name === "react") return react;
+      if (name === "./room-realtime")
+        return {
+          RoomRealtime: class {
+            start() {}
+            stop() {}
+          },
+        };
+      if (name === "./chat-session-cleanup") return { chatSessionEvent: "chat-session-cleared" };
+      if (name === "./chat-outbox.ts" || name === "./chat-outbox")
+        return {
+          speechOutbox: null,
+          outboxCleanupKey: "chat-outbox-cleanup-required",
+          announceOutbox() {},
+        };
+      if (name === "./chat-history-cache.ts")
+        return { clearChatHistory() {}, cacheChatHistory() {}, cachedChatHistory: () => null };
+      if (name === "./use-virtual-history")
+        return {
+          useVirtualHistory: (ids: string[]) => ({
+            virtualizer: { getTotalSize: () => ids.length * 220, measureElement() {} },
+            items: ids.map((id, index) => ({ key: id, index, start: index * 220 })),
+            jump: () => true,
+          }),
+        };
+      if (name === "./chat-answer-status-panel")
+        return {
+          ChatAnswerStatusPanel: (props: {
+            statuses: presentation.AnswerStatus[];
+            children: unknown;
+          }) =>
+            jsx("section", {
+              "aria-label": "AI 답변 상태",
+              children: [
+                props.statuses.map((status) =>
+                  jsx(
+                    load(
+                      "./chat-timeline",
+                      "src/features/investigation-coordinator/chat-timeline.tsx",
+                    ).ChatAnswerStatus,
+                    { status },
+                  ),
+                ),
+                props.children,
+              ],
+            }),
+        };
       if (["./contracts", "./contracts.ts"].includes(name)) return contracts;
       if (["./direct-intents", "./direct-intents.ts"].includes(name)) return intents;
       if (["./history-state", "./history-state.ts"].includes(name))
@@ -220,7 +276,11 @@ async function harness(
         return {
           RoomChatController: class extends Original {
             constructor(...args: ConstructorParameters<typeof RoomChatController>) {
-              super(...args);
+              super(args[0], args[1], {
+                storage: () => context.sessionStorage as unknown as Storage,
+                hidden: () => documentEvents.hidden,
+                now: Date.now,
+              });
               rememberController(this);
             }
           },
@@ -251,6 +311,7 @@ async function harness(
           Dialog: (props: Record<string, unknown>) =>
             jsx("dialog", { ...props, children: props.open ? props.children : null }),
           DialogContent: "dialog-content",
+          DialogTrigger: "dialog-trigger",
           DialogTitle: "h2",
           DialogDescription: "p",
         };
@@ -839,20 +900,21 @@ test("should keep exact request confirmation available without a current answer 
   assert.equal(labeled(h.render(), "AI 답변 상태"), undefined);
 });
 
-test("should calculate status once per room render and pass the same result to the timeline", async (t) => {
+test("should reuse status on unchanged room renders and pass the same result to the timeline", async (t) => {
   const h = await harness(t);
   const page = fixture.history as contracts.HistoryPage;
   await h.snapshot({ ...page, runs: [{ ...page.runs[0], state: "RUNNING" }] });
+  h.render();
   const before = h.projectionCalls();
   const tree = h.render();
-  assert.equal(h.projectionCalls(), before + 1);
+  assert.equal(h.projectionCalls(), before);
   const shared = find(tree, "timeline")!.props.presentation as ReturnType<
     typeof presentation.answerStatuses
   >;
   assert.equal(shared.statuses[0].label, "답변 생성 중");
   assert.equal(shared.byQuestion.get(page.events[0].eventId)?.[0], shared.statuses[0]);
   assert.match(visibleText(labeled(tree, "AI 답변 상태")), /답변 생성 중/);
-  assert.equal(h.projectionCalls(), before + 1);
+  assert.equal(h.projectionCalls(), before);
 });
 
 const retirementPage = (): contracts.RecoveryHistoryPage => ({
