@@ -4365,10 +4365,14 @@ for (const controlCase of [
           f.adapter.terminal = "INTERRUPTED";
         } catch {
           // Best-effort shutdown cannot provide an adopted typed terminal.
+          providerRelease.resolve();
         }
-        providerRelease.resolve();
         return true;
       });
+      f.faults.after = async (action) => {
+        // Exercise acknowledged cancellation before allowing terminal publication.
+        if (action === "interrupt-ack") providerRelease.resolve();
+      };
       try {
         const request = f.queue("PEER");
         f.adapter.executeHook = async () => {
