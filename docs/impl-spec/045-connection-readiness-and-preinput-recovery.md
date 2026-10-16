@@ -98,6 +98,8 @@ risk-surface: permission, public-api, db-schema
 
 필수 전체 연결기 테스트 build에는 변경 전부터 있던 `claude-native-runtime-cache.test.ts:251`의 TS2769가 남아 있다. 운영·배포 연결기 build와 변경 관련 검사는 통과했으나 전체 검사 완료로 표시하지 않는다. 기존 중단 ACK 경합 테스트의 기준 코드 재현과 검증 수치는 delivery-and-validation에 기록한다.
 
+구현·독립 리뷰·변경 관련 브라우저/DB 검증과 승인된 main 병합·운영 배포는 완료했다. 운영 배포와 공개 검증 결과는 [진행 기록](../planning/delivery-and-validation.md#2026-10-16-연결-확인-피드백입력-전-실패-복구)을 따른다. 기존 필수 검사 실패 때문에 이 단계와 계획 전체 완료 표시는 보류한다.
+
 - 아래 검사와 독립 리뷰를 완료한다. 승인된 병합·배포 범위에서 GitHub Flow를 따른다.
 - 코드 반영 후 ARCHITECTURE, BUSINESS-LOGIC, DB-SCHEMA, API-SPEC, FRONTEND-ARCHITECTURE, BUG-FIXES의 관련 절과 onboarding 안내를 갱신한다. 상태·검증 수치는 delivery-and-validation 한 곳에 둔다.
 - DB를 먼저 호환 추가하고 웹·연결기를 배포한다. 기존 클라이언트의 action은 유지한다. 롤백은 새 action 호출을 중단하며 이미 저장된 증거와 영수증은 삭제하지 않는다.
