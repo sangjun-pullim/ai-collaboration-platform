@@ -82,6 +82,8 @@ Git 기준과 작업트리의 사람 cookie Auth·기기 bearer·내구 조사·
 
 `ask`는 같은 방의 준비된 대상 하나에 질문한다. 대상은 본인 또는 다른 소유자의 AI다. 동료 AI에 질문할 때 질문자 AI·기기·경로는 필요 없다. 본문은 `protocol:1`, `roomId`, `operationId`, `expectedUserId`, `targetAgentId`, `targetEpoch`, `expectedRoomRevision`, `publicText`, `confirmed:true`다. `cancel`의 본문은 `protocol:1`, `roomId`, `operationId`, `expectedUserId`, `requestId`, `expectedRoomRevision`이며 질문자나 대상 소유자가 해당 직접 질문 하나만 취소·중단할 수 있다. UUID `expectedUserId`는 화면을 연 뒤 로그인 주체가 바뀌지 않았다는 사전 조건이다. 서버는 현재 Auth가 없으면 `UNAUTHENTICATED`, 식별자가 다르면 `FORBIDDEN`을 반환한다. 이 필드로 다른 사용자의 권한을 얻을 수 없다. 원본 본문의 크기·필드를 검사한 뒤 사전 조건을 제거하고 실제 Auth를 기준으로 기존 권한·receipt를 처리한다. 동일 사람·operation·정규화 본문의 재전달은 저장된 결과를 반환한다.
 
+`speak`는 `protocol:1`, `roomId`, `operationId`, `publicText`를 받는다. 새 웹은 사용자 사전 조건인 `expectedUserId`도 항상 보낸다. 이 필드가 있으면 실제 Auth와 대조한 뒤 제거하여 기존 영수증 hash를 유지한다. 이전 클라이언트의 필드 없는 본문은 계속 허용하되 현재 인증·방 쓰기 권한 검사를 거친다. 허용하지 않은 추가 필드나 잘못된 사용자 ID는 거절한다. 동일 사용자·방·operation·본문 재전달은 같은 `eventId`와 `sequence`를 반환한다.
+
 직접 질문의 cycle은 `mode:DIRECT`, `targetAgentId`, `targetEpoch`, `generation:1`, `runsReserved:1`, `peerRoundsReserved:0`, `canInterrupt`를 반환한다. HUMAN 질문 하나에 기존 PEER 실행 하나만 연결하고 자동 continuation은 만들지 않는다. 원래 AI_PAIR cycle과 기기의 PEER wire 형태는 유지한다. 실제 검증 범위와 남은 provider 연동은 [진행 상태](planning/delivery-and-validation.md#현재-진행-상태)를 따른다.
 
 기기의 `/api/workflow/<action>`은 `ready`, `poll`, `claim`, `start-intent`, `lease`, `question`, `complete`, `interrupt-ack`, `observe`, `admission`, `admission-ack`만 허용한다. 현재 opaque bearer에서 자기 binding scope를 계산하고 각 attempt의 requestId·attemptId·fence·bindingEpoch를 대조한다. 중앙 API가 native session ID·명령·모델 설정을 받지 않는다.

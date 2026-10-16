@@ -79,6 +79,9 @@ async function harness(
   const memos: unknown[] = [];
   let effects: (() => (() => void) | void)[] = [];
   let projectionCalls = 0;
+  let reads = 0;
+  const windowEvents = new EventTarget();
+  const documentEvents = Object.assign(new EventTarget(), { hidden: false });
   const calls: { action: contracts.HumanAction; body: contracts.Body }[] = [];
   let responseFailure = false;
   let pollFailure = false;
@@ -177,6 +180,7 @@ async function harness(
         return {
           callInvestigation: async (action: contracts.HumanAction, body: contracts.Body) => {
             if (action === "read-recovery") {
+              reads++;
               if (pollFailure) throw new contracts.WorkflowError("UNAVAILABLE");
               const afterSequence = body.afterSequence as number;
               const events = currentPage.events.filter((event) => event.sequence > afterSequence);
@@ -201,7 +205,13 @@ async function harness(
             }
             calls.push({ action, body });
             if (responseFailure) throw new contracts.WorkflowError("UNAVAILABLE");
-            return action === "cancel" ? cancelResult : action === "retire" ? retireResult : {};
+            return action === "cancel"
+              ? cancelResult
+              : action === "retire"
+                ? retireResult
+                : action === "speak"
+                  ? { eventId: fixture.ask.operationId, sequence: 1 }
+                  : {};
           },
         };
       if (name === "./room-chat-controller") {
@@ -265,7 +275,8 @@ async function harness(
       setItem: (key: string, value: string) => storage.set(key, value),
       removeItem: (key: string) => storage.delete(key),
     },
-    document: { hidden: false },
+    document: documentEvents,
+    window: windowEvents,
     setTimeout,
     clearTimeout,
     queueMicrotask,
@@ -310,6 +321,10 @@ async function harness(
     history,
     calls,
     projectionCalls: () => projectionCalls,
+    reads: () => reads,
+    windowEvents,
+    documentEvents,
+    stop: () => stop?.(),
     storage,
     controller,
     pollSucceed: () => {
@@ -1008,4 +1023,123 @@ test("should require device revocation and expose no retirement controls to obse
   assert.equal(find(observer.render(), "dialog"), undefined);
   assert.equal(h.calls.length, 0);
   assert.equal(observer.calls.length, 0);
+});
+
+function speechConfirmation(node: unknown): Node | undefined {
+  if (!node || typeof node !== "object") return;
+  if (Array.isArray(node)) {
+    for (const child of node) {
+      const result = speechConfirmation(child);
+      if (result) return result;
+    }
+    return;
+  }
+  const item = node as Node;
+  if (item.type === "button" && item.props.children === "같은 메시지 확인") return item;
+  return speechConfirmation(item.props?.children);
+}
+
+test("should clear only the submitted speech draft after same-message confirmation", async (t) => {
+  const h = await harness(t);
+  let composer = find(h.render(), "composer")!;
+  (composer.props.onMode as (mode: string) => void)("speak");
+  (composer.props.onDraft as (text: string) => void)("보존할 발언");
+  composer = find(h.render(), "composer")!;
+  h.fail();
+  assert.equal(
+    await (composer.props.onSubmit as (event: unknown) => Promise<boolean>)(
+      h.submit("보존할 발언"),
+    ),
+    false,
+  );
+  assert.equal(h.controller.getSnapshot().pendingDirect?.action, "speak");
+  assert.equal(find(h.render(), "composer")!.props.disabled, true);
+  h.succeed();
+  const retry = speechConfirmation(h.render());
+  assert.ok(retry);
+  assert.equal(await (retry.props.onClick as () => Promise<boolean>)(), true);
+  assert.deepEqual(h.calls[1].body, h.calls[0].body);
+  assert.equal(find(h.render(), "composer")!.props.draft, "");
+});
+
+test("should retain edited drafts after retry acknowledgement", async (t) => {
+  const h = await harness(t);
+  let composer = find(h.render(), "composer")!;
+  (composer.props.onMode as (mode: string) => void)("speak");
+  (composer.props.onDraft as (text: string) => void)("원래 발언");
+  composer = find(h.render(), "composer")!;
+  h.fail();
+  await (composer.props.onSubmit as (event: unknown) => Promise<boolean>)(h.submit("원래 발언"));
+  h.succeed();
+  const retry = speechConfirmation(h.render());
+  assert.ok(retry);
+  const confirming = (retry.props.onClick as () => Promise<boolean>)();
+  (find(h.render(), "composer")!.props.onDraft as (text: string) => void)("수정한 초안");
+  h.render();
+  assert.equal(await confirming, true);
+  assert.equal(find(h.render(), "composer")!.props.draft, "수정한 초안");
+});
+
+test("should subscribe only online and visible recovery and remove listeners on unmount", async (t) => {
+  t.mock.timers.enable({ apis: ["setTimeout"] });
+  const h = await harness(t);
+  assert.equal(h.reads(), 1);
+  h.documentEvents.hidden = true;
+  h.documentEvents.dispatchEvent(new Event("visibilitychange"));
+  t.mock.timers.tick(1000);
+  for (let i = 0; i < 8; i++) await Promise.resolve();
+  assert.equal(h.reads(), 1);
+  h.documentEvents.hidden = false;
+  h.windowEvents.dispatchEvent(new Event("online"));
+  h.documentEvents.dispatchEvent(new Event("visibilitychange"));
+  t.mock.timers.tick(1000);
+  for (let i = 0; i < 8; i++) await Promise.resolve();
+  assert.equal(h.reads(), 2);
+  h.stop();
+  h.controller.start();
+  await h.controller.poll();
+  const reads = h.reads();
+  h.windowEvents.dispatchEvent(new Event("online"));
+  h.documentEvents.dispatchEvent(new Event("visibilitychange"));
+  t.mock.timers.tick(1000);
+  for (let i = 0; i < 8; i++) await Promise.resolve();
+  assert.equal(h.reads(), reads);
+  h.controller.stop();
+});
+
+test("should preserve whitespace edits to a speech draft during confirmation", async (t) => {
+  const h = await harness(t);
+  let composer = find(h.render(), "composer")!;
+  (composer.props.onMode as (mode: string) => void)("speak");
+  (composer.props.onDraft as (text: string) => void)("  원래 발언  ");
+  composer = find(h.render(), "composer")!;
+  h.fail();
+  await (composer.props.onSubmit as (event: unknown) => Promise<boolean>)(
+    h.submit("  원래 발언  "),
+  );
+  h.succeed();
+  const retry = speechConfirmation(h.render());
+  assert.ok(retry);
+  const confirming = (retry.props.onClick as () => Promise<boolean>)();
+  (find(h.render(), "composer")!.props.onDraft as (text: string) => void)("원래 발언");
+  h.render();
+  assert.equal(await confirming, true);
+  assert.equal(find(h.render(), "composer")!.props.draft, "원래 발언");
+});
+
+test("should clear the exact untrimmed submitted speech draft on confirmation", async (t) => {
+  const h = await harness(t);
+  let composer = find(h.render(), "composer")!;
+  (composer.props.onMode as (mode: string) => void)("speak");
+  (composer.props.onDraft as (text: string) => void)("  제출 발언  ");
+  composer = find(h.render(), "composer")!;
+  h.fail();
+  await (composer.props.onSubmit as (event: unknown) => Promise<boolean>)(
+    h.submit("  제출 발언  "),
+  );
+  h.succeed();
+  const retry = speechConfirmation(h.render());
+  assert.ok(retry);
+  assert.equal(await (retry.props.onClick as () => Promise<boolean>)(), true);
+  assert.equal(find(h.render(), "composer")!.props.draft, "");
 });

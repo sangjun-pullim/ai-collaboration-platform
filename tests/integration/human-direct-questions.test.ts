@@ -1207,3 +1207,92 @@ test("should preserve existing direct receipts when adding the actor preconditio
     assert.deepEqual(await directEffects(f, s), before);
   }),
 );
+
+test(
+  "should reuse speech receipts across response loss and legacy or actor-bound callers",
+  options,
+  () =>
+    workflowCase("speech-delivery-receipts", async (f) => {
+      await requireHumanDirectMigration(f);
+      const s = await f.directScene();
+      for (const actorFirst of [false, true]) {
+        const legacy = {
+          roomId: s.scope.roomId,
+          operationId: randomUUID(),
+          publicText: "합성 전송 복구 발언",
+        };
+        const bound = { ...legacy, expectedUserId: s.requester.id };
+        const first = accepted(await f.human(s.requester, "speak", actorFirst ? bound : legacy));
+        const before = await directEffects(f, s);
+        assert.deepEqual(
+          accepted(await f.human(s.requester, "speak", actorFirst ? legacy : bound)),
+          first,
+        );
+        assert.deepEqual(accepted(await f.human(s.requester, "speak", bound)), first);
+        assert.deepEqual(await directEffects(f, s), before);
+        const rows = await f.stack.db.query(
+          `select
+          (select count(*)::int from public.workflow_events where room_id=$1 and event_id=$4) events,
+          count(*)::int receipts,
+          bool_and(payload_hash=encode(extensions.digest(($5::jsonb)::text,'sha256'),'hex')) unchanged
+         from workflow_private.receipts
+         where room_id=$1 and actor_kind='human' and actor_id=$2 and operation_id=$3 and action='speak'`,
+          [
+            s.scope.roomId,
+            s.requester.id,
+            legacy.operationId,
+            first.eventId,
+            JSON.stringify({ protocol: 1, ...legacy }),
+          ],
+        );
+        assert.deepEqual(rows.rows, [{ events: 1, receipts: 1, unchanged: true }]);
+        refused(await f.human(s.requester, "speak", { ...bound, publicText: "다른 본문" }), 409);
+      }
+    }),
+);
+
+test(
+  "should reject mismatched speech actors and malformed optional actor shapes without side effects",
+  options,
+  () =>
+    workflowCase("speech-delivery-actor", async (f) => {
+      await requireHumanDirectMigration(f);
+      const s = await f.directScene();
+      await f.stack.join(s.outsider, await f.stack.invite(s.owner, s.scope.roomId), "다른 참가자");
+      const body = {
+        protocol: 1,
+        roomId: s.scope.roomId,
+        operationId: randomUUID(),
+        publicText: "계정 격리 발언",
+        expectedUserId: s.requester.id,
+      };
+      const before = await directEffects(f, s);
+      refused(await f.human(s.outsider, "speak", body), 403);
+      const stale = await s.outsider.web.dataClient().rpc("workflow_human_speak", { p_body: body });
+      assert.equal(stale.error?.message, "FORBIDDEN");
+      for (const invalid of [
+        ...[null, [], 1, "invalid"].map((expectedUserId) => ({ ...body, expectedUserId })),
+        { ...body, actorId: s.requester.id },
+      ]) {
+        const result = await s.requester.web
+          .dataClient()
+          .rpc("workflow_human_speak", { p_body: invalid });
+        assert.equal(result.error?.message, "INVALID_BODY");
+      }
+      refused(await f.human(s.observer, "speak", { ...body, expectedUserId: s.observer.id }), 403);
+      assert.deepEqual(await directEffects(f, s), before);
+      await f.stack.db.query("begin");
+      try {
+        await f.stack.db.query("set local role authenticated");
+        await f.stack.db.query(
+          "select set_config('request.jwt.claim.sub','',true),set_config('request.jwt.claims','{}',true)",
+        );
+        await assert.rejects(
+          f.stack.db.query("select public.workflow_human_speak($1::jsonb)", [JSON.stringify(body)]),
+          (failure: unknown) => (failure as { message?: string }).message === "UNAUTHENTICATED",
+        );
+      } finally {
+        await f.stack.db.query("rollback");
+      }
+    }),
+);

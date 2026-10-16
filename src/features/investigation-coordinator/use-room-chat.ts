@@ -16,7 +16,16 @@ export function useRoomChat({ userId, roomId, role }: RoomChatActor) {
   );
   useEffect(() => {
     controller.start();
-    return () => controller.stop();
+    const visible = () => {
+      if (!document.hidden) controller.requestResync();
+    };
+    window.addEventListener("online", controller.requestResync);
+    document.addEventListener("visibilitychange", visible);
+    return () => {
+      window.removeEventListener("online", controller.requestResync);
+      document.removeEventListener("visibilitychange", visible);
+      controller.stop();
+    };
   }, [controller]);
   return { ...state, mutate: controller.mutate, loseAccess: controller.loseAccess };
 }

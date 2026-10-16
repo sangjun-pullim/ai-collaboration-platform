@@ -35,6 +35,7 @@ export type RoomChatState = {
   history: HistoryState;
   pollError: string | null;
   actionError: string | null;
+  storageError: string | null;
   permissionDenied: boolean;
   busy: boolean;
   pendingDirect: DirectIntent | null;
@@ -65,6 +66,8 @@ export class RoomChatController {
   private pollAbort: AbortController | null = null;
   private mutationAbort: AbortController | null = null;
   private readonly pendingKey: string;
+  private resyncRequested = false;
+  private resyncNotBefore = 0;
 
   constructor(
     private readonly actor: RoomChatActor,
@@ -80,6 +83,7 @@ export class RoomChatController {
       history: emptyHistory(actor.roomId),
       pollError: null,
       actionError: null,
+      storageError: null,
       permissionDenied: false,
       busy: false,
       pendingDirect: null,
@@ -105,6 +109,8 @@ export class RoomChatController {
     this.active = true;
     this.generation++;
     this.failures = 0;
+    this.resyncRequested = false;
+    this.resyncNotBefore = 0;
     this.update({ busy: false });
     try {
       this.update({
@@ -122,6 +128,7 @@ export class RoomChatController {
 
   stop() {
     this.active = false;
+    this.resyncRequested = false;
     this.generation++;
     this.clearTimer();
     this.pollAbort?.abort();
@@ -159,7 +166,16 @@ export class RoomChatController {
     );
   }
 
+  requestResync = () => {
+    if (!this.active || this.state.permissionDenied) return;
+    this.resyncRequested = true;
+    if (this.pollAbort || this.mutationAbort) return;
+    this.clearTimer();
+    this.schedule(Math.max(0, this.resyncNotBefore - this.environment.now()));
+  };
+
   loseAccess = () => {
+    this.resyncRequested = false;
     this.clearTimer();
     this.pollAbort?.abort();
     this.mutationAbort?.abort();
@@ -175,6 +191,7 @@ export class RoomChatController {
   async poll() {
     if (!this.active || this.state.permissionDenied || this.pollAbort || this.mutationAbort) return;
     this.clearTimer();
+    this.resyncRequested = false;
     const generation = this.generation;
     const abort = new AbortController();
     this.pollAbort = abort;
@@ -230,6 +247,7 @@ export class RoomChatController {
       });
       this.update({ history, cancelReceipts, observedAt: this.environment.now(), pollError: null });
       this.failures = 0;
+      this.resyncNotBefore = this.environment.now() + 1000;
       backfill = page.hasMore || page.recovery.hasMoreRetirements || history.gap;
     } catch (failure) {
       if (!this.current(generation, abort)) return;
@@ -239,6 +257,8 @@ export class RoomChatController {
       }
       this.update({ pollError: "공동 기록을 불러올 수 없습니다. 다시 시도합니다." });
       this.failures++;
+      this.resyncNotBefore =
+        this.environment.now() + pollingDelay(false, this.environment.hidden(), this.failures);
     } finally {
       // A superseded lifecycle's request must not clear or schedule its replacement.
       if (this.pollAbort === abort) {
@@ -249,17 +269,34 @@ export class RoomChatController {
         const hidden = this.environment.hidden();
         // Drain validated history pages serially; stalled pages must not create a busy loop.
         this.schedule(
-          backfill && progressed && !hidden && this.failures === 0
-            ? 0
-            : pollingDelay(backfill || running, hidden, this.failures),
+          this.resyncRequested
+            ? Math.max(0, this.resyncNotBefore - this.environment.now())
+            : backfill && progressed && !hidden && this.failures === 0
+              ? 0
+              : pollingDelay(backfill || running, hidden, this.failures),
         );
       }
     }
   }
 
   private clearIntent() {
-    this.environment.storage().removeItem(this.pendingKey);
+    const pending = this.state.pendingDirect;
     this.update({ pendingDirect: null });
+    try {
+      const storage = this.environment.storage();
+      // A settled marker is deliberately not a restorable intent. Write it first so
+      // failed removal cannot revive a known success or definitive rejection.
+      try {
+        storage.setItem(this.pendingKey, JSON.stringify({ ...pending, settled: true }));
+      } catch {
+        // Removal can still succeed when writes are unavailable (for example quota).
+      }
+      storage.removeItem(this.pendingKey);
+    } catch {
+      this.update({
+        storageError: "전송 결과는 확정되었습니다. 저장된 요청을 정리하지 못했습니다.",
+      });
+    }
   }
 
   private persistIntent(action: DirectIntent["action"], body: Body) {
@@ -304,8 +341,9 @@ export class RoomChatController {
     const generation = this.generation;
     const abort = new AbortController();
     this.mutationAbort = abort;
-    this.update({ busy: true, actionError: null });
+    this.update({ busy: true, actionError: null, storageError: null });
     let directIntent = false;
+    let savingIntent = false;
     try {
       const body = mutationBody(action, fields, this.actor.userId, this.actor.roomId, retryBody);
       const cancelTarget =
@@ -333,12 +371,15 @@ export class RoomChatController {
         )
           throw new WorkflowError("CONFLICT");
       }
-      if (action === "ask" || action === "cancel" || action === "retire") {
+      if (action === "speak" || action === "ask" || action === "cancel" || action === "retire") {
+        savingIntent = true;
         this.persistIntent(action, body);
+        savingIntent = false;
         directIntent = true;
       }
       const result = await this.request(action, body, abort.signal);
       if (!this.current(generation, abort)) return false;
+      if (action === "speak") projectResponse("speak", result);
       if (action === "retire") {
         const receipt = projectResponse("retire", result) as RetirementReceipt;
         if (
@@ -390,15 +431,12 @@ export class RoomChatController {
       if (!this.current(generation, abort)) return false;
       const code = codeOf(failure);
       if (directIntent && code !== "UNAVAILABLE") {
-        try {
-          this.clearIntent();
-        } catch {
-          // Retain the exact intent if storage removal fails.
-        }
+        this.clearIntent();
       }
       this.update({
-        actionError:
-          code === "CONFLICT"
+        actionError: savingIntent
+          ? "요청을 이 탭에 저장할 수 없어 전송하지 않았습니다. 초안을 보관하고 저장 공간을 확인해 주세요."
+          : code === "CONFLICT"
             ? "상태가 바뀌었습니다. 기록을 갱신한 뒤 다시 시도해 주세요."
             : "요청을 완료할 수 없습니다. 접근 권한과 연결 보고를 확인해 주세요.",
       });
@@ -409,7 +447,6 @@ export class RoomChatController {
         this.mutationAbort = null;
         if (this.active && this.generation === generation) {
           this.update({ busy: false });
-          this.failures = 0;
           this.schedule(0);
         }
       }

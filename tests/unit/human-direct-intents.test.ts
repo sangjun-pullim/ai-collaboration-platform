@@ -115,7 +115,7 @@ test("should require an exact direct actor UUID without changing peer wire", () 
   }
 });
 
-type Intent = { action: "ask" | "cancel"; body: contracts.Body };
+type Intent = { action: "speak" | "ask" | "cancel" | "retire"; body: contracts.Body };
 type IntentStorage = { getItem(key: string): string | null; removeItem(key: string): unknown };
 function policies() {
   let uuids = 0;
@@ -201,7 +201,7 @@ test("should retain exact direct mutation identity on retry", () => {
       assert.equal(policy.uuids(), before + 1);
       continue;
     }
-    const directAction = action === "ask" || action === "cancel";
+    const directAction = action === "ask" || action === "cancel" || action === "speak";
     const inputFields = directAction ? { ...fields, expectedUserId: actorB } : fields;
     const body = policy.mutation(action, inputFields, actorA, roomId);
     assert.equal(policy.uuids(), before + 1);
@@ -219,7 +219,10 @@ test("should retain exact direct mutation identity on retry", () => {
     assert.deepEqual(policy.mutation(action, { ignored: true }, actorA, roomId, body), body);
     assert.equal(policy.uuids(), before + 1);
     // Spread preserves supplied fields, including an already supplied operationId.
-    assert.deepEqual(policy.mutation(action, entry.body, actorA, roomId), entry.body);
+    assert.deepEqual(policy.mutation(action, entry.body, actorA, roomId), {
+      ...entry.body,
+      ...(directAction ? { expectedUserId: actorA } : {}),
+    });
     assert.equal(policy.uuids(), before + 2);
   }
   for (const action of ["ask", "cancel"] as const) {
@@ -346,4 +349,22 @@ test("should refuse restoration when storage fails", async (t) => {
       assert.equal(storage.get(key), JSON.stringify(intended));
       assert.equal(storage.has(legacyKey), false);
     });
+});
+
+test("should restore only the current user's pending speech and require an actor for new speech", async () => {
+  const policy = policies();
+  const body = policy.mutation("speak", { publicText: "보존할 발언" }, actorA, roomId);
+  assert.equal(body.expectedUserId, actorA);
+  const intent = { action: "speak", body };
+  const key = policy.key(actorA, roomId);
+  assert.deepEqual((await restore(actorA, [[key, JSON.stringify(intent)]])).pending, intent);
+  assert.equal((await restore(actorB, [[key, JSON.stringify(intent)]])).pending, null);
+  const { expectedUserId, ...legacy } = body;
+  void expectedUserId;
+  assert.equal(
+    (await restore(actorA, [[key, JSON.stringify({ action: "speak", body: legacy })]])).pending,
+    null,
+  );
+  for (const retry of [legacy, { ...body, expectedUserId: actorB }, { ...body, roomId: actorB }])
+    assert.throws(() => policy.mutation("speak", {}, actorA, roomId, retry));
 });
