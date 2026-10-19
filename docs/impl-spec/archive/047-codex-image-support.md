@@ -1,5 +1,5 @@
 ---
-status: active
+status: done
 date: 2026-10-19
 risk-surface: permission
 ---
@@ -41,7 +41,7 @@ risk-surface: permission
 - 성공/실패/중단 terminal 또는 확정 NOT_STARTED 증거가 있는 요청만 정리한다. UNKNOWN과 진행 중 요청은 보존한다. 종결 뒤 재시작·서버 응답 유실·정리 중 종료에도 재시도 가능하게 하며 compaction이 소유 연결을 잃지 않게 한다. 정리 실패는 확정된 답변 결과를 바꾸지 않는다.
 - 검증된 Codex capability 및 preflightImage를 추가한다. 기존 텍스트와 Claude 경로는 유지한다.
 
-### [ ] Step 3: 검증·리뷰·배포
+### [x] Step 3: 검증·리뷰·배포
 
 - 실패 재현부터 파일 정리·재시작·교체·권한·다른agent·UNKNOWN보존 테스트를 추가한다. capability/poll/claim 및 실제 adapter의 이미지 경로를 검증한다.
 - connector 전체 검사, 웹 관련 계약 검사, format/format:check/typecheck/lint/build를 실행한다. 기존 웹/SQL 권한 리뷰는 동일 계약이므로 재사용하고 변경된 파일 소유/런타임 경계는 독립 reviewer가 검토한다.
@@ -74,6 +74,7 @@ risk-surface: permission
 
 ### 실행 증거
 
+- [PR61](https://github.com/sangjun-pullim/ai-collaboration-platform/pull/61)을 main `55c908c`에 병합하고 운영 배포 `dpl_d73uwHkgHjosLGuSdFg1LLX5n1KC`를 확인했다. 운영 연결기 압축 해제 내용이 검증한 빌드와 일치하며 bootstrap 무결성과 로그인200을 확인했다. 증거는 `/private/tmp/codex-image-finish.lb7VJK/production-verification.json`에 보관한다.
 - `/private/tmp/codex-image-finish.lb7VJK/result.json`: 공식Codex0.159.1, 실제 이미지 입력1회, 이미지 속6284 인식, ACK·COMPLETED·재시작 후 observe 확인. 추가 모델 입력0회로 파일 삭제 뒤 validate/resume도 통과(`resume-result.json`).
 - 파일 소유권 재시작 테스트는 구현 전 owner.json ENOENT로 실패했다. 수정 후 관련74개 검사를 통과했다. 전역Codex0.163.0 및 사용자 설정은 변경하지 않았다.
 - 기존 v1 Codex 계약은 thread/turn ACK와 종결 이력을 기준으로 유지한다. Claude 전용 이미지 nativeIntent/hash 계약을 Codex 저장 형식에 추가하지 않았다.
