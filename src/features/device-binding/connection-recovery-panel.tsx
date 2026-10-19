@@ -40,6 +40,24 @@ export function ConnectionRecoveryPanel({
         기록을 보존하고 다시 연결
       </Button>
     ) : null;
+  if (view.phase === "retired")
+    return (
+      <section
+        aria-label="이전 요청 보존 복구"
+        className="space-y-2 rounded-lg bg-muted/50 p-3 text-sm"
+      >
+        <p>이전 기록 보관 완료 · 새 연결과 AI 설정·응답 준비 확인이 필요합니다.</p>
+        {!view.active && (
+          <Button variant="outline" onClick={() => onSelectTarget(target.deviceId)}>
+            원래 복구 대상 선택
+          </Button>
+        )}
+        {view.error && <p role="alert">{view.error}</p>}
+        <Button disabled={!view.active || view.busy} onClick={onPrepareApproval}>
+          원본을 보존하고 새 승인 명령 준비
+        </Button>
+      </section>
+    );
   return (
     <section
       aria-label="이전 요청 보존 복구"
@@ -75,15 +93,13 @@ export function ConnectionRecoveryPanel({
       <div role="status" aria-live="polite">
         {view.busy
           ? "해당 단계의 서버 결과 확인 중…"
-          : view.phase === "retired"
-            ? "이전 기록 보관 확인 · 새 연결과 AI 설정·응답 준비 확인이 필요합니다."
-            : view.phase === "retire-ready"
-              ? "원래 기기의 연결 취소 확인 · 서버에서 이전 요청 정리 가능 확인"
-              : view.phase === "retire-unconfirmed"
-                ? "이전 요청 정리 결과 미확정 · 같은 요청의 결과를 확인하세요."
-                : view.phase === "needs-check"
-                  ? "이 단계의 결과를 다시 확인해야 합니다."
-                  : "연결 취소 전 · 아래 대상을 명시적으로 확인하세요."}
+          : view.phase === "retire-ready"
+            ? "원래 기기의 연결 취소 확인 · 서버에서 이전 요청 정리 가능 확인"
+            : view.phase === "retire-unconfirmed"
+              ? "이전 요청 정리 결과 미확정 · 같은 요청의 결과를 확인하세요."
+              : view.phase === "needs-check"
+                ? "이 단계의 결과를 다시 확인해야 합니다."
+                : "연결 취소 전 · 아래 대상을 명시적으로 확인하세요."}
       </div>
       {view.checkedAt && <p>서버 확인 시각: {new Date(view.checkedAt).toLocaleString("ko-KR")}</p>}
       {view.error && <p role="alert">{view.error}</p>}
@@ -109,18 +125,16 @@ export function ConnectionRecoveryPanel({
           </Button>
         </>
       )}
-      {view.phase !== "retired" && (
-        <Button
-          variant="outline"
-          disabled={!view.active || view.busy}
-          onClick={() => {
-            setConfirmation(null);
-            void controller.check();
-          }}
-        >
-          복구 단계 상태 다시 확인
-        </Button>
-      )}
+      <Button
+        variant="outline"
+        disabled={!view.active || view.busy}
+        onClick={() => {
+          setConfirmation(null);
+          void controller.check();
+        }}
+      >
+        복구 단계 상태 다시 확인
+      </Button>
       {view.phase === "retire-ready" && (
         <RequestRetirementControls
           userId={target.userId}
@@ -137,11 +151,6 @@ export function ConnectionRecoveryPanel({
           onClick={() => void controller.retryRetirement()}
         >
           같은 정리 요청 결과 확인
-        </Button>
-      )}
-      {view.phase === "retired" && (
-        <Button disabled={!view.active || view.busy} onClick={onPrepareApproval}>
-          원본을 보존하고 새 승인 명령 준비
         </Button>
       )}
     </section>
