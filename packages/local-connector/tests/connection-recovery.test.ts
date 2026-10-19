@@ -1315,6 +1315,59 @@ for (const fault of ["policy", "version", "epoch", "materialized"] as const)
     }
   });
 
+test("should preserve a completed answer without a server receipt through explicit fresh approval", async () => {
+  const f = await fixture();
+  try {
+    const c = await configuredClaude(f);
+    const attempt = appendFixtureCompletion(c.record, 0);
+    attempt.state = "TERMINAL";
+    attempt.receipt = null;
+    attempt.nativeIntent = {
+      provider: "claude",
+      sessionId: c.record.context!.threadId,
+      inputId: attempt.native!.turnId,
+      promptHash: digest("synthetic-question"),
+      generation: attempt.generation,
+      scope: attempt.scope,
+      attemptId: attempt.snapshot!.attemptId,
+      fence: attempt.snapshot!.fence,
+      policyFingerprint: c.record.context!.materialization!.policyFingerprint,
+    };
+    Object.assign(c.record.context!.ownedTurns[0], {
+      promptHash: digest("synthetic-question"),
+      resultHash: digest("synthetic-result"),
+      toolReceipts: [],
+    });
+    c.record.operations = c.record.operations.filter(
+      (operation) => operation.action !== "complete",
+    );
+    await writeFile(c.current.file, JSON.stringify(c.record), { mode: 0o600 });
+    assert.equal((await c.current.read())!.attempts[0].state, "TERMINAL");
+    const files = [f.previous.file, c.settings.file, c.current.file];
+    const before = await Promise.all(files.map((file) => readFile(file)));
+    let confirmations = 0;
+    f.interaction.confirmUnresolved = async (count) => {
+      assert.equal(count, 1);
+      confirmations++;
+      return true;
+    };
+    await f.run();
+    assert.equal(confirmations, 1);
+    assert.deepEqual(await Promise.all(files.map((file) => readFile(file))), before);
+    assert.equal((await c.current.read())!.attempts[0].receipt, null);
+    assert.equal(f.adapter.starts, 0);
+    assert.deepEqual((await f.next.read())!.mappings, []);
+    await assert.rejects(
+      withSettingsDeviceLock(f.previous, "revoke-local", (settings) =>
+        revokeConfiguredProfile(f.previous, settings),
+      ),
+      { code: "RUNTIME_BUSY" },
+    );
+  } finally {
+    await f.close();
+  }
+});
+
 async function unresolvedClaude(f: Awaited<ReturnType<typeof fixture>>) {
   const c = await configuredClaude(f),
     attempt = appendFixtureCompletion(c.record, 0);
