@@ -12,6 +12,22 @@ import { capabilities, runtimeFixture, observation, uuid } from "./runtime-fixtu
 import { deferred } from "./runner-fixture.ts";
 import { createImageFile, removeImageFile } from "../src/workflow/image-file.ts";
 
+test("should advertise Codex image input only after admitted policy and revoke it on close", async () => {
+  const f = await runtimeFixture(),
+    p = new FakeProvider();
+  const adapter = new CodexAdapter({ transportFactory: (_root, overrides) => p.launch(overrides) });
+  try {
+    assert.equal(adapter.imageInputVersion, undefined);
+    await adapter.capabilities(f.root, () => {});
+    assert.equal(adapter.imageInputVersion, 1);
+    await adapter.close();
+    assert.equal(adapter.imageInputVersion, undefined);
+  } finally {
+    await adapter.close();
+    await f.close();
+  }
+});
+
 type OriginPolicy = {
   config: Record<string, unknown>;
   layers: { name: Record<string, unknown>; version: unknown; config: unknown }[];
@@ -994,6 +1010,13 @@ for (const withImage of [false, true])
         };
         authority.attempt.payload.attachment = descriptor;
         authority.image = await createImageFile(f.store.dir, descriptor, bytes);
+        await a.preflightImage(authority, f.settings, payload);
+        const ownedImage = authority.image;
+        authority.image = { ...ownedImage };
+        await assert.rejects(a.preflightImage(authority, f.settings, payload), {
+          code: "UNSAFE_STORAGE",
+        });
+        authority.image = ownedImage;
       }
       p.response = (method) => {
         if (method !== "turn/start") return;

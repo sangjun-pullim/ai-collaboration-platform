@@ -485,6 +485,21 @@ export interface CodexAdapterOptions {
   turnTimeoutMs?: number;
 }
 export class CodexAdapter implements RuntimeAdapter {
+  get imageInputVersion(): 1 | undefined {
+    return codexVersion === "0.159.1" && this.proof && !this.closed ? 1 : undefined;
+  }
+  async preflightImage(
+    authority: AttemptAuthority,
+    settings: RuntimeSettings,
+    payload: RequestPayload,
+  ): Promise<void> {
+    authority.assertLive();
+    if (!payload.attachment || !authority.image) throw new RuntimeError("INVALID_RUNTIME");
+    await this.validate(authority.context, settings, () => authority.assertLive());
+    checkImage(authority.image, payload.attachment);
+    await imageFilePath(authority.image);
+    authority.assertLive();
+  }
   private client: ProviderTransport | undefined;
   private root: string | undefined;
   private active:
