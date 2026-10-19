@@ -531,6 +531,52 @@ test("should read later retirement pages before concluding that a preserved requ
   }
 });
 
+for (const outcome of ["retired", "unresolved", "offline", "selection-changed"] as const) {
+  test(`should reconcile a restored recovery only with confirmed retirement: ${outcome}`, async () => {
+    const h = harness();
+    await h.controller.revoke(true);
+    if (outcome !== "unresolved") await h.controller.mutate("retire", retirementFields());
+    h.controller.stop();
+    const deviceId = "00000000-0000-4000-8000-000000000020";
+    const restored = new ConnectionRecoveryController(h.dependencies);
+    const ready: ReadinessView = {
+      ...new AiReadinessController().getSnapshot(),
+      target: { expectedUserId: target.userId, roomId: target.roomId, deviceId },
+      binding: { agentId: deviceId, bindingEpoch: 1, configRevision: 1, applied: true },
+      state: "complete",
+      ready: true,
+      selectedReady: true,
+      device: { ...h.current().device, deviceId, state: "active" },
+      validUntil: new Date(Date.now() + 60000).toISOString(),
+    };
+    try {
+      restored.setContext(target.userId, target.roomId, deviceId);
+      assert.equal(restored.getSnapshot().phase, "needs-check");
+      const mutations = h.calls.filter((call) => call.action !== "read-recovery").length;
+      h.faults.read = outcome === "offline";
+      let release = () => {};
+      if (outcome === "selection-changed")
+        h.faults.waitStatus = new Promise<void>((resolve) => {
+          release = resolve;
+        });
+      const pending = restored.reconcileReplacement(ready);
+      if (outcome === "selection-changed") {
+        await Promise.resolve();
+        restored.setContext(target.userId, target.roomId, target.deviceId);
+        release();
+      }
+      assert.equal(await pending, outcome === "retired");
+      assert.equal(restored.getSnapshot().phase === "closed", outcome === "retired");
+      const journal = JSON.parse([...h.saved.values()][0]);
+      assert.equal(journal.target.candidate.requestId, target.candidate.requestId);
+      assert.equal(journal.replacementDeviceId, outcome === "retired" ? deviceId : null);
+      assert.equal(h.calls.filter((call) => call.action !== "read-recovery").length, mutations);
+    } finally {
+      restored.stop();
+    }
+  });
+}
+
 test("should finish the browser recovery only after a different owned device has current applied readiness", async () => {
   const h = harness();
   try {
