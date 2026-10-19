@@ -355,15 +355,16 @@ export class ConnectionRecoveryController {
   }
   private run(
     work: (target: RecoveryTarget, signal: AbortSignal, guard: () => void) => Promise<boolean>,
+    isCurrent = () => !!this.currentTarget(),
   ): Promise<boolean> {
     if (this.pending) return this.pending;
-    const target = this.currentTarget();
-    if (!target) return Promise.resolve(false);
+    const target = this.view.target;
+    if (!target || !isCurrent()) return Promise.resolve(false);
     const generation = ++this.generation;
     const abort = new AbortController();
     this.abort = abort;
     const guard = () => {
-      if (abort.signal.aborted || generation !== this.generation || !this.currentTarget())
+      if (abort.signal.aborted || generation !== this.generation || !isCurrent())
         throw new Error("SCOPE_CHANGED");
       if (this.dependencies.storage.getItem(key(target.userId, target.roomId)) !== this.journalRaw)
         throw new Error("JOURNAL_CHANGED");
@@ -411,13 +412,25 @@ export class ConnectionRecoveryController {
       return true;
     });
   }
-  completeReplacement(ready: ReadinessView): boolean {
+  async reconcileReplacement(ready: ReadinessView): Promise<boolean> {
+    if (!this.isReplacementReady(ready) || this.view.busy) return false;
+    if (this.view.phase === "retired") return this.completeReplacement(ready);
+    return this.run(
+      async (target, signal, guard) => {
+        const result = await this.read(target, signal);
+        guard();
+        if (!result.retired) return false;
+        this.adopt(result);
+        return true;
+      },
+      () => this.isReplacementReady(ready),
+    ).then((retired) => (retired ? this.completeReplacement(ready) : false));
+  }
+  private isReplacementReady(ready: ReadinessView): boolean {
     const target = this.view.target;
     const replacement = ready.target;
     if (
       !target ||
-      this.view.phase !== "retired" ||
-      this.view.busy ||
       !replacement ||
       !ready.ready ||
       !ready.selectedReady ||
@@ -439,8 +452,13 @@ export class ConnectionRecoveryController {
       this.context.deviceId !== replacement.deviceId
     )
       return false;
+    return true;
+  }
+  completeReplacement(ready: ReadinessView): boolean {
+    if (this.view.phase !== "retired" || this.view.busy || !this.isReplacementReady(ready))
+      return false;
     try {
-      this.replacementDeviceId = replacement.deviceId;
+      this.replacementDeviceId = ready.target!.deviceId;
       this.persist();
       this.update(initial());
       return true;

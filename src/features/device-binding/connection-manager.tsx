@@ -307,7 +307,7 @@ export function ConnectionManager({
       : null;
   const observedDevice = currentReadiness?.device ?? settingsDevice;
   useEffect(() => {
-    if (currentReadiness?.ready) recoveryController.completeReplacement(currentReadiness);
+    if (currentReadiness?.ready) void recoveryController.reconcileReplacement(currentReadiness);
   }, [currentReadiness, recoveryController, recoverySelectionId]);
   const recent =
     !!observedDevice &&
