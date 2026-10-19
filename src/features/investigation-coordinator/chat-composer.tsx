@@ -176,57 +176,61 @@ export function ChatComposer({
         <label className="sr-only" htmlFor="chat-message">
           {mode === "ask" ? "AI에게 보낼 질문" : "공동 발언"}
         </label>
-        <Textarea
-          id="chat-message"
-          ref={input}
-          name={mode === "ask" ? "humanQuestion" : "speech"}
-          value={draft}
-          onChange={(event) => onDraft(event.target.value)}
-          required={!image?.draft}
-          maxLength={4000}
-          rows={1}
-          disabled={pending || busy}
-          placeholder={
-            mode === "ask" ? "선택한 AI에게 질문하세요…" : "방 참가자에게 메시지를 남기세요…"
-          }
-          className="mt-1 max-h-[120px] min-h-9 resize-none rounded-none border-0 bg-transparent px-1 py-1.5 text-sm leading-6 shadow-none placeholder:text-neutral-400 focus-visible:border-transparent focus-visible:ring-0 md:text-sm"
-          aria-describedby="chat-input-help"
-          onCompositionStart={() => {
-            composing.current = true;
-          }}
-          onCompositionEnd={() => {
-            composing.current = false;
-          }}
-          onKeyDown={(event) => {
-            if (
-              shouldSendOnEnter(
-                event.key,
-                event.shiftKey,
-                event.nativeEvent.isComposing || composing.current,
-                event.nativeEvent.keyCode,
-              )
-            ) {
-              event.preventDefault();
-              if (!disabled && (draft.trim() || image?.draft?.descriptor))
-                event.currentTarget.form?.requestSubmit();
+        <div
+          className={`mt-1 grid items-end gap-x-2 ${image ? "grid-cols-[auto_minmax(0,1fr)]" : "grid-cols-1"}`}
+        >
+          {image && (
+            <AttachmentPicker
+              url={image.draft?.url}
+              disabled={busy || pending}
+              busy={image.busy}
+              error={image.error}
+              onSelect={(files) => {
+                void image.select(files);
+              }}
+              onRemove={image.reset}
+              onRetry={() => {
+                void image.retry();
+              }}
+            />
+          )}
+          <Textarea
+            id="chat-message"
+            ref={input}
+            name={mode === "ask" ? "humanQuestion" : "speech"}
+            value={draft}
+            onChange={(event) => onDraft(event.target.value)}
+            required={!image?.draft}
+            maxLength={4000}
+            rows={1}
+            disabled={pending || busy}
+            placeholder={
+              mode === "ask" ? "선택한 AI에게 질문하세요…" : "방 참가자에게 메시지를 남기세요…"
             }
-          }}
-        />
-        {image && (
-          <AttachmentPicker
-            url={image.draft?.url}
-            disabled={busy || pending}
-            busy={image.busy}
-            error={image.error}
-            onSelect={(files) => {
-              void image.select(files);
+            className={`${image ? "col-start-2" : "col-start-1"} row-start-1 max-h-[120px] min-h-9 resize-none rounded-none border-0 bg-transparent px-1 py-1.5 text-sm leading-6 shadow-none placeholder:text-neutral-400 focus-visible:border-transparent focus-visible:ring-0 md:text-sm`}
+            aria-describedby="chat-input-help"
+            onCompositionStart={() => {
+              composing.current = true;
             }}
-            onRemove={image.reset}
-            onRetry={() => {
-              void image.retry();
+            onCompositionEnd={() => {
+              composing.current = false;
+            }}
+            onKeyDown={(event) => {
+              if (
+                shouldSendOnEnter(
+                  event.key,
+                  event.shiftKey,
+                  event.nativeEvent.isComposing || composing.current,
+                  event.nativeEvent.keyCode,
+                )
+              ) {
+                event.preventDefault();
+                if (!disabled && (draft.trim() || image?.draft?.descriptor))
+                  event.currentTarget.form?.requestSubmit();
+              }
             }}
           />
-        )}
+        </div>
         {image?.draft && mode === "ask" && target && !imageTargets.includes(target.agentId) && (
           <p role="status" className="mt-1 text-xs text-amber-800">
             이 AI의 이미지 입력 지원이 확인되지 않았습니다. 다른 AI를 선택하거나 이미지를
