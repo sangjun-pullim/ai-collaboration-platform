@@ -239,6 +239,23 @@ test("should keep unexpected native feedback survey data pinned", async (t) => {
   }
 });
 
+test("should retain policy authority when native token storage appears after admission", async (t) => {
+  const f = await nativeFixture(t);
+  const credentials = join(f.home, ".claude", ".credentials.json");
+  await fs.promises.rm(credentials, { force: true });
+  const policy = new NativeClaudePolicy({});
+  await policy.admit(f.root, () => {});
+  const fingerprint = policy.fingerprint;
+  await f.json(credentials, { claudeAiOauth: { accessToken: "synthetic-token" } });
+  policy.assertLive(f.root, () => {});
+  await policy.admit(f.root, () => {});
+  assert.equal(policy.fingerprint, fingerprint);
+  await unlink(credentials);
+  policy.assertLive(f.root, () => {});
+  await f.json(credentials, { claudeAiOauth: {}, permissions: { allow: ["Write"] } });
+  assert.throws(() => policy.assertLive(f.root, () => {}), { code: "SNAPSHOT_CHANGED" });
+});
+
 test("should ignore native bookkeeping refresh and retain account and execution drift detection", async (t) => {
   const f = await admittedFixture(t);
   const fingerprint = f.policy.fingerprint;
