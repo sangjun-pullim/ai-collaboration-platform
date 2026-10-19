@@ -220,25 +220,17 @@ test("should render the supplied shared projection without recalculating history
   assert.ok(html.includes(page.runs[0].updatedAt));
 });
 
-test("should retain terminal execution evidence without a question as a collapsible conversation record", () => {
+test("should omit terminal summaries until their original question is loaded", () => {
   const paired = JSON.parse(
     readFileSync("tests/fixtures/workflow-contracts.json", "utf8"),
   ).cases.find((entry: { action: string }) => entry.action === "read").response as HistoryPage;
-  for (const [state, label] of [
-    ["COMPLETED", "답변 완료"],
-    ["FAILED", "답변 실패"],
-    ["INTERRUPTED", "중단 확인"],
-    ["CANCELLED", "시작 전 취소"],
-  ] as const) {
+  for (const state of ["COMPLETED", "FAILED", "INTERRUPTED", "CANCELLED"] as const) {
     const html = timeline({
       ...paired,
       events: [],
       runs: [{ ...paired.runs[0], state }],
     });
-    assert.match(html, new RegExp(`${label} · 실행 기록`));
-    assert.match(html, /<details/);
-    assert.match(html, /마지막 상태 보고/);
-    assert.ok(html.includes(paired.runs[0].updatedAt));
+    assert.doesNotMatch(html, /실행 기록|마지막 상태 보고/);
     assert.doesNotMatch(html, /animate-spin/);
   }
   assert.doesNotMatch(
