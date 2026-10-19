@@ -539,7 +539,7 @@ test(
 );
 
 test(
-  "should bound two thousand variable-height records and reenter after the cached cursor",
+  "should bound two thousand variable-height records and reenter through the recent window",
   { timeout: 300_000 },
   async () =>
     chatCase("history-2000-browser", async (f) => {
@@ -574,7 +574,9 @@ test(
             true,
           );
           const bodies: { afterSequence: number }[] = [];
+          const windows: { beforeSequence: number | null }[] = [];
           page.on("request", (request) => {
+            if (request.url().endsWith("/api/chat-history")) windows.push(request.postDataJSON());
             if (request.url().endsWith("/api/investigations/read-recovery"))
               bodies.push(request.postDataJSON());
           });
@@ -604,6 +606,15 @@ test(
           const question = records.events.find(
             (event) => event.publicText === "가상화 원문 이동 합성 질문",
           )!;
+          // Old history is loaded only by explicit user demand.
+          for (let pages = 0; pages < 60; pages++) {
+            const older = page.getByRole("button", { name: "이전 대화 보기", exact: true });
+            if (!(await older.count())) break;
+            await older.click();
+            await expect(page.getByRole("button", { name: "이전 대화 불러오는 중…" })).toHaveCount(
+              0,
+            );
+          }
           await page.evaluate((id) => {
             location.hash = `message-${id}`;
           }, question.eventId);
@@ -655,6 +666,7 @@ test(
           await page.keyboard.press("Escape");
           const back = Date.now();
           bodies.length = 0;
+          windows.length = 0;
           await expect(
             page.getByRole("dialog", { name: "AI 채팅방 목록", exact: true }),
           ).toHaveCount(0);
@@ -666,8 +678,9 @@ test(
           await expect(page.getByLabel("확정 공동 이력")).toContainText("읽는 위치 유지", {
             timeout: 30_000,
           });
-          await expect.poll(() => bodies.length).toBeGreaterThan(0);
-          assert.equal(bodies[0].afterSequence, after);
+          await expect.poll(() => windows.length).toBeGreaterThan(0);
+          assert.equal(windows[0].beforeSequence, null);
+          assert.ok(bodies.every((body) => body.afterSequence >= after));
           assert.equal(bodies.filter((body) => body.afterSequence === 0).length, 0);
           assert.ok(
             await page.locator("body").evaluate((element) => element.scrollWidth <= innerWidth + 1),
@@ -677,7 +690,7 @@ test(
               fixture: "2000 speeches, each 1024 bytes with code fence",
               width,
               firstDisplayMs: firstMs,
-              cachedReentryMs: Date.now() - back,
+              recentReentryMs: Date.now() - back,
               renderedMessages: await page.locator("article[id^='message-']").count(),
             }),
           );

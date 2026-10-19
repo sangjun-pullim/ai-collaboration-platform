@@ -22,6 +22,10 @@ sources:
 ---
 # 사람 입장·AI 채팅방·기기·실행 조정 계약
 
+## 최근 채팅과 이전 페이지
+
+`POST /api/chat-history`는 동일 출처·현재 Auth·방 접근 권한을 확인한다. 요청은 `{protocol:1, expectedUserId, roomId, beforeSequence}`이며 최근 조회는 `beforeSequence:null`, 이전 조회는 직전 `oldestSequence`를 사용한다. 양의 안전한 정수만 허용한다. 응답 `data`는 `{protocol:1,roomId,beforeSequence,oldestSequence,hasOlder,events,snapshot}`이다. `events`는 해당 경계 직전의 연속된 이벤트를 오름차순 최대40개 반환하며 전체 JSON은256KiB 이하로 제한한다. `snapshot`은 현재 상태·독립 정리 커서를 담은 기존 recovery 형식이고 events는 비어 있으며 nextCursor는 highWaterSequence다. 기존 read/read-recovery 및 연결기 계약은 유지한다. 모든 응답은 private/no-store다.
+
 ## 이미지 첨부
 
 첨부 입구는 [chat-attachments API](../src/app/api/chat-attachments/[action]/route.ts)다. 사용자는 현재 방의 세션으로 업로드·조회하며, 이미지 본문은 공개 URL 없이 권한을 재확인해 공급한다. 기기의 다운로드는 원래 request/attempt/fence와 현재 연결에 묶인다. 서버 관리자 자격증명은 고정 private bucket의 저장·삭제와 제한된 내부 RPC에만 사용한다.

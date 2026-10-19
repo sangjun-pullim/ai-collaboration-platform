@@ -1,11 +1,12 @@
 "use client";
-import { useCallback, useEffect, useLayoutEffect, useRef, type RefObject } from "react";
+import { useCallback, useEffect, useLayoutEffect, useRef, useState, type RefObject } from "react";
 import { useVirtualizer } from "@tanstack/react-virtual";
 
 export function useVirtualHistory(ids: string[], scrollRef: RefObject<HTMLDivElement | null>) {
   "use no memo";
   const pending = useRef<string | null>(null);
   const handledHash = useRef<string | null>(null);
+  const [missingTarget, setMissingTarget] = useState(false);
   const virtualizer = useVirtualizer<HTMLDivElement, HTMLLIElement>({
     count: ids.length,
     getScrollElement: () => scrollRef.current,
@@ -23,7 +24,11 @@ export function useVirtualHistory(ids: string[], scrollRef: RefObject<HTMLDivEle
   const jump = useCallback(
     (id: string) => {
       const index = ids.indexOf(id);
-      if (index < 0) return false;
+      if (index < 0) {
+        setMissingTarget(true);
+        return false;
+      }
+      setMissingTarget(false);
       pending.current = id;
       handledHash.current = `#message-${id}`;
       virtualizer.scrollToIndex(index, { align: "start" });
@@ -45,10 +50,11 @@ export function useVirtualHistory(ids: string[], scrollRef: RefObject<HTMLDivEle
     const hash = () => {
       const match = /^#message-(.+)$/.exec(location.hash);
       if (match) jump(match[1]);
+      else setMissingTarget(false);
     };
     if (handledHash.current !== location.hash) hash();
     window.addEventListener("hashchange", hash);
     return () => window.removeEventListener("hashchange", hash);
   }, [jump]);
-  return { virtualizer, items, jump };
+  return { virtualizer, items, jump, missingTarget };
 }

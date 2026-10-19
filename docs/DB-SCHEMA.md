@@ -9,6 +9,10 @@ sources:
 ---
 # 입장·AI 채팅방·기기·실행 조정 데이터 모델
 
+## 최근 채팅 조회
+
+`20261019002700-chat-history-window.sql`은 `workflow_human_history_window(jsonb)`를 추가한다. authenticated만 실행할 수 있으며 내부에서 auth.uid와 expectedUserId를 비교하고 기존 `workflow_human_read_recovery`의 현재 접근·잠금·reconcile 경로를 재사용한다. 동일 transaction의 high-water와 현재 snapshot을 확정한 뒤 `(room_id,sequence)` 인덱스로 경계 미만 이벤트를 역순 최대40개 읽는다. 응답은 오름차순이며 전체256KiB 예산에 맞는 연속된 최근 범위만 반환한다. 테이블·기존 RPC 계약은 변경하지 않는다.
+
 ## 이미지 저장과 정리
 
 [SQL025](../supabase/migrations/20261019002500-chat-image-attachments.sql)는 `chat-images` private bucket과 `chat_attachments_private` 원장을 추가한다. 업로드 예약부터 바이트를 계상하고 실제 삭제가 확인돼야 공간을 반환한다. 사용자·방 삭제에 연쇄 삭제를 붙이지 않아 저장된 파일이 원장 밖에 남는 것을 방지한다.

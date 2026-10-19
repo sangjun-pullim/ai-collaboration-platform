@@ -559,6 +559,7 @@ test("should attach historical event addresses even outside thirty-two current r
           return {
             memo: (component: unknown) => component,
             useMemo: (create: () => unknown) => create(),
+            useRef: (current: unknown) => ({ current }),
             useState: () => [
               selected,
               (value: unknown) => {
