@@ -24,6 +24,7 @@ export function providerEnvironment(source: NodeJS.ProcessEnv = process.env): No
     "GOTRUE_JWT_SECRET",
     "PGRST_JWT_SECRET",
     "SERVER_SECRET",
+    "CRON_SECRET",
     "LOCAL_AUTH_TOKEN",
     "SERVICE_ROLE_KEY",
     "SUPABASE_SERVICE_ROLE_KEY",

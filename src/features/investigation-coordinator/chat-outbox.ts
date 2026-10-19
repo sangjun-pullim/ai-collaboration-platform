@@ -1,4 +1,10 @@
-import { validateBody, WorkflowError, type Body } from "./contracts.ts";
+import {
+  validateBody,
+  validImageDescriptor,
+  WorkflowError,
+  type Body,
+  type ImageDescriptor,
+} from "./contracts.ts";
 import type { DirectIntent } from "./direct-intents.ts";
 
 export type SpeechEntry = {
@@ -8,11 +14,12 @@ export type SpeechEntry = {
   body: Body;
   createdAt: number;
   bytes: number;
+  attachment?: ImageDescriptor;
 };
 export type OutboxRead = { entry: SpeechEntry | null; expired: boolean };
 export interface SpeechOutbox {
   read(userId: string, roomId: string): Promise<OutboxRead>;
-  reserve(body: Body): Promise<SpeechEntry>;
+  reserve(body: Body, attachment?: ImageDescriptor): Promise<SpeechEntry>;
   remove(userId: string, roomId: string, operationId: string): Promise<boolean>;
   clear(userId?: string, roomId?: string): Promise<void>;
 }
@@ -89,6 +96,13 @@ export class IndexedSpeechOutbox implements SpeechOutbox {
       if (!entry) return { entry: null, expired: false };
       const body = validateBody("speak", entry.body);
       if (
+        (body.attachmentId &&
+          (!validImageDescriptor(entry.attachment) ||
+            entry.attachment.attachmentId !== body.attachmentId)) ||
+        (!body.attachmentId && entry.attachment)
+      )
+        throw new WorkflowError("INVALID_BODY");
+      if (
         body.expectedUserId !== userId ||
         body.roomId !== roomId ||
         body.operationId !== entry.operationId ||
@@ -103,14 +117,16 @@ export class IndexedSpeechOutbox implements SpeechOutbox {
       return { entry, expired: false };
     });
   }
-  async reserve(input: Body): Promise<SpeechEntry> {
+  async reserve(input: Body, attachment?: ImageDescriptor): Promise<SpeechEntry> {
     const body = validateBody("speak", input);
     if (typeof body.expectedUserId !== "string") throw new WorkflowError("FORBIDDEN");
     const userId = body.expectedUserId,
       roomId = body.roomId as string,
       operationId = body.operationId as string;
     await this.cleanupPending(userId, roomId);
-    const bytes = new TextEncoder().encode(JSON.stringify(body)).byteLength;
+    const bytes = new TextEncoder().encode(
+      JSON.stringify({ body, ...(attachment ? { attachment } : {}) }),
+    ).byteLength;
     return this.transaction(async (store) => {
       const entries = (await request(store.getAll())) as SpeechEntry[];
       const current = entries.find((entry) => entry.userId === userId && entry.roomId === roomId);
@@ -120,14 +136,25 @@ export class IndexedSpeechOutbox implements SpeechOutbox {
           current.operationId !== operationId ||
           !Number.isFinite(current.createdAt) ||
           this.now() - current.createdAt >= week ||
-          ["protocol", "roomId", "expectedUserId", "operationId", "publicText"].some(
-            (key) => current.body[key] !== body[key],
-          )
+          [
+            "protocol",
+            "roomId",
+            "expectedUserId",
+            "operationId",
+            "publicText",
+            "attachmentId",
+          ].some((key) => current.body[key] !== body[key])
         )
           throw new WorkflowError("CONFLICT");
         return current;
       }
       const owned = entries.filter((entry) => entry.userId === userId);
+      if (
+        (body.attachmentId &&
+          (!validImageDescriptor(attachment) || attachment.attachmentId !== body.attachmentId)) ||
+        (!body.attachmentId && attachment)
+      )
+        throw new WorkflowError("INVALID_BODY");
       if (
         owned.length >= 50 ||
         owned.reduce((sum, entry) => sum + entry.bytes, 0) + bytes > 1024 * 1024
@@ -140,6 +167,7 @@ export class IndexedSpeechOutbox implements SpeechOutbox {
         body,
         bytes,
         createdAt: this.now(),
+        ...(attachment ? { attachment } : {}),
       };
       await request(store.add(entry));
       return entry;

@@ -316,6 +316,19 @@ async function harness(
           DialogDescription: "p",
         };
       if (name === "./chat-composer") return { ChatComposer: "composer" };
+      if (name === "../chat-attachments/controller")
+        return { useImageCapabilities: () => [], useVisibleAttachments: () => new Map() };
+      if (name === "../chat-attachments/attachment-preview")
+        return { AttachmentPreview: "attachment-preview" };
+      if (name === "../chat-attachments/use-image-draft")
+        return { useImageDraft: () => ({ draft: null, busy: false, error: null, reset() {} }) };
+      if (name === "../chat-attachments/client")
+        return {
+          imageOnlyText: (mode: string, text: string) =>
+            text.trim() ||
+            (mode === "speak" ? "이미지를 첨부했습니다" : "첨부 이미지를 설명해주세요"),
+        };
+      if (name === "../chat-attachments/image-cache") return { clearImageCache() {} };
       if (name === "./chat-timeline")
         return {
           ...load(name, "src/features/investigation-coordinator/chat-timeline.tsx"),

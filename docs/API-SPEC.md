@@ -22,6 +22,12 @@ sources:
 ---
 # 사람 입장·AI 채팅방·기기·실행 조정 계약
 
+## 이미지 첨부
+
+첨부 입구는 [chat-attachments API](../src/app/api/chat-attachments/[action]/route.ts)다. 사용자는 현재 방의 세션으로 업로드·조회하며, 이미지 본문은 공개 URL 없이 권한을 재확인해 공급한다. 기기의 다운로드는 원래 request/attempt/fence와 현재 연결에 묶인다. 서버 관리자 자격증명은 고정 private bucket의 저장·삭제와 제한된 내부 RPC에만 사용한다.
+
+일반 메시지와 직접 질문의 선택적 `attachmentId`는 같은 operationId의 불변 입력이다. 구버전 기기는 이미지 질문을 claim할 수 없다. 이미지 지원 보고는 준비 보고와 별개이며 실제 검증된 공급자 버전만 보고한다. 이미지 준비 실패의 `fail-image-before-input`은 입력 전 증거가 있는 원래 시도만 종결하며 기존 Claude 텍스트 실패 계약을 대체하지 않는다.
+
 Git 기준과 작업트리의 사람 cookie Auth·기기 bearer·내구 조사·소유자 설정 계약을 설명한다. 실행 보고와 실제 provider 종결의 검증은 구분한다. 진행 상태와 검증 수치는 [개발 순서와 검증 계획](planning/delivery-and-validation.md#현재-진행-상태)에 유지한다.
 
 ## 공통 요청과 응답

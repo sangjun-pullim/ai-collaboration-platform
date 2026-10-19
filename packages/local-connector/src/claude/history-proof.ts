@@ -26,11 +26,13 @@ import {
 import { validToolPolicy, repositoryMode } from "../workspace/repository-access.ts";
 import { object, type OwnedHistory } from "./owned-history.ts";
 import { proveNativeHistory } from "./native-history-proof.ts";
+import { inputText as contentText, type ImageInputProof } from "../workflow/image-content.ts";
 
 type Receipt = { callId: string; payloadHash: string; responseHash: string };
 type Input = {
   id: string;
   promptHash: string;
+  imageInput?: ImageInputProof;
   receipts: Receipt[];
   cancellations: NativeToolCancellation[];
   interruption?: NativeInterruption;
@@ -81,20 +83,11 @@ function interruptionMatches(
   return true;
 }
 
-function inputText(frame: Record<string, unknown>): string | null {
+function inputText(frame: Record<string, unknown>, proof?: ImageInputProof): string | null {
   if (frame.type !== "user" || frame.parent_tool_use_id != null) return null;
   const message = object(frame.message);
   if (message.role !== "user") throw new RuntimeError("UNKNOWN");
-  const content = message.content;
-  if (typeof content === "string") return content;
-  if (
-    Array.isArray(content) &&
-    content.length === 1 &&
-    object(content[0]).type === "text" &&
-    typeof object(content[0]).text === "string"
-  )
-    return object(content[0]).text as string;
-  return null;
+  return contentText(message.content, proof);
 }
 
 function toolResult(
@@ -177,6 +170,7 @@ export function proveOwnedHistory(
     inputs.set(turn.turnId, {
       id: turn.turnId,
       promptHash: turn.promptHash,
+      imageInput: turn.imageInput,
       receipts: turn.toolReceipts,
       cancellations: turn.toolCancellations ?? [],
       interruption: turn.nativeInterruption,
@@ -188,6 +182,7 @@ export function proveOwnedHistory(
     const existing = inputs.get(candidate.turnId)!;
     if (
       existing.promptHash !== candidate.intent.promptHash ||
+      stableJson(existing.imageInput ?? null) !== stableJson(candidate.intent.imageInput ?? null) ||
       stableJson(existing.toolPolicy ?? null) !== stableJson(candidate.intent.toolPolicy ?? null) ||
       stableJson(existing.interruption ?? null) !==
         stableJson(candidate.nativeInterruption ?? null) ||
@@ -199,6 +194,7 @@ export function proveOwnedHistory(
     inputs.set(candidate.turnId, {
       id: candidate.turnId,
       promptHash: candidate.intent.promptHash,
+      imageInput: candidate.intent.imageInput,
       toolPolicy: candidate.intent.toolPolicy,
       cancellations: candidate.toolCancellations ?? [],
       interruption: candidate.nativeInterruption,
@@ -270,7 +266,10 @@ export function proveOwnedHistory(
         : [];
       continue;
     }
-    const prompt = inputText(frame);
+    const prompt = inputText(
+      frame,
+      typeof frame.uuid === "string" ? inputs.get(frame.uuid)?.imageInput : undefined,
+    );
     if (prompt !== null) {
       if (
         (current && !completed.has(current.id)) ||
@@ -307,6 +306,7 @@ export function proveOwnedHistory(
         current.promptHash,
         allowed,
         policy,
+        current.imageInput,
       );
       proof.user(frame);
       continue;

@@ -150,7 +150,11 @@ function completedRequests(value: RuntimeRecord): string[] {
     const attempts = value.attempts.filter((a) => a.requestId === requestId);
     if (
       !attempts.some(
-        (a) => a.state === "UPLOADED" || a.unstartedClosure?.kind === "SERVER_PREINPUT_REJECTED",
+        (a) =>
+          a.state === "UPLOADED" ||
+          ["SERVER_PREINPUT_REJECTED", "SERVER_ATTACHMENT_REJECTED"].includes(
+            a.unstartedClosure?.kind ?? "",
+          ),
       ) ||
       attempts.some(
         (a) => a.state !== "UPLOADED" && !(a.state === "NOT_STARTED" && a.unstartedClosure),

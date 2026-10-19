@@ -8,6 +8,7 @@ import {
   type RepositoryToolPolicy,
 } from "../runtime-contracts.ts";
 import { isId as uuid } from "../contracts.ts";
+import { inputText, type ImageInputProof } from "../workflow/image-content.ts";
 import { validateToolArguments, isNativeRepositoryTool } from "../workspace/tool-contracts.ts";
 import { validToolPolicy } from "../workspace/repository-access.ts";
 import { object } from "./owned-history.ts";
@@ -205,6 +206,7 @@ export class NativeInputProof {
       mode: "SELECTED",
       peerAllowed: allowedTools.includes(`mcp__${OWNED_SERVER}__ask_peer`),
     },
+    private readonly imageInput?: ImageInputProof,
   ) {
     if (
       !uuid(sessionId) ||
@@ -255,9 +257,7 @@ export class NativeInputProof {
     const message = object(frame.message);
     if (message.role !== "user") throw new RuntimeError("UNKNOWN");
     if (frame.uuid === this.inputId) {
-      let content = message.content;
-      if (Array.isArray(content) && content.length === 1 && content[0]?.type === "text")
-        content = content[0].text;
+      const content = inputText(message.content, this.imageInput);
       if (typeof content !== "string" || digest(content) !== this.promptHash || this.#ack) {
         throw new RuntimeError("UNKNOWN");
       }

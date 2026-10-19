@@ -51,6 +51,10 @@ function component(
           };
         if (id === "react/jsx-runtime") return jsxRuntime;
         if (id === "./chat-presentation") return dependencies;
+        if (id === "../chat-attachments/controller")
+          return { useVisibleAttachments: () => new Map() };
+        if (id === "../chat-attachments/attachment-preview")
+          return { AttachmentPreview: () => null };
         if (id === "./chat-markdown") return { ChatMarkdown };
         if (id === "./run-source-view")
           return { RunSourceView: () => createElement("span", null, "저장소·자료") };

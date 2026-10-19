@@ -249,6 +249,16 @@ export async function runnerFixture(
         return fail(401, "UNAUTHENTICATED");
       }
       let result: unknown;
+      if (String(url).includes("/api/chat-attachments/")) {
+        if (action === "capability") return new Response(null, { status: 204 });
+        if (action === "device-download") {
+          const bytes = Buffer.from("synthetic image bytes");
+          return new Response(bytes, {
+            headers: { "content-type": "image/png", "content-length": String(bytes.length) },
+          });
+        }
+        return fail(404, "NOT_FOUND");
+      }
       if (connectorAction) {
         if (action === "bindings") result = { protocol: 1, bindings: [binding()] };
         else {
@@ -445,7 +455,7 @@ export async function runnerFixture(
                 accepted: true,
                 cycleState: "ACTIVE",
               };
-            } else if (action === "fail-before-input") {
+            } else if (action === "fail-before-input" || action === "fail-image-before-input") {
               if (!["EXECUTING", "UNKNOWN"].includes(attempt.state) || !attempt.startIntentAt)
                 return fail(409, "CONFLICT");
               attempt.state = "FAILED";
@@ -455,7 +465,10 @@ export async function runnerFixture(
                 fence: attempt.fence,
                 bindingEpoch: attempt.bindingEpoch,
                 state: "FAILED",
-                kind: "PREINPUT_REJECTED",
+                kind:
+                  action === "fail-image-before-input"
+                    ? "ATTACHMENT_PREINPUT_REJECTED"
+                    : "PREINPUT_REJECTED",
                 proofHash: body.proofHash,
                 adoption: "HUMAN_INPUT_REQUIRED",
               };

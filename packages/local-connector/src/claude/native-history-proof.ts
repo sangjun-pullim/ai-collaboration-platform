@@ -1,4 +1,5 @@
 import { isHash, isId } from "../contracts.ts";
+import { inputText, type ImageInputProof } from "../workflow/image-content.ts";
 import { createHash } from "node:crypto";
 import {
   RuntimeError,
@@ -23,7 +24,7 @@ import {
 
 type Conversation = { inputId: string; index: number; value: string }[];
 type Receipt = NonNullable<OwnedContext["ownedTurns"][number]["toolReceipts"]>[number];
-type Input = InterruptionInput & { receipts: readonly Receipt[] };
+type Input = InterruptionInput & { receipts: readonly Receipt[]; imageInput?: ImageInputProof };
 const rejected = () => new RuntimeError("CONTEXT_UNCONFIRMED");
 
 function promptText(message: Record<string, unknown>): string | null {
@@ -77,6 +78,8 @@ function parseConversation(
   let current: string | undefined;
   let toolBlocks = new Map<string, Record<string, unknown>>();
   let queued = false;
+  let imagePasteId: number | null = null;
+  let imageCompanionSeen = false;
   for (const [index, frame] of history.records.entries()) {
     if (frame.type === "file-history-snapshot") {
       if (!isId(frame.messageId) || !expected.has(frame.messageId)) throw rejected();
@@ -90,6 +93,7 @@ function parseConversation(
         context.threadId,
         parent,
         inputs[started.length]?.promptHash,
+        !!inputs[started.length]?.imageInput,
       );
       if (metadata) {
         if (metadata === "ENQUEUE") {
@@ -122,6 +126,27 @@ function parseConversation(
       continue;
     }
     const message = object(frame.message);
+    if (frame.type === "user" && frame.isMeta === true && frame.turnCompanion === true) {
+      const owner = current ? byInput.get(current) : undefined;
+      const content = message.content;
+      const path = `claude-${context.root.uid}/${context.root.path.replace(/[^a-zA-Z0-9]/g, "-")}/${context.threadId}/images/${imagePasteId}`;
+      if (
+        !owner?.imageInput ||
+        imagePasteId === null ||
+        imageCompanionSeen ||
+        !Array.isArray(content) ||
+        content.length !== 1 ||
+        object(content[0]).type !== "text" ||
+        !["/private/tmp/", "/tmp/"].some((prefix) =>
+          ["png", "jpeg", "jpg", "webp"].some(
+            (ext) => object(content[0]).text === `[Image: source: ${prefix}${path}.${ext}]`,
+          ),
+        )
+      )
+        throw rejected();
+      imageCompanionSeen = true;
+      continue;
+    }
     if (frame.type === "assistant" && Array.isArray(message.content)) {
       for (const block of message.content.map(object))
         if (block.type === "tool_use" && typeof block.id === "string")
@@ -138,13 +163,27 @@ function parseConversation(
       )
     )
       continue;
-    const prompt = frame.type === "user" ? promptText(message) : null;
+    const ownedInput = byInput.get(String(frame.uuid));
+    const prompt =
+      frame.type === "user" ? inputText(message.content, ownedInput?.imageInput) : null;
     if (prompt !== null) {
       if (digest(prompt) !== expected.get(frame.uuid) || started.includes(frame.uuid))
         throw rejected();
       if (inputs[started.length]?.turnId !== frame.uuid) throw rejected();
       started.push(frame.uuid);
       current = frame.uuid;
+      imagePasteId = null;
+      imageCompanionSeen = false;
+      if (ownedInput?.imageInput) {
+        if (
+          !Array.isArray(frame.imagePasteIds) ||
+          frame.imagePasteIds.length !== 1 ||
+          !Number.isSafeInteger(frame.imagePasteIds[0]) ||
+          frame.imagePasteIds[0] < 1
+        )
+          throw rejected();
+        imagePasteId = frame.imagePasteIds[0];
+      }
       toolBlocks = new Map();
     } else {
       if (!current || !Array.isArray(message.content) || message.content.length > 64)
@@ -303,6 +342,7 @@ export function proveNativeHistory(
     return {
       turnId: turn.turnId,
       promptHash: turn.promptHash,
+      imageInput: turn.imageInput,
       receipts: turn.toolReceipts ?? [],
       interruption: {
         terminal: turn.terminal,
@@ -323,11 +363,17 @@ export function proveNativeHistory(
     )
       throw rejected();
     const owned = inputs.find((input) => input.turnId === candidate.turnId);
-    if (owned && owned.promptHash !== intent.promptHash) throw rejected();
+    if (
+      owned &&
+      (owned.promptHash !== intent.promptHash ||
+        stableJson(owned.imageInput ?? null) !== stableJson(intent.imageInput ?? null))
+    )
+      throw rejected();
     if (!owned)
       inputs.push({
         turnId: candidate.turnId,
         promptHash: intent.promptHash,
+        imageInput: intent.imageInput,
         receipts: (candidate.toolCalls ?? [])
           .filter((call) => call.result !== null)
           .map((call) => ({
@@ -378,6 +424,7 @@ export function checkpointNativeHistory(
       return {
         turnId: turn.turnId,
         promptHash: turn.promptHash,
+        imageInput: turn.imageInput,
         receipts: turn.toolReceipts ?? [],
         interruption: {
           terminal: turn.terminal,
@@ -389,6 +436,7 @@ export function checkpointNativeHistory(
     inputs.push({
       turnId: intent.inputId,
       promptHash: intent.promptHash,
+      imageInput: intent.imageInput,
       receipts: [...receipts],
       interruption,
     });

@@ -57,6 +57,8 @@ function harness() {
           },
         };
       if (name === "./chat-presentation") return { shouldSendOnEnter };
+      if (name === "../chat-attachments/attachment-picker")
+        return { AttachmentPicker: "attachment-picker" };
       if (name === "../../components/ui/button") return { Button: "button" };
       if (name === "../../components/ui/textarea") return { Textarea: "textarea" };
       if (name === "lucide-react") return { Send: "icon" };
@@ -332,4 +334,70 @@ test("should grow only for draft content and shrink after clearing it", () => {
   h.input.scrollHeight = 36;
   h.render();
   assert.equal(h.input.style.height, "36px");
+});
+test("should accept image selection paste and drop without requiring text or enabling unsupported targets", () => {
+  const h = harness();
+  const agentId = "00000000-0000-4000-8000-000000000099";
+  const selected: unknown[] = [];
+  const image = {
+    draft: {
+      url: "blob:synthetic",
+      descriptor: { attachmentId: "00000000-0000-4000-8000-000000000098" },
+    },
+    busy: false,
+    error: null,
+    select(files: unknown[]) {
+      selected.push(files);
+    },
+    reset() {},
+    retry() {},
+  };
+  Object.assign(h.props, { image, imageTargets: [agentId] });
+  h.props.target = { agentId } as PublicBinding;
+  h.props.draft = "";
+  let tree = h.render();
+  assert.equal(nodes(tree).find((node) => node.type === "textarea")!.props.required, false);
+  assert.equal(
+    nodes(tree).find((node) => node.props["aria-label"] === "AI에 질문 보내기")!.props.disabled,
+    false,
+  );
+  h.key(tree);
+  assert.equal(h.requests(), 1);
+  const form = nodes(tree).find((node) => node.type === "form")!;
+  let prevented = 0;
+  const file = { type: "image/png" };
+  (form.props.onPaste as (event: unknown) => void)({
+    clipboardData: { files: [file] },
+    preventDefault() {
+      prevented++;
+    },
+  });
+  (form.props.onDrop as (event: unknown) => void)({
+    dataTransfer: { files: [file] },
+    preventDefault() {
+      prevented++;
+    },
+  });
+  assert.equal(prevented, 2);
+  assert.equal(selected.length, 2);
+  Object.assign(h.props, { imageTargets: [] });
+  tree = h.render();
+  assert.equal(
+    nodes(tree).find((node) => node.props["aria-label"] === "AI에 질문 보내기")!.props.disabled,
+    true,
+  );
+  assert.ok(
+    nodes(tree).some((node) =>
+      String(node.props.children).includes("이미지 입력 지원이 확인되지 않았습니다"),
+    ),
+  );
+  h.props.pending = true;
+  tree = h.render();
+  (nodes(tree).find((node) => node.type === "form")!.props.onPaste as (event: unknown) => void)({
+    clipboardData: { files: [file] },
+    preventDefault() {
+      prevented++;
+    },
+  });
+  assert.equal(selected.length, 2);
 });

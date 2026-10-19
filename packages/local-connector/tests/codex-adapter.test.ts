@@ -10,6 +10,7 @@ import {
 import { FakeProvider } from "./fake-provider.ts";
 import { capabilities, runtimeFixture, observation, uuid } from "./runtime-fixture.ts";
 import { deferred } from "./runner-fixture.ts";
+import { createImageFile, removeImageFile } from "../src/workflow/image-file.ts";
 
 type OriginPolicy = {
   config: Record<string, unknown>;
@@ -941,79 +942,101 @@ test("should reject explicit model aliases and effort clamps while keeping null 
     }
   }
 });
-test("should report only same-turn reroutes without treating native effort annotations as verification", async () => {
-  const f = await runtimeFixture(),
-    p = new FakeProvider(),
-    a = new CodexAdapter({ transportFactory: (_cwd, overrides) => p.launch(overrides) });
-  try {
-    const context = await a.prepare(f.policy.root, f.settings, uuid(), 1, () => {}),
-      turnId = "SYNTHETIC_OWNED_TURN";
-    const payload = {
-      requestId: uuid(),
-      cycleId: uuid(),
-      agentId: f.scope.agentId,
-      bindingEpoch: 1,
-      roomRevision: 1,
-      requestKind: "ORIGIN" as const,
-      questionId: null,
-      publicText: "SYNTHETIC_PUBLIC",
-      replyText: null,
-      deadline: new Date(Date.now() + 10000).toISOString(),
-    };
-    const authority: AttemptAuthority = {
-      scope: f.scope,
-      context,
-      attempt: {
-        requestId: payload.requestId,
-        attemptId: uuid(),
+for (const withImage of [false, true])
+  test(`should report only same-turn reroutes without treating native effort annotations as verification (image=${withImage})`, async () => {
+    const f = await runtimeFixture(),
+      p = new FakeProvider(),
+      a = new CodexAdapter({ transportFactory: (_cwd, overrides) => p.launch(overrides) });
+    try {
+      const context = await a.prepare(f.policy.root, f.settings, uuid(), 1, () => {}),
+        turnId = "SYNTHETIC_OWNED_TURN";
+      const payload = {
+        requestId: uuid(),
+        cycleId: uuid(),
         agentId: f.scope.agentId,
         bindingEpoch: 1,
-        fence: 1,
-        state: "EXECUTING",
-        leaseExpiresAt: payload.deadline,
-        startIntentAt: new Date().toISOString(),
-        payload,
-      },
-      signal: new AbortController().signal,
-      assertLive() {},
-      ack: async () => {},
-      tool: async () => ({ success: false, contentItems: [] }),
-    };
-    p.response = (method) => {
-      if (method !== "turn/start") return;
-      queueMicrotask(() => {
-        p.emit("model/rerouted", {
-          threadId: context.threadId,
-          turnId: "SYNTHETIC_OTHER_TURN",
-          toModel: "SYNTHETIC_UNOWNED",
+        roomRevision: 1,
+        requestKind: "ORIGIN" as const,
+        questionId: null,
+        publicText: "SYNTHETIC_PUBLIC",
+        replyText: null,
+        deadline: new Date(Date.now() + 10000).toISOString(),
+      };
+      const authority: AttemptAuthority = {
+        scope: f.scope,
+        context,
+        attempt: {
+          requestId: payload.requestId,
+          attemptId: uuid(),
+          agentId: f.scope.agentId,
+          bindingEpoch: 1,
+          fence: 1,
+          state: "EXECUTING",
+          leaseExpiresAt: payload.deadline,
+          startIntentAt: new Date().toISOString(),
+          payload,
+        },
+        signal: new AbortController().signal,
+        assertLive() {},
+        ack: async () => {},
+        tool: async () => ({ success: false, contentItems: [] }),
+      };
+      if (withImage) {
+        await f.store.write(f.record);
+        const bytes = Buffer.from("synthetic image");
+        const descriptor = {
+          attachmentId: uuid(),
+          mime: "image/png" as const,
+          bytes: bytes.length,
+          width: 10,
+          height: 10,
+          sha256: digest(bytes),
+        };
+        authority.attempt.payload.attachment = descriptor;
+        authority.image = await createImageFile(f.store.dir, descriptor, bytes);
+      }
+      p.response = (method) => {
+        if (method !== "turn/start") return;
+        queueMicrotask(() => {
+          p.emit("model/rerouted", {
+            threadId: context.threadId,
+            turnId: "SYNTHETIC_OTHER_TURN",
+            toModel: "SYNTHETIC_UNOWNED",
+          });
+          p.emit("model/rerouted", { threadId: context.threadId, turnId, toModel: "test-b" });
+          p.emit("turn/completed", {
+            threadId: context.threadId,
+            turn: {
+              id: turnId,
+              status: "completed",
+              itemsView: "full",
+              items: [],
+              reasoningEffort: "high",
+              effortVerification: "VERIFIED",
+            },
+          });
         });
-        p.emit("model/rerouted", { threadId: context.threadId, turnId, toModel: "test-b" });
-        p.emit("turn/completed", {
-          threadId: context.threadId,
-          turn: {
-            id: turnId,
-            status: "completed",
-            itemsView: "full",
-            items: [],
-            reasoningEffort: "high",
-            effortVerification: "VERIFIED",
-          },
-        });
-      });
-      return { turn: { id: turnId } };
-    };
-    const evidence = await a.execute(authority, f.settings, payload, async () => {});
-    assert.equal(evidence.observation.turn.model, "test-b");
-    assert.equal(evidence.observation.turn.rerouted, true);
-    assert.equal(evidence.observation.turn.effortVerification, "UNVERIFIED");
-    assert.deepEqual(evidence.observation.requested, f.settings.requested);
-    assert.equal(evidence.observation.thread.effort, "low");
-    assert.equal(evidence.observation.turn.requestedEffort, "low");
-  } finally {
-    await a.close();
-    await f.close();
-  }
-});
+        return { turn: { id: turnId } };
+      };
+      const evidence = await a.execute(authority, f.settings, payload, async () => {});
+      if (withImage) {
+        const turn = p.calls.find((call) => call.method === "turn/start")!;
+        assert.deepEqual((turn.params.input as unknown[]).slice(1), [
+          { type: "localImage", path: authority.image!.path },
+        ]);
+        await removeImageFile(authority.image!);
+      }
+      assert.equal(evidence.observation.turn.model, "test-b");
+      assert.equal(evidence.observation.turn.rerouted, true);
+      assert.equal(evidence.observation.turn.effortVerification, "UNVERIFIED");
+      assert.deepEqual(evidence.observation.requested, f.settings.requested);
+      assert.equal(evidence.observation.thread.effort, "low");
+      assert.equal(evidence.observation.turn.requestedEffort, "low");
+    } finally {
+      await a.close();
+      await f.close();
+    }
+  });
 function personalFixture(p: FakeProvider) {
   const server = {
     command: "SYNTHETIC_COMMAND",

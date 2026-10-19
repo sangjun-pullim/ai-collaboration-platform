@@ -79,6 +79,15 @@ export function assertOwnedConfig(config: StackConfig) {
       );
   }
 }
+export function ownedStackContainerNames(names: string[]) {
+  const storage = `supabase_storage_${OWNED_PROJECT}`;
+  return (
+    ((names.length === 6 && !names.includes(storage)) ||
+      (names.length === 7 && names.includes(storage))) &&
+    new Set(names).size === names.length &&
+    names.every((name) => name.startsWith("supabase_") && name.endsWith(`_${OWNED_PROJECT}`))
+  );
+}
 export async function assertOwnedStack(config: StackConfig) {
   assertOwnedConfig(config);
   let names: string[];
@@ -104,9 +113,8 @@ export async function assertOwnedStack(config: StackConfig) {
     throw new Error("Owned local stack identity could not be verified");
   }
   ensure(
-    names.length === 6 &&
-      names.every((name) => name.startsWith("supabase_") && name.endsWith(`_${OWNED_PROJECT}`)),
-    "Owned stack must contain exactly its six containers",
+    ownedStackContainerNames(names),
+    "Owned stack must contain its six containers with at most one private Storage container",
   );
   for (const service of ["kong", "db", "inbucket"])
     ensure(
@@ -170,7 +178,10 @@ export async function assertOwnedStack(config: StackConfig) {
   }
   ensure(found.size === 3, "Owned stack loopback bindings are incomplete");
 }
-export function productEnvironment(env: NodeJS.ProcessEnv = process.env): NodeJS.ProcessEnv {
+export function productEnvironment(
+  env: NodeJS.ProcessEnv = process.env,
+  target: "browser" | "server" = "browser",
+): NodeJS.ProcessEnv {
   const keys = [
     "PATH",
     "TMPDIR",
@@ -183,6 +194,7 @@ export function productEnvironment(env: NodeJS.ProcessEnv = process.env): NodeJS
     "SUPABASE_URL",
     "SUPABASE_PUBLISHABLE_KEY",
     "APP_ORIGIN",
+    ...(target === "server" ? ["AI_COLLAB_IMAGE_STORAGE_SECRET", "CRON_SECRET"] : []),
   ];
   return Object.fromEntries(
     keys.filter((key) => env[key] !== undefined).map((key) => [key, env[key]]),

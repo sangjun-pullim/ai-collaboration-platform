@@ -1,4 +1,5 @@
 import { createHash } from "node:crypto";
+import type { ImageInputProof, PreparedImage } from "./workflow/image-content.ts";
 import type {
   AttemptSnapshot,
   Body,
@@ -7,6 +8,8 @@ import type {
   Terminal,
   TerminalReceipt,
   PreinputFailureReceipt,
+  AttachmentFailureReceipt,
+  attachmentPreinputReasons,
 } from "./workflow-contracts.ts";
 
 export const runtimeVersion = 1 as const;
@@ -62,6 +65,19 @@ export interface PreinputRejection {
   attemptId: string;
   fence: number;
   reason: "SNAPSHOT_CHANGED" | "POLICY_REJECTED" | "LOCAL_VALIDATION_FAILED";
+}
+export interface AttachmentPreinputRejection {
+  version: 1;
+  kind: "ATTACHMENT_PREINPUT_REJECTED";
+  provider: RuntimeProvider;
+  scope: RuntimeScope;
+  generation: string;
+  requestId: string;
+  attemptId: string;
+  fence: number;
+  descriptor: ImageInputProof["descriptor"];
+  payloadHash: string;
+  reason: (typeof attachmentPreinputReasons)[number];
 }
 /** Only the adapter's child-free validation boundary may issue this evidence. */
 export class PreinputRejectedError extends RuntimeError {
@@ -212,6 +228,7 @@ export interface OwnedContext {
     turnId: string;
     terminal: Terminal;
     promptHash?: string;
+    imageInput?: ImageInputProof;
     resultHash?: string;
     toolReceipts?: { callId: string; payloadHash: string; responseHash: string }[];
     toolCancellations?: NativeToolCancellation[];
@@ -290,6 +307,8 @@ export interface AttemptJournal {
   state: JournalState;
   claimOperationId?: string;
   preinputRejection?: PreinputRejection;
+  attachmentPreinputRejection?: AttachmentPreinputRejection;
+  imageProviderCall?: { version: 1; payloadHash: string };
   unstartedClosure?:
     | { kind: "LOCAL_NOT_TRANSMITTED"; claimOperationId: string }
     | { kind: "SERVER_INPUT_PAUSED"; claimOperationId: string }
@@ -299,6 +318,12 @@ export interface AttemptJournal {
         claimOperationId: string;
         proofHash: string;
         receipt: PreinputFailureReceipt;
+      }
+    | {
+        kind: "SERVER_ATTACHMENT_REJECTED";
+        claimOperationId: string;
+        proofHash: string;
+        receipt: AttachmentFailureReceipt;
       };
   snapshot: AttemptSnapshot | null;
   native: { threadId: string; turnId: string } | null;
@@ -360,6 +385,7 @@ export interface ToolCall {
   arguments: unknown;
 }
 export interface AttemptAuthority {
+  image?: PreparedImage;
   scope: RuntimeScope;
   context: OwnedContext;
   attempt: AttemptSnapshot;
@@ -377,6 +403,7 @@ export interface NativeInputIntent {
   sessionId: string;
   inputId: string;
   promptHash: string;
+  imageInput?: ImageInputProof;
   generation: string;
   scope: RuntimeScope;
   attemptId: string;
@@ -393,6 +420,12 @@ export type NativeObservation = {
   nativeInterruption?: NativeInterruption;
 };
 export interface RuntimeAdapter {
+  imageInputVersion?: 1;
+  preflightImage?(
+    authority: AttemptAuthority,
+    settings: RuntimeSettings,
+    payload: RequestPayload,
+  ): Promise<void>;
   capabilities(root: string, assertLive: () => void): Promise<Capabilities>;
   prepare(
     root: RootIdentity,

@@ -1,4 +1,6 @@
 import { isModelDisplayName, omitOversizedModelDisplayNames } from "./settings/contracts.ts";
+import { checkImage } from "./workflow/image-content.ts";
+import { imageFilePath } from "./workflow/image-file.ts";
 import {
   codexVersion,
   digest,
@@ -1023,6 +1025,12 @@ export class CodexAdapter implements RuntimeAdapter {
       return result;
     });
     try {
+      let imagePath: string | undefined;
+      if (payload.attachment) {
+        if (!authority.image) throw new RuntimeError("INVALID_RUNTIME");
+        checkImage(authority.image, payload.attachment);
+        imagePath = await imageFilePath(authority.image);
+      } else if (authority.image) throw new RuntimeError("INVALID_RUNTIME");
       await beforeSubmit();
       check();
       await this.revalidate(client, authority.context.root.path, check);
@@ -1042,7 +1050,10 @@ export class CodexAdapter implements RuntimeAdapter {
         await client.request("turn/start", {
           threadId: authority.context.threadId,
           cwd: authority.context.root.path,
-          input: [{ type: "text", text: prompt, text_elements: [] }],
+          input: [
+            { type: "text", text: prompt, text_elements: [] },
+            ...(imagePath ? [{ type: "localImage", path: imagePath }] : []),
+          ],
           model: settings.requested.model,
           effort: settings.requested.effort,
           approvalPolicy: "never",

@@ -254,6 +254,8 @@ test("should preserve native user environment without product fixture or reserve
     "GOTRUE_JWT_SECRET",
     "PGRST_JWT_SECRET",
     "SERVER_SECRET",
+    "CRON_SECRET",
+    "AI_COLLAB_IMAGE_STORAGE_SECRET",
     "LOCAL_AUTH_TOKEN",
     "SERVICE_ROLE_KEY",
     "SUPABASE_SERVICE_ROLE_KEY",
