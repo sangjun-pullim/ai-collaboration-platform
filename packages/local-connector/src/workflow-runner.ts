@@ -1,6 +1,10 @@
 import { createAttemptAuthority } from "./workflow/attempt-authority.ts";
 import { checkImage } from "./workflow/image-content.ts";
-import { createImageFile, removeImageFile } from "./workflow/image-file.ts";
+import {
+  createImageFile,
+  removeImageFile,
+  removeRecoveredImageFile,
+} from "./workflow/image-file.ts";
 import { isOriginRoleRequestKind } from "./workspace/tool-contracts.ts";
 import { projectSourceManifest } from "./workflow/source-manifest.ts";
 import { publishSource } from "./workflow/source-publisher.ts";
@@ -368,6 +372,8 @@ export class WorkflowRunner {
     const job = this.mutations.then(async () => {
       this.check();
       await this.store.drainWrites();
+      // Retain the durable request while its owned file still needs cleanup.
+      if (!(await this.cleanupTerminalImages())) return;
       const needsCompaction =
         force ||
         this.record.operations.length > 768 ||
@@ -817,6 +823,36 @@ export class WorkflowRunner {
   private imageVersion(): { imageInputVersion?: 1 } {
     return this.adapter.imageInputVersion === 1 ? { imageInputVersion: 1 } : {};
   }
+  private imageOwner(attempt: AttemptJournal): string {
+    const snapshot = attempt.snapshot!;
+    return digest(
+      stableJson({
+        agentId: this.record.scope.agentId,
+        journalKey: this.journalKey(attempt),
+        requestId: snapshot.requestId,
+        attemptId: snapshot.attemptId,
+        fence: snapshot.fence,
+        descriptor: snapshot.payload.attachment,
+      }),
+    );
+  }
+  private async cleanupTerminalImages(): Promise<boolean> {
+    let complete = true;
+    for (const attempt of this.record.attempts) {
+      const descriptor = attempt.snapshot?.payload.attachment;
+      if (
+        !descriptor ||
+        !(attempt.terminal || (attempt.state === "NOT_STARTED" && attempt.unstartedClosure))
+      )
+        continue;
+      try {
+        await removeRecoveredImageFile(this.store.dir, this.imageOwner(attempt), descriptor);
+      } catch {
+        complete = false;
+      }
+    }
+    return complete;
+  }
   private async prepareAttachment(
     key: string,
     authority: AttemptAuthority,
@@ -851,7 +887,12 @@ export class WorkflowRunner {
       checkImage(image, descriptor);
       authority.image = image;
       if (this.record.settings?.provider !== "claude")
-        authority.image = await createImageFile(this.store.dir, descriptor, bytes);
+        authority.image = await createImageFile(
+          this.store.dir,
+          descriptor,
+          bytes,
+          this.imageOwner(this.journal(key)),
+        );
       try {
         await this.adapter.preflightImage(authority, this.record.settings!, payload);
       } catch (error) {
@@ -1018,6 +1059,7 @@ export class WorkflowRunner {
         return await run(recovered);
       } finally {
         await this.shutdown();
+        await this.cleanupTerminalImages().catch(() => false);
         this.retired = true;
         this.lockHeld = false;
       }
