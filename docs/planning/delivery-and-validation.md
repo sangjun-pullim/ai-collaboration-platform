@@ -25,7 +25,7 @@
 
 ### 2026-10-19 이미지 첨부
 
-[이미지 첨부 계획](../impl-spec/046-chat-image-attachments.md)에 따라 일반 메시지와 지정 Claude AI에 이미지1장을 보낼 수 있게 구현했다. PNG/JPEG/WebP를2048px·512KiB로 제한하고 private Storage 권한을 확인한다. 예약 포함75%에서 오래된 이미지를 정리하며 진행·UNKNOWN 이미지는 보호한다. Codex 이미지 입력은 설치 버전의 실제 검증 전까지 비활성화한다. 웹829개·연결기1265개, 실제DB7개와 실제Storage/브라우저1개를 통과했고 두 영역의 독립 리뷰를 완료했다. 운영 SQL025 적용과 비밀 변수 등록을 마쳤으며 최종 웹 배포 확인을 진행 중이다.
+[이미지 첨부 계획](../impl-spec/archive/046-chat-image-attachments.md)에 따라 일반 메시지와 지정 Claude AI에 이미지1장을 보낼 수 있게 구현했다. PNG/JPEG/WebP를2048px·512KiB로 제한하고 private Storage 권한을 확인한다. 예약 포함75%에서 오래된 이미지를 정리하며 진행·UNKNOWN 이미지는 보호한다. Codex 이미지 입력은 설치 버전의 실제 검증 전까지 비활성화한다. 웹829개·연결기1265개, 실제DB7개와 실제Storage/브라우저1개를 통과했고 두 영역의 독립 리뷰를 완료했다. 운영 SQL025와 비밀 변수 등록, [PR #59](https://github.com/sangjun-pullim/ai-collaboration-platform/pull/59) main 병합 및 운영 READY를 확인했다. 운영 미인증 접근 차단·인증된 정리·배포 연결 프로그램 무결성 검사도 통과했다. Claude 이미지 사용에는 최신 웹 연결 명령으로 연결 프로그램을 다시 실행해야 한다. Codex 임시 이미지의 재시작 후 정리는 활성화 전 후속 항목이다.
 
 ### 2026-10-16 연결 확인 피드백·입력 전 실패 복구
 
