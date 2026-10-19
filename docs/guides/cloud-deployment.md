@@ -15,7 +15,7 @@
 | 실행 환경 | Node.js 24, Next.js |
 | 웹 함수 지역 | `vercel.json`의 `sin1`. DB와 같은 지역을 사용 |
 
-계정의 브라우저 로그인과 CLI 로그인은 별개다. CLI 자격증명은 운영자의 Mac에 보관한다. 관리자 키·DB 비밀번호·AI 로그인은 웹 환경 변수로 전달하지 않는다.
+계정의 브라우저 로그인과 CLI 로그인은 별개다. CLI 자격증명은 운영자의 Mac에 보관한다. DB 비밀번호·AI 로그인은 웹 환경 변수로 전달하지 않는다. 이미지 저장용 관리자 키는 아래의 서버 전용 비밀 변수에만 등록한다.
 
 ## DB 준비
 
@@ -60,12 +60,14 @@
 | `SUPABASE_URL` | `https://tcljbegdguixopfcaycs.supabase.co` |
 | `SUPABASE_PUBLISHABLE_KEY` | 해당 프로젝트의 publishable key 또는 `anon` 키 |
 | `APP_ORIGIN` | `https://ai-collaboration-platform.vercel.app` |
+| `AI_COLLAB_IMAGE_STORAGE_SECRET` | 같은 Supabase 프로젝트의 서버 전용 secret 또는 service-role 키 |
+| `CRON_SECRET` | 이미지 정리 호출 인증에만 쓰는 임의 비밀 값 |
 
-세 변수는 서버에서 사용한다. `NEXT_PUBLIC_` 접두사를 붙이지 않는다. secret/service-role 키, DB 비밀번호와 AI 인증 정보를 추가하지 않는다. Preview에서 같은 운영 DB를 자동 사용하도록 설정하지 않는다.
+모든 변수는 서버에서 사용하고 `NEXT_PUBLIC_` 접두사를 붙이지 않는다. 이미지 저장용 키와 정리 비밀 값은 Vercel Secret으로 등록하고 브라우저·로컬 AI 환경에 전달하지 않는다. Preview에서 같은 운영 DB를 자동 사용하도록 설정하지 않는다. 이미지 예산1GB와 월 공급 예산2GB는 앱 내부 제한이며 조직 전체 무료 사용량 보장은 아니다. 다른 프로젝트나 bucket 사용량이 생기면 예산을 낮춰야 한다.
 
 배포는 외부에서 접속할 수 있는 웹을 생성한다. 운영자는 DB·입장 설정과 검토한 커밋을 확인한 뒤 Production에 배포한다.
 
-1. 운영자는 Vercel 프로젝트를 Next.js·Node.js 24로 설정하고 위 Production 환경 변수 세 개를 등록한다. 빌드 명령은 `npm run build`, 설치 명령은 `npm ci`다.
+1. 운영자는 Vercel 프로젝트를 Next.js·Node.js 24로 설정하고 위 Production 환경 변수를 등록한다. 빌드 명령은 `npm run build`, 설치 명령은 `npm ci`다.
 2. 운영자는 검토한 커밋을 배포한다. `prebuild`가 연결 명령에 필요한 다운로드 파일을 생성하므로 별도로 생성물을 Git에 넣지 않는다.
 3. 운영자는 Vercel 로그인 없는 브라우저에서 Production 주소에 접속한다. 앱의 코드 입장 화면이 보여야 한다. Preview 보호는 유지하며 동료에게는 Production 주소를 공유한다.
 4. 운영자는 잘못된 코드·미입장 접근의 거부, 올바른 코드 입장·세션 유지·방 생성·초대와 기기 승인 동작을 확인한다. 다운로드 파일의 내용 hash도 확인한다. 이 접속 검증은 실제 AI 입력 없이 진행할 수 있다.
