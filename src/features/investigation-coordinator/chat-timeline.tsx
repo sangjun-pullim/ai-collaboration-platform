@@ -87,22 +87,7 @@ export function ChatTimeline({
   };
   const projected = presentation ?? answerStatuses(context);
   const visible = useMemo(() => timelineEvents(events), [events]);
-  const orphanStatuses = projected.statuses.filter(
-    (status) =>
-      !status.question &&
-      ["COMPLETED", "FAILED", "INTERRUPTED", "CANCELLED"].includes(status.state),
-  );
-  const orphanKey = orphanStatuses.map((status) => status.requestId).join(":");
-  const ids = useMemo(
-    () => [
-      ...visible.map((event) => event.eventId),
-      ...orphanKey
-        .split(":")
-        .filter(Boolean)
-        .map((id) => `result:${id}`),
-    ],
-    [visible, orphanKey],
-  );
+  const ids = useMemo(() => visible.map((event) => event.eventId), [visible]);
   const { virtualizer, items, jump, missingTarget } = useVirtualHistory(ids, scrollRef);
   const imageScope = { protocol: 1 as const, roomId: roomId ?? "", expectedUserId: userId ?? "" };
   const imageIds = items
@@ -224,25 +209,7 @@ export function ChatTimeline({
           )}
           {items.map((item) => {
             const event = visible[item.index];
-            if (!event) {
-              const status = orphanStatuses[item.index - visible.length];
-              return (
-                <li
-                  key={`result:${status.requestId}`}
-                  data-index={item.index}
-                  ref={virtualizer.measureElement}
-                  className="absolute top-0 left-0 w-full min-w-0"
-                  style={{ transform: `translateY(${item.start}px)` }}
-                >
-                  <details className="text-xs text-neutral-600">
-                    <summary>
-                      {status.target} · {status.label} · 실행 기록
-                    </summary>
-                    <ChatAnswerStatus status={status} />
-                  </details>
-                </li>
-              );
-            }
+            if (!event) return null;
             return (
               <li
                 key={event.eventId}

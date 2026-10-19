@@ -922,6 +922,22 @@ test("should keep exact request confirmation available without a current answer 
   assert.equal(labeled(h.render(), "AI 답변 상태"), undefined);
 });
 
+test("should not append old terminal summaries whose questions are outside the loaded history", async (t) => {
+  const h = await harness(t);
+  const page = fixture.history as contracts.HistoryPage;
+  await h.snapshot({
+    ...page,
+    runs: ["COMPLETED", "FAILED", "INTERRUPTED", "CANCELLED"].map((state, index) => ({
+      ...page.runs[0],
+      requestId: uuid(501 + index),
+      cycleId: uuid(601 + index),
+      state: state as contracts.RunState,
+    })),
+  });
+  assert.doesNotMatch(visibleText(h.renderTimeline()), /실행 기록/);
+  assert.equal(labeled(h.render(), "AI 답변 상태"), undefined);
+});
+
 test("should reuse status on unchanged room renders and pass the same result to the timeline", async (t) => {
   const h = await harness(t);
   const page = fixture.history as contracts.HistoryPage;
