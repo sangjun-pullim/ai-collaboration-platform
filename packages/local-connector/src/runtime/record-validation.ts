@@ -20,8 +20,9 @@ import { validateRecordSchema, validInterruption } from "./record-schema.ts";
 
 function closureValid(a: AttemptJournal, v: RuntimeRecord) {
   const proof = a.unstartedClosure;
-  if (proof?.kind === "SERVER_PREINPUT_REJECTED") {
-    const rejection = a.preinputRejection;
+  if (proof?.kind === "SERVER_PREINPUT_REJECTED" || proof?.kind === "SERVER_ATTACHMENT_REJECTED") {
+    const image = proof.kind === "SERVER_ATTACHMENT_REJECTED";
+    const rejection = image ? a.attachmentPreinputRejection : a.preinputRejection;
     const receipt = proof.receipt;
     if (
       !rejection ||
@@ -34,7 +35,7 @@ function closureValid(a: AttemptJournal, v: RuntimeRecord) {
       receipt.bindingEpoch !== a.scope.bindingEpoch ||
       !v.operations.some(
         (o) =>
-          o.action === "fail-before-input" &&
+          o.action === (image ? "fail-image-before-input" : "fail-before-input") &&
           o.state === "CONFIRMED" &&
           attemptMatches(a, o) &&
           o.body.proofHash === proof.proofHash &&
@@ -297,6 +298,12 @@ function validateClaudeOwnedTurn(
     (a) => a.generation === c.generation && a.nativeIntent?.inputId === turn.turnId,
   );
   if (
+    owningJournal?.nativeIntent &&
+    stableJson(owningJournal.nativeIntent.imageInput ?? null) !==
+      stableJson(turn.imageInput ?? null)
+  )
+    unsafe();
+  if (
     owningJournal?.terminal &&
     stableJson(owningJournal.terminal.nativeHistory ?? null) !==
       stableJson(turn.nativeHistory ?? null)
@@ -357,10 +364,29 @@ function validateAttempt(v: RuntimeRecord, a: AttemptJournal) {
   validateAttemptTools(v, a);
 }
 function validateAttemptClaim(v: RuntimeRecord, a: AttemptJournal) {
-  if (a.preinputRejection) {
-    const proof = a.preinputRejection;
+  if (a.attachmentPreinputRejection) {
+    const proof = a.attachmentPreinputRejection;
     if (
-      v.version !== 2 ||
+      a.preinputRejection ||
+      a.imageProviderCall ||
+      !a.snapshot?.payload.attachment ||
+      stableJson(proof.descriptor) !== stableJson(a.snapshot.payload.attachment) ||
+      proof.payloadHash !== digest(stableJson(a.snapshot.payload)) ||
+      proof.provider !== (v.settings?.provider ?? "codex")
+    )
+      unsafe();
+  }
+  if (
+    a.imageProviderCall &&
+    (!a.snapshot?.payload.attachment ||
+      a.imageProviderCall.payloadHash !== digest(stableJson(a.snapshot.payload)) ||
+      a.attachmentPreinputRejection)
+  )
+    unsafe();
+  if (a.preinputRejection || a.attachmentPreinputRejection) {
+    const proof = (a.preinputRejection ?? a.attachmentPreinputRejection)!;
+    if (
+      (a.preinputRejection && v.version !== 2) ||
       !a.snapshot?.startIntentAt ||
       !["SERVER_INTENT_CONFIRMED", "UNKNOWN", "NOT_STARTED"].includes(a.state) ||
       stableJson(proof.scope) !== stableJson(a.scope) ||
@@ -466,6 +492,8 @@ function validateAttemptNativeEvidence(v: RuntimeRecord, a: AttemptJournal) {
       intent.generation !== a.generation ||
       intent.attemptId !== a.snapshot.attemptId ||
       intent.fence !== a.snapshot.fence ||
+      stableJson(intent.imageInput?.descriptor ?? null) !==
+        stableJson(a.snapshot.payload.attachment ?? null) ||
       (a.native &&
         (a.native.threadId !== intent.sessionId || a.native.turnId !== intent.inputId)) ||
       (v.context?.generation === a.generation &&
@@ -568,13 +596,17 @@ function validateAttemptTools(v: RuntimeRecord, a: AttemptJournal) {
 }
 function validateOperationRelationships(v: RuntimeRecord) {
   for (const o of v.operations) {
-    if (o.action !== "fail-before-input") continue;
+    if (o.action !== "fail-before-input" && o.action !== "fail-image-before-input") continue;
     const attempt = v.attempts.find((a) => attemptMatches(a, o));
+    const rejection =
+      o.action === "fail-image-before-input"
+        ? attempt?.attachmentPreinputRejection
+        : attempt?.preinputRejection;
     if (
-      !attempt?.preinputRejection ||
-      v.version !== 2 ||
-      o.body.proofHash !== digest(stableJson(attempt.preinputRejection)) ||
-      o.body.reason !== attempt.preinputRejection.reason
+      !rejection ||
+      (o.action === "fail-before-input" && v.version !== 2) ||
+      o.body.proofHash !== digest(stableJson(rejection)) ||
+      o.body.reason !== rejection.reason
     )
       unsafe();
   }
@@ -605,10 +637,14 @@ function validateClosedOperations(v: RuntimeRecord) {
           (["lease", "interrupt-ack"].includes(o.action) &&
             (a.state === "UPLOADED" ||
               (a.state === "NOT_STARTED" &&
-                a.unstartedClosure?.kind === "SERVER_PREINPUT_REJECTED")) &&
+                ["SERVER_PREINPUT_REJECTED", "SERVER_ATTACHMENT_REJECTED"].includes(
+                  a.unstartedClosure?.kind ?? "",
+                ))) &&
             attemptMatches(a, o)) ||
           (a.state === "NOT_STARTED" &&
-            a.unstartedClosure?.kind !== "SERVER_PREINPUT_REJECTED" &&
+            !["SERVER_PREINPUT_REJECTED", "SERVER_ATTACHMENT_REJECTED"].includes(
+              a.unstartedClosure?.kind ?? "",
+            ) &&
             (claimMatches(a, o) ||
               ((o.action === "start-intent" ||
                 (o.action === "lease" && a.unstartedClosure?.kind === "SERVER_ABANDONED")) &&

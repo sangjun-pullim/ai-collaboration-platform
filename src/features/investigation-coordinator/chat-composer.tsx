@@ -6,6 +6,8 @@ import { shouldSendOnEnter } from "./chat-presentation";
 import { Button } from "../../components/ui/button";
 import { Textarea } from "../../components/ui/textarea";
 import { Send } from "lucide-react";
+import { AttachmentPicker } from "../chat-attachments/attachment-picker";
+import type { useImageDraft } from "../chat-attachments/use-image-draft";
 export function ChatComposer({
   roomId,
   readinessUnconfirmed,
@@ -24,6 +26,8 @@ export function ChatComposer({
   busy,
   pending,
   onSubmit,
+  image,
+  imageTargets = [],
 }: {
   roomId: string;
   readinessUnconfirmed: boolean;
@@ -42,6 +46,8 @@ export function ChatComposer({
   busy: boolean;
   pending: boolean;
   onSubmit: (event: FormEvent<HTMLFormElement>) => Promise<boolean>;
+  image?: ReturnType<typeof useImageDraft>;
+  imageTargets?: string[];
 }) {
   const composing = useRef(false);
   const input = useRef<HTMLTextAreaElement>(null);
@@ -72,6 +78,21 @@ export function ChatComposer({
         }
       }}
       className="shrink-0 bg-[#fdfdfc] px-3 py-2 md:px-6"
+      onDragOver={(event) => {
+        if (image && !busy && !pending) event.preventDefault();
+      }}
+      onDrop={(event) => {
+        if (image && !busy && !pending) {
+          event.preventDefault();
+          void image.select(Array.from(event.dataTransfer.files));
+        }
+      }}
+      onPaste={(event) => {
+        if (image && !busy && !pending && event.clipboardData.files.length) {
+          event.preventDefault();
+          void image.select(Array.from(event.clipboardData.files));
+        }
+      }}
     >
       <div className="mx-auto max-w-4xl rounded-xl border border-neutral-200 bg-white p-2 shadow-[0_2px_12px_0_rgb(0_0_0/0.04)] transition-shadow focus-within:border-teal-600/50 focus-within:ring-2 focus-within:ring-teal-600/10 md:p-2">
         <div className="grid grid-cols-[auto_minmax(0,1fr)] items-center gap-2 border-b border-neutral-100 pb-1">
@@ -116,6 +137,10 @@ export function ChatComposer({
                     {binding.owned ? "내 AI · " : ""}
                     {binding.ownerAlias} · {binding.runtime} · {binding.repositoryAlias} ·{" "}
                     {binding.sessionAlias}
+                    {image &&
+                      (imageTargets.includes(binding.agentId)
+                        ? " · 이미지 지원"
+                        : " · 이미지 미지원")}
                   </option>
                 ))}
               </select>
@@ -157,7 +182,7 @@ export function ChatComposer({
           name={mode === "ask" ? "humanQuestion" : "speech"}
           value={draft}
           onChange={(event) => onDraft(event.target.value)}
-          required
+          required={!image?.draft}
           maxLength={4000}
           rows={1}
           disabled={pending || busy}
@@ -182,10 +207,32 @@ export function ChatComposer({
               )
             ) {
               event.preventDefault();
-              if (!disabled && draft.trim()) event.currentTarget.form?.requestSubmit();
+              if (!disabled && (draft.trim() || image?.draft?.descriptor))
+                event.currentTarget.form?.requestSubmit();
             }
           }}
         />
+        {image && (
+          <AttachmentPicker
+            url={image.draft?.url}
+            disabled={busy || pending}
+            busy={image.busy}
+            error={image.error}
+            onSelect={(files) => {
+              void image.select(files);
+            }}
+            onRemove={image.reset}
+            onRetry={() => {
+              void image.retry();
+            }}
+          />
+        )}
+        {image?.draft && mode === "ask" && target && !imageTargets.includes(target.agentId) && (
+          <p role="status" className="mt-1 text-xs text-amber-800">
+            이 AI의 이미지 입력 지원이 확인되지 않았습니다. 다른 AI를 선택하거나 이미지를
+            제거하세요.
+          </p>
+        )}
         <div className="mt-1 flex items-center justify-between gap-2">
           <p
             id="chat-input-help"
@@ -199,7 +246,16 @@ export function ChatComposer({
             </span>
           </p>
           <Button
-            disabled={disabled || !draft.trim()}
+            disabled={
+              disabled ||
+              image?.busy ||
+              (!!image?.draft && !image.draft.descriptor) ||
+              (mode === "ask" &&
+                !!image?.draft &&
+                !!target &&
+                !imageTargets.includes(target.agentId)) ||
+              (!draft.trim() && !image?.draft?.descriptor)
+            }
             size="sm"
             className="shrink-0 rounded-lg bg-teal-800 px-4 text-white shadow-none hover:bg-teal-900 disabled:opacity-40"
             aria-label={mode === "ask" ? "AI에 질문 보내기" : "공동 발언 저장"}

@@ -5,6 +5,7 @@ import {
   type RecoveryHistoryPage,
   type RetirementReceipt,
   type HumanAction,
+  type ImageDescriptor,
 } from "./contracts.ts";
 import {
   emptyHistory,
@@ -385,7 +386,8 @@ export class RoomChatController {
         if (
           stored.entry &&
           (stored.entry.operationId !== legacy.body.operationId ||
-            stored.entry.body.publicText !== legacy.body.publicText)
+            stored.entry.body.publicText !== legacy.body.publicText ||
+            stored.entry.body.attachmentId !== legacy.body.attachmentId)
         ) {
           this.update({ pendingDirect: speechIntent(stored.entry), outboxConflict: legacy });
           return;
@@ -459,11 +461,11 @@ export class RoomChatController {
     }
   }
 
-  private persistIntent(action: DirectIntent["action"], body: Body) {
+  private persistIntent(action: DirectIntent["action"], body: Body, attachment?: ImageDescriptor) {
     const pendingDirect = { action, body };
     const generation = this.generation;
     if (action === "speak" && this.environment.outbox) {
-      return this.environment.outbox.reserve(body).then(async (entry) => {
+      return this.environment.outbox.reserve(body, attachment).then(async (entry) => {
         if (!this.active || generation !== this.generation || this.state.permissionDenied) {
           if (this.state.permissionDenied && !this.preserveSavedIntent)
             await this.environment.outbox?.remove(
@@ -482,7 +484,12 @@ export class RoomChatController {
     }
   }
 
-  mutate = async (action: HumanAction, fields: Body, retryBody?: Body): Promise<boolean> => {
+  mutate = async (
+    action: HumanAction,
+    fields: Body,
+    retryBody?: Body,
+    attachment?: ImageDescriptor,
+  ): Promise<boolean> => {
     if (
       !this.active ||
       !this.state.history.snapshot ||
@@ -551,7 +558,7 @@ export class RoomChatController {
       }
       if (action === "speak" || action === "ask" || action === "cancel" || action === "retire") {
         savingIntent = true;
-        const persistence = this.persistIntent(action, body);
+        const persistence = this.persistIntent(action, body, attachment);
         if (persistence) await persistence;
         if (!this.current(generation, abort)) return false;
         savingIntent = false;
@@ -619,7 +626,9 @@ export class RoomChatController {
         actionError: savingIntent
           ? "요청을 브라우저에 저장할 수 없어 전송하지 않았습니다. 초안을 보관하고 저장 공간을 확인해 주세요."
           : code === "CONFLICT"
-            ? "상태가 바뀌었습니다. 기록을 갱신한 뒤 다시 시도해 주세요."
+            ? fields.attachmentId || retryBody?.attachmentId
+              ? "상태 또는 이미지 보관 기간이 바뀌었습니다. 기록을 확인하고 이미지를 다시 첨부해 주세요."
+              : "상태가 바뀌었습니다. 기록을 갱신한 뒤 다시 시도해 주세요."
             : "요청을 완료할 수 없습니다. 접근 권한과 연결 보고를 확인해 주세요.",
       });
       if (accessDenied(code)) this.loseAccess();

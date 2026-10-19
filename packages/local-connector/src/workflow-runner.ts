@@ -1,4 +1,6 @@
 import { createAttemptAuthority } from "./workflow/attempt-authority.ts";
+import { checkImage } from "./workflow/image-content.ts";
+import { createImageFile, removeImageFile } from "./workflow/image-file.ts";
 import { isOriginRoleRequestKind } from "./workspace/tool-contracts.ts";
 import { projectSourceManifest } from "./workflow/source-manifest.ts";
 import { publishSource } from "./workflow/source-publisher.ts";
@@ -37,6 +39,7 @@ import {
   type RequestPayload,
   type TerminalReceipt,
   type PreinputFailureReceipt,
+  type AttachmentFailureReceipt,
 } from "./workflow-contracts.ts";
 import {
   RuntimeAdmission,
@@ -47,6 +50,7 @@ import {
   scopedNamespace,
   type AttemptAuthority,
   type AttemptJournal,
+  type AttachmentPreinputRejection,
   claudeInterruptRequest,
   type NativeInputIntent,
   type NativeInterruption,
@@ -762,7 +766,9 @@ export class WorkflowRunner {
     return result;
   }
   private async poll() {
-    const result = projectPoll(await this.workflow("poll", this.base()));
+    const result = projectPoll(
+      await this.workflow("poll", { ...this.base(), ...this.imageVersion() }),
+    );
     this.check();
     if (
       result.roomId !== this.record.scope.roomId ||
@@ -789,10 +795,116 @@ export class WorkflowRunner {
     try {
       const op = await this.operation("ready", { reportedReady }, operationId, guard);
       guard();
-      return await this.transmit(op, guard);
+      const result = await this.transmit(op, guard);
+      if (reportedReady && this.imageVersion().imageInputVersion === 1) {
+        try {
+          const secret = await this.credential(this.record.scope, guard);
+          await this.client.imageCapability(
+            this.record.scope.agentId,
+            this.record.scope.bindingEpoch,
+            secret,
+          );
+        } catch {
+          // Image capability expiry blocks only images; ordinary readiness remains valid.
+        }
+        guard();
+      }
+      return result;
     } finally {
       this.ordinaryReadiness.delete(operationId);
     }
+  }
+  private imageVersion(): { imageInputVersion?: 1 } {
+    return this.adapter.imageInputVersion === 1 ? { imageInputVersion: 1 } : {};
+  }
+  private async prepareAttachment(
+    key: string,
+    authority: AttemptAuthority,
+    payload: RequestPayload,
+  ): Promise<boolean> {
+    const descriptor = payload.attachment;
+    if (!descriptor) return true;
+    let reason: AttachmentPreinputRejection["reason"] = "IMAGE_DOWNLOAD_FAILED";
+    try {
+      authority.assertLive();
+      if (this.adapter.imageInputVersion !== 1 || !this.adapter.preflightImage)
+        throw new RuntimeError("UNSUPPORTED_SETTINGS");
+      const secret = await this.credential(authority.scope);
+      const bytes = await this.client.image(
+        {
+          protocol: 1,
+          attachmentId: descriptor.attachmentId,
+          agentId: authority.scope.agentId,
+          bindingEpoch: authority.scope.bindingEpoch,
+          requestId: authority.attempt.requestId,
+          attemptId: authority.attempt.attemptId,
+          fence: authority.attempt.fence,
+          imageInputVersion: 1,
+        },
+        secret,
+        descriptor,
+        authority.signal,
+      );
+      authority.assertLive();
+      reason = "IMAGE_CONTENT_MISMATCH";
+      const image = { descriptor: structuredClone(descriptor), bytes };
+      checkImage(image, descriptor);
+      authority.image = image;
+      if (this.record.settings?.provider !== "claude")
+        authority.image = await createImageFile(this.store.dir, descriptor, bytes);
+      try {
+        await this.adapter.preflightImage(authority, this.record.settings!, payload);
+      } catch (error) {
+        if (!(error instanceof RuntimeError) || error.code !== "RUNTIME_CAPACITY") throw error;
+        reason = "IMAGE_HISTORY_CAPACITY";
+        throw error;
+      }
+      authority.assertLive();
+    } catch {
+      // Lost authority is not evidence that an active remote attempt can be closed.
+      authority.assertLive();
+      await this.mutate("attachment-preinput-rejection", (record) => {
+        const a = this.journal(key, record);
+        if (
+          a.state !== "SERVER_INTENT_CONFIRMED" ||
+          a.imageProviderCall ||
+          a.nativeIntent ||
+          a.native ||
+          a.sourceObservation ||
+          a.toolCalls.length ||
+          a.terminal ||
+          a.receipt ||
+          a.preinputRejection
+        )
+          throw new RuntimeError("AUTHORITY_LOST");
+        a.attachmentPreinputRejection = {
+          version: 1,
+          kind: "ATTACHMENT_PREINPUT_REJECTED",
+          provider: record.settings?.provider ?? "codex",
+          scope: structuredClone(a.scope),
+          generation: a.generation,
+          requestId: a.requestId,
+          attemptId: a.snapshot!.attemptId,
+          fence: a.snapshot!.fence,
+          descriptor: structuredClone(descriptor),
+          payloadHash: digest(stableJson(payload)),
+          reason,
+        };
+      });
+      return false;
+    }
+    // This durable boundary precedes invoking the provider; replay never invokes it again.
+    await this.mutate("image-provider-call", (record) => {
+      const a = this.journal(key, record);
+      if (
+        a.state !== "SERVER_INTENT_CONFIRMED" ||
+        a.attachmentPreinputRejection ||
+        a.imageProviderCall
+      )
+        throw new RuntimeError("AUTHORITY_LOST");
+      a.imageProviderCall = { version: 1, payloadHash: digest(stableJson(payload)) };
+    });
+    return true;
   }
   private async refreshInput(guard = this.check) {
     const scope = this.record.scope;
@@ -1327,7 +1439,11 @@ export class WorkflowRunner {
     );
     await this.recordClaimIntent(requestId, claimOperationId);
     try {
-      const claim = await this.operation("claim", { requestId }, claimOperationId);
+      const claim = await this.operation(
+        "claim",
+        { requestId, ...this.imageVersion() },
+        claimOperationId,
+      );
       let snapshot: AttemptSnapshot;
       try {
         snapshot = (await this.transmit(claim)) as AttemptSnapshot;
@@ -1352,6 +1468,7 @@ export class WorkflowRunner {
       const monitorController = new AbortController();
       let publication: Promise<void> | undefined;
       let preinputRejected = false;
+      let imageRejected = false;
       let inputCallbackEntered = false;
       const monitor = this.monitor(authority, monitorController.signal, () => publication).catch(
         (error) => {
@@ -1368,18 +1485,22 @@ export class WorkflowRunner {
 
         await this.recordServerIntentSnapshot(journalId, start, intent);
         authority.attempt = intent;
-        const evidence = await this.admission.wait(() =>
-          this.adapter.execute(authority, this.record.settings!, payload, (intent) => {
-            inputCallbackEntered = true;
-            return this.beforeProviderInput(journalId, sourceCapacityKey, authority, intent);
-          }),
-        );
-        this.check();
-        this.toolOpen = false;
-        await this.persistTerminal(journalId, evidence);
-        this.check();
-        publication = this.publish(journalId, "complete", () => monitorController.abort());
-        await publication;
+        if (!(await this.prepareAttachment(journalId, authority, payload))) {
+          imageRejected = true;
+        } else {
+          const evidence = await this.admission.wait(() =>
+            this.adapter.execute(authority, this.record.settings!, payload, (intent) => {
+              inputCallbackEntered = true;
+              return this.beforeProviderInput(journalId, sourceCapacityKey, authority, intent);
+            }),
+          );
+          this.check();
+          this.toolOpen = false;
+          await this.persistTerminal(journalId, evidence);
+          this.check();
+          publication = this.publish(journalId, "complete", () => monitorController.abort());
+          await publication;
+        }
       } catch (error) {
         if (!(error instanceof PreinputRejectedError) || inputCallbackEntered) throw error;
         this.check();
@@ -1415,6 +1536,11 @@ export class WorkflowRunner {
         this.capacityReservations.clear();
       }
       if (preinputRejected) await this.publishPreinputRejection(journalId);
+      if (imageRejected) await this.publishAttachmentRejection(journalId);
+      if (authority.image?.path && (imageRejected || this.journal(journalId).terminal)) {
+        // A cleanup failure retains our private file; it never changes a confirmed outcome.
+        await removeImageFile(authority.image).catch(() => {});
+      }
     } catch (error) {
       this.toolOpen = false;
       if (!this.retired) await this.markUnresolvedUnknown(this.lossReason ?? code(error));
@@ -1428,6 +1554,59 @@ export class WorkflowRunner {
       Date.parse(payload.deadline) <= Date.now()
     )
       throw new RuntimeError("AUTHORITY_LOST");
+  }
+  private async publishAttachmentRejection(key: string) {
+    this.check();
+    const a = this.journal(key);
+    if (!a.attachmentPreinputRejection || !a.snapshot || a.unstartedClosure) return;
+    const proofHash = digest(stableJson(a.attachmentPreinputRejection));
+    const pending = this.record.operations.find(
+      (o) =>
+        o.action === "fail-image-before-input" &&
+        o.body.requestId === a.requestId &&
+        o.body.attemptId === a.snapshot!.attemptId &&
+        o.body.fence === a.snapshot!.fence &&
+        o.body.bindingEpoch === a.scope.bindingEpoch,
+    );
+    const op =
+      pending ??
+      (await this.operation("fail-image-before-input", {
+        ...this.identity(a),
+        proofVersion: 1,
+        proofHash,
+        reason: a.attachmentPreinputRejection.reason,
+      }));
+    const receipt = (await this.transmit(op)) as AttachmentFailureReceipt;
+    this.check();
+    if (
+      receipt.requestId !== a.requestId ||
+      receipt.attemptId !== a.snapshot.attemptId ||
+      receipt.fence !== a.snapshot.fence ||
+      receipt.bindingEpoch !== a.scope.bindingEpoch ||
+      receipt.proofHash !== proofHash
+    )
+      throw new RuntimeError("AUTHORITY_LOST");
+    await this.mutate("attachment-preinput-closure", (record) => {
+      const current = this.journal(key, record);
+      current.state = "NOT_STARTED";
+      current.unstartedClosure = {
+        kind: "SERVER_ATTACHMENT_REJECTED",
+        claimOperationId: current.claimOperationId!,
+        proofHash,
+        receipt,
+      };
+      for (const operation of record.operations) {
+        if (
+          ["lease", "interrupt-ack"].includes(operation.action) &&
+          operation.state !== "CONFIRMED" &&
+          operation.body.requestId === receipt.requestId &&
+          operation.body.attemptId === receipt.attemptId &&
+          operation.body.fence === receipt.fence &&
+          operation.body.bindingEpoch === receipt.bindingEpoch
+        )
+          operation.state = "CLOSED";
+      }
+    });
   }
 
   private async publishPreinputRejection(key: string) {
@@ -1609,6 +1788,11 @@ export class WorkflowRunner {
       (record) => {
         const a = this.journal(journalId, record);
         if (a.state !== "SERVER_INTENT_CONFIRMED") throw new RuntimeError("UNKNOWN");
+        if (
+          a.attachmentPreinputRejection ||
+          (a.snapshot?.payload.attachment && !a.imageProviderCall)
+        )
+          throw new RuntimeError("AUTHORITY_LOST");
         if (record.settings?.provider === "claude") {
           if (
             !intent ||
@@ -1619,6 +1803,7 @@ export class WorkflowRunner {
             !same(intent.scope, a.scope) ||
             intent.attemptId !== a.snapshot?.attemptId ||
             intent.fence !== a.snapshot?.fence ||
+            !same(intent.imageInput?.descriptor ?? null, a.snapshot?.payload.attachment ?? null) ||
             intent.policyFingerprint !== record.context?.materialization?.policyFingerprint
           )
             throw new RuntimeError("UNKNOWN");
@@ -2286,6 +2471,9 @@ export class WorkflowRunner {
                     ? { toolPolicy: structuredClone(a.nativeIntent!.toolPolicy) }
                     : {}),
                   promptHash: a.nativeIntent!.promptHash,
+                  ...(a.nativeIntent!.imageInput
+                    ? { imageInput: structuredClone(a.nativeIntent!.imageInput) }
+                    : {}),
                   resultHash: terminal.finalItems[0]?.hash,
                   ...(terminal.nativeHistory
                     ? { nativeHistory: structuredClone(terminal.nativeHistory) }
@@ -2698,6 +2886,11 @@ export class WorkflowRunner {
   }
 
   private async recover() {
+    for (const attempt of this.record.attempts.filter(
+      (a) => a.attachmentPreinputRejection && !a.unstartedClosure,
+    )) {
+      await this.publishAttachmentRejection(this.journalKey(attempt));
+    }
     for (const attempt of this.record.attempts.filter(
       (a) => a.preinputRejection && !a.unstartedClosure,
     ))

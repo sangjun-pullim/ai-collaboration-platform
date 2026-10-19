@@ -5,6 +5,7 @@ import { proveOwnedHistory } from "../src/claude/history-proof.ts";
 import { checkpointNativeHistory } from "../src/claude/native-history-proof.ts";
 import type { OwnedHistory } from "../src/claude/owned-history.ts";
 import { digest, stableJson, type OwnedContext } from "../src/runtime-contracts.ts";
+import { imageContent, imageProof } from "../src/workflow/image-content.ts";
 
 function nativeConversation() {
   const sessionId = randomUUID();
@@ -77,6 +78,106 @@ function nativeConversation() {
     { format: "claude-jsonl-v1" as const },
   );
   return { context, history, inputId, assistantId, prompt };
+}
+
+function nativeImageConversation() {
+  const f = nativeConversation();
+  const bytes = Buffer.from("synthetic image");
+  const descriptor = {
+    attachmentId: randomUUID(),
+    mime: "image/png" as const,
+    bytes: bytes.length,
+    width: 20,
+    height: 20,
+    sha256: digest(bytes),
+  };
+  f.context.materialization!.version = "2.1.293";
+  f.context.ownedTurns[0].imageInput = imageProof(f.prompt, descriptor);
+  f.history.records.forEach((r) => {
+    r.version = "2.1.293";
+  });
+  const first = f.history.records[0];
+  first.message = { role: "user", content: imageContent(f.prompt, { descriptor, bytes }) };
+  first.imagePasteIds = [1];
+  const companion = {
+    ...first,
+    uuid: randomUUID(),
+    parentUuid: f.inputId,
+    isMeta: true,
+    turnCompanion: true,
+    message: {
+      role: "user",
+      content: [
+        {
+          type: "text",
+          text: `[Image: source: /private/tmp/claude-501/-owned-repository/${f.context.threadId}/images/1.png]`,
+        },
+      ],
+    },
+  };
+  f.history.records[1].parentUuid = companion.uuid;
+  f.history.records.splice(1, 0, companion);
+  f.history.records.unshift(
+    {
+      type: "queue-operation",
+      operation: "enqueue",
+      timestamp: new Date().toISOString(),
+      sessionId: f.context.threadId,
+    },
+    {
+      type: "queue-operation",
+      operation: "dequeue",
+      timestamp: new Date().toISOString(),
+      sessionId: f.context.threadId,
+    },
+  );
+  const seal = () => {
+    f.context.ownedTurns[0].nativeHistory = {
+      state: "VERIFIED",
+      format: "claude-jsonl-v1",
+      recordCount: f.history.records.length,
+      prefixHash: digest(stableJson(f.history.records)),
+    };
+  };
+  seal();
+  return { ...f, seal };
+}
+
+test("should reload an image conversation with its scoped native image companion", () => {
+  const f = nativeImageConversation();
+  assert.equal(proveOwnedHistory(f.context, f.history, "2.1.293"), null);
+});
+for (const fault of [
+  "image",
+  "text",
+  "manifest",
+  "companion",
+  "paste-id",
+  "duplicate-companion",
+] as const) {
+  test(`should reject ${fault} changes in a native image conversation`, () => {
+    const f = nativeImageConversation();
+    const input = f.history.records[2],
+      companion = f.history.records[3];
+    if (fault === "image")
+      (
+        input.message as { content: [{ text: string }, { source: { data: string } }] }
+      ).content[1].source.data = Buffer.from("other").toString("base64");
+    if (fault === "text")
+      (input.message as { content: { text: string }[] }).content[0].text = "changed";
+    if (fault === "manifest") delete f.context.ownedTurns[0].imageInput;
+    if (fault === "companion")
+      (companion.message as { content: { text: string }[] }).content[0].text =
+        "[Image: source: /other.png]";
+    if (fault === "paste-id") input.imagePasteIds = [2];
+    if (fault === "duplicate-companion") {
+      const extra = { ...companion, uuid: randomUUID(), parentUuid: companion.uuid };
+      f.history.records[4].parentUuid = extra.uuid;
+      f.history.records.splice(4, 0, extra);
+    }
+    f.seal();
+    assert.throws(() => proveOwnedHistory(f.context, f.history, "2.1.293"));
+  });
 }
 
 test("should validate completed native conversation without stream init or result records", () => {

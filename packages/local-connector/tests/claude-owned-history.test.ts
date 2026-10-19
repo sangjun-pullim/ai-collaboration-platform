@@ -30,6 +30,9 @@ test("should read only the complete exact reserved native history", () =>
       sessionId: id,
       root: "/owned",
       records,
+      byteLength: Buffer.byteLength(
+        records.map((record) => JSON.stringify(record)).join("\n") + "\n",
+      ),
     });
     await assert.rejects(
       readOwnedHistory(path, randomUUID(), "/owned", () => {}),

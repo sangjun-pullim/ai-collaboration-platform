@@ -578,6 +578,10 @@ test("should attach historical event addresses even outside thirty-two current r
         if (name === "./chat-presentation") return presentation;
         if (name === "./run-source-view") return { RunSourceView: "source-view" };
         if (name === "./chat-markdown") return { ChatMarkdown };
+        if (name === "../chat-attachments/controller")
+          return { useVisibleAttachments: () => new Map() };
+        if (name === "../chat-attachments/attachment-preview")
+          return { AttachmentPreview: "attachment-preview" };
         if (name.startsWith("../../components/ui/"))
           return {
             Dialog: "dialog",

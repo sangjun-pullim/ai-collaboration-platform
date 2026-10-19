@@ -10,6 +10,8 @@ const allowed = [
   "SUPABASE_URL",
   "SUPABASE_PUBLISHABLE_KEY",
   "APP_ORIGIN",
+  "AI_COLLAB_IMAGE_STORAGE_SECRET",
+  "CRON_SECRET",
 ];
 const env = Object.fromEntries(
   allowed.filter((key) => process.env[key] !== undefined).map((key) => [key, process.env[key]]),

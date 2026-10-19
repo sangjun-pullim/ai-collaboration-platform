@@ -15,6 +15,9 @@ import { ChatMarkdown } from "./chat-markdown";
 import { Avatar, AvatarFallback } from "../../components/ui/avatar";
 import { Badge } from "../../components/ui/badge";
 import { Button } from "../../components/ui/button";
+import { useVisibleAttachments } from "../chat-attachments/controller";
+import { AttachmentPreview } from "../chat-attachments/attachment-preview";
+import type { AttachmentView, UserScope } from "../chat-attachments/contracts";
 export function ChatTimeline({
   events,
   loading = false,
@@ -34,6 +37,9 @@ export function ChatTimeline({
   unread,
   onLatest,
   onAccessLost,
+  userId,
+  roomId,
+  imagesEnabled = false,
 }: {
   events: PublicEvent[];
   loading?: boolean;
@@ -53,6 +59,9 @@ export function ChatTimeline({
   unread: boolean;
   onLatest: () => void;
   onAccessLost: () => void;
+  userId?: string;
+  roomId?: string;
+  imagesEnabled?: boolean;
 }) {
   const context = {
     events,
@@ -85,6 +94,18 @@ export function ChatTimeline({
     [visible, orphanKey],
   );
   const { virtualizer, items, jump } = useVirtualHistory(ids, scrollRef);
+  const imageScope = { protocol: 1 as const, roomId: roomId ?? "", expectedUserId: userId ?? "" };
+  const imageIds = items
+    .map((item) => visible[item.index])
+    .filter((event) => event?.senderKind === "HUMAN" && ["SPEECH", "QUESTION"].includes(event.kind))
+    .map((event) => event.eventId);
+  const images = useVisibleAttachments(
+    imageScope,
+    imageIds,
+    observedAt,
+    imagesEnabled && !!userId && !!roomId,
+    onAccessLost,
+  );
   const [source, setSource] = useState<{ roomId: string; eventId: string; kind?: "notice" } | null>(
     null,
   );
@@ -156,6 +177,9 @@ export function ChatTimeline({
                 style={{ transform: `translateY(${item.start}px)` }}
               >
                 <ChatTimelineRow
+                  image={images.get(event.eventId)}
+                  imageScope={imageScope}
+                  onAccessLost={onAccessLost}
                   event={event}
                   question={questionForReply(event, events)}
                   notice={
@@ -234,6 +258,9 @@ const ChatTimelineRow = memo(function ChatTimelineRow({
   labels,
   onJump,
   onSource,
+  image,
+  imageScope,
+  onAccessLost,
 }: {
   event: PublicEvent;
   question: PublicEvent | null;
@@ -244,6 +271,9 @@ const ChatTimelineRow = memo(function ChatTimelineRow({
   labels: Record<string, string>;
   onJump: (id: string) => boolean;
   onSource: (identity: { roomId: string; eventId: string; kind?: "notice" }) => void;
+  image?: AttachmentView;
+  imageScope: UserScope;
+  onAccessLost: () => void;
 }) {
   const sender = event.senderKind === "SYSTEM" ? "시스템" : event.senderAlias;
   const isAgent = event.senderKind === "AGENT";
@@ -315,6 +345,9 @@ const ChatTimelineRow = memo(function ChatTimelineRow({
           >
             <ChatMarkdown text={event.publicText} messageId={event.eventId} />
           </div>
+        )}
+        {image && (
+          <AttachmentPreview image={image} scope={imageScope} onAccessLost={onAccessLost} />
         )}
         {notice && (
           <div className="mt-2 flex min-w-0 items-center gap-2 text-xs text-neutral-600">

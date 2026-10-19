@@ -1,4 +1,5 @@
 import { randomUUID } from "node:crypto";
+import { checkImage, imageContent, imageProof } from "../workflow/image-content.ts";
 import {
   RuntimeError,
   PreinputRejectedError,
@@ -114,6 +115,31 @@ type Active = {
 
 /** Product authority owns tools, input durability and publication; native CLI owns generation. */
 export class ClaudeAdapter implements RuntimeAdapter {
+  get imageInputVersion(): 1 | undefined {
+    return this.options.policy?.version === "2.1.293" ? 1 : undefined;
+  }
+  async preflightImage(
+    authority: AttemptAuthority,
+    _settings: RuntimeSettings,
+    payload: RequestPayload,
+  ): Promise<void> {
+    authority.assertLive();
+    if (!payload.attachment || !authority.image || !this.options.history)
+      throw new RuntimeError("CONTEXT_UNCONFIRMED");
+    checkImage(authority.image, payload.attachment);
+    const history = await this.options.history(authority.context, () => authority.assertLive());
+    authority.assertLive();
+    const existing =
+      history.byteLength ??
+      history.records.reduce(
+        (sum, record) => sum + Buffer.byteLength(JSON.stringify(record)) + 1,
+        0,
+      );
+    const imageBytes = Math.ceil(payload.attachment.bytes / 3) * 4;
+    // Reserve a full input frame and two MiB for the response and native metadata.
+    if (existing + imageBytes + 3 * 1024 * 1024 > 16 * 1024 * 1024)
+      throw new RuntimeError("RUNTIME_CAPACITY");
+  }
   private transport: Transport | undefined;
   private active: Active | undefined;
   private closed = false;
@@ -420,6 +446,7 @@ export class ClaudeAdapter implements RuntimeAdapter {
       sessionId: authority.context.threadId,
       inputId: randomUUID(),
       promptHash: digest(prompt),
+      ...(payload.attachment ? { imageInput: imageProof(prompt, payload.attachment) } : {}),
       generation: authority.context.generation,
       scope: structuredClone(authority.scope),
       attemptId: authority.attempt.attemptId,
@@ -427,6 +454,12 @@ export class ClaudeAdapter implements RuntimeAdapter {
       policyFingerprint: this.policy().fingerprint,
       toolPolicy,
     };
+    if (payload.attachment) {
+      if (!authority.image) throw new RuntimeError("INVALID_RUNTIME");
+      checkImage(authority.image, payload.attachment);
+      const frameBytes = Buffer.byteLength(JSON.stringify(imageContent(prompt, authority.image)));
+      if (frameBytes + 1024 > 1024 * 1024) throw new RuntimeError("RUNTIME_CAPACITY");
+    } else if (authority.image) throw new RuntimeError("INVALID_RUNTIME");
     await beforeSubmit(intent);
     this.live(authority.context.root.path, check);
     const active: Active = {
@@ -440,6 +473,7 @@ export class ClaudeAdapter implements RuntimeAdapter {
         intent.promptHash,
         tools,
         toolPolicy,
+        intent.imageInput,
       ),
       identity: deferred<string>(),
       ack: null,
@@ -473,7 +507,10 @@ export class ClaudeAdapter implements RuntimeAdapter {
         uuid: intent.inputId,
         session_id: intent.sessionId,
         parent_tool_use_id: null,
-        message: { role: "user", content: prompt },
+        message: {
+          role: "user",
+          content: authority.image ? imageContent(prompt, authority.image) : prompt,
+        },
       });
       evidence = await active.done.promise;
     } catch (error) {

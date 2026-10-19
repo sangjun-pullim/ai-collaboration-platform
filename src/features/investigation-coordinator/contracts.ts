@@ -44,6 +44,7 @@ export const deviceActions = [
   "interrupt-ack",
   "observe",
   "fail-before-input",
+  "fail-image-before-input",
 ] as const;
 export type HumanAction = (typeof humanActions)[number];
 export type DeviceAction = (typeof deviceActions)[number];
@@ -237,6 +238,14 @@ export interface RecoveryHistoryPage extends HistoryPage {
     hasMoreRetirements: boolean;
   };
 }
+export interface ImageDescriptor {
+  attachmentId: string;
+  mime: "image/png" | "image/jpeg" | "image/webp";
+  bytes: number;
+  width: number;
+  height: number;
+  sha256: string;
+}
 export interface RequestPayload {
   requestId: string;
   cycleId: string;
@@ -248,6 +257,7 @@ export interface RequestPayload {
   publicText: string;
   replyText: string | null;
   deadline: string;
+  attachment?: ImageDescriptor;
 }
 export interface AttemptSnapshot {
   requestId: string;
@@ -313,6 +323,14 @@ export interface PreinputFailureReceipt {
   kind: "PREINPUT_REJECTED";
   proofHash: string;
   adoption: "HISTORICAL" | "HUMAN_INPUT_REQUIRED";
+}
+export const attachmentPreinputReasons = [
+  "IMAGE_DOWNLOAD_FAILED",
+  "IMAGE_CONTENT_MISMATCH",
+  "IMAGE_HISTORY_CAPACITY",
+] as const;
+export interface AttachmentFailureReceipt extends Omit<PreinputFailureReceipt, "kind"> {
+  kind: "ATTACHMENT_PREINPUT_REJECTED";
 }
 export interface CycleAdmission {
   cycleId: string;
@@ -473,6 +491,12 @@ const bodies: Record<Action, Shape> = {
     proofHash: sourceHash,
     reason: one(preinputReasons),
   },
+  "fail-image-before-input": {
+    ...identity,
+    proofVersion: one([1]),
+    proofHash: sourceHash,
+    reason: one(attachmentPreinputReasons),
+  },
 };
 export function validateBody(action: Action, input: unknown): Body {
   let serialized: string;
@@ -484,6 +508,20 @@ export function validateBody(action: Action, input: unknown): Body {
   if (new TextEncoder().encode(serialized).length > 16384)
     throw new WorkflowError("BODY_TOO_LARGE");
   let shape = bodies[action];
+  if (
+    (action === "poll" || action === "claim") &&
+    input &&
+    typeof input === "object" &&
+    Object.hasOwn(input, "imageInputVersion")
+  )
+    shape = { ...shape, imageInputVersion: one([1]) };
+  if (
+    (action === "speak" || action === "ask") &&
+    input &&
+    typeof input === "object" &&
+    Object.hasOwn(input, "attachmentId")
+  )
+    shape = { ...shape, attachmentId: id };
   if (
     (action === "speak" || action === "read-recovery") &&
     input &&
@@ -533,8 +571,26 @@ const payload: Shape = {
   replyText: nullable(text),
   deadline: date,
 };
+export function validImageDescriptor(v: unknown): v is ImageDescriptor {
+  return matches(v, {
+    attachmentId: id,
+    mime: one(["image/png", "image/jpeg", "image/webp"]),
+    bytes: (n) => Number.isSafeInteger(n) && Number(n) > 0 && Number(n) <= 524288,
+    width: (n) => Number.isSafeInteger(n) && Number(n) > 0 && Number(n) <= 2048,
+    height: (n) => Number.isSafeInteger(n) && Number(n) > 0 && Number(n) <= 2048,
+    sha256: sourceHash,
+  });
+}
+function matchesPayload(v: unknown): v is Record<string, unknown> {
+  return matches(
+    v,
+    v && typeof v === "object" && Object.hasOwn(v, "attachment")
+      ? { ...payload, attachment: validImageDescriptor }
+      : payload,
+  );
+}
 const validPayload: Check = (v) =>
-  matches(v, payload) &&
+  matchesPayload(v) &&
   (v.requestKind === "PEER" || v.requestKind === "CONTINUATION"
     ? v.questionId !== null
     : v.questionId === null) &&
@@ -552,7 +608,7 @@ const attempt: Shape = {
 };
 const validAttempt: Check = (v) =>
   matches(v, attempt) &&
-  matches(v.payload, payload) &&
+  matchesPayload(v.payload) &&
   v.requestId === v.payload.requestId &&
   v.agentId === v.payload.agentId &&
   v.bindingEpoch === v.payload.bindingEpoch &&
@@ -933,6 +989,16 @@ const responses: Record<Action, Shape> = {
     bindingEpoch: positive,
     state: one(["FAILED"]),
     kind: one(["PREINPUT_REJECTED"]),
+    proofHash: sourceHash,
+    adoption: one(["HISTORICAL", "HUMAN_INPUT_REQUIRED"]),
+  },
+  "fail-image-before-input": {
+    requestId: id,
+    attemptId: id,
+    fence: positive,
+    bindingEpoch: positive,
+    state: one(["FAILED"]),
+    kind: one(["ATTACHMENT_PREINPUT_REJECTED"]),
     proofHash: sourceHash,
     adoption: one(["HISTORICAL", "HUMAN_INPUT_REQUIRED"]),
   },

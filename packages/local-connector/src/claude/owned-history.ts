@@ -15,6 +15,7 @@ export interface OwnedHistory {
   sessionId: string;
   root: string;
   records: Record<string, unknown>[];
+  byteLength?: number;
   format?: "claude-jsonl-v1";
 }
 
@@ -126,7 +127,7 @@ export async function readOwnedHistory(
       if (error instanceof RuntimeError) throw error;
       throw new RuntimeError("UNKNOWN");
     }
-    return { materialized: true, sessionId, root, records };
+    return { materialized: true, sessionId, root, records, byteLength: offset };
   } finally {
     await handle.close();
   }

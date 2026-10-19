@@ -19,6 +19,7 @@ export function nativeHistoryMetadata(
   sessionId: string,
   parent: string | null,
   nextPromptHash: string | undefined,
+  imageInput = false,
 ): "ENQUEUE" | "DEQUEUE" | "ADVISORY" | null {
   if (
     !["queue-operation", "atis-latch", "last-prompt", "cost-state", "mode"].includes(
@@ -31,7 +32,11 @@ export function nativeHistoryMetadata(
     requireValue(keys(frame, ["type", "operation", "timestamp", "sessionId", "content"]));
     requireValue(text(frame.timestamp, 64) && Number.isFinite(Date.parse(frame.timestamp)));
     if (frame.operation === "enqueue") {
-      requireValue(text(frame.content) && digest(frame.content) === nextPromptHash);
+      requireValue(
+        imageInput
+          ? !Object.hasOwn(frame, "content")
+          : text(frame.content) && digest(frame.content) === nextPromptHash,
+      );
       return "ENQUEUE";
     }
     requireValue(frame.operation === "dequeue" && !Object.hasOwn(frame, "content"));

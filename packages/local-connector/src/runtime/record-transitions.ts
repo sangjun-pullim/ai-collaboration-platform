@@ -274,6 +274,23 @@ function validateAttemptIdentityAndClosureChange(
   previous: RuntimeRecord,
 ) {
   if (old.state === "UPLOADED" && stableJson(old) !== stableJson(current)) unsafe();
+  for (const key of ["attachmentPreinputRejection", "imageProviderCall"] as const) {
+    if (old[key] && stableJson(old[key]) !== stableJson(current[key])) unsafe();
+    if (
+      !old[key] &&
+      current[key] &&
+      (old.state !== "SERVER_INTENT_CONFIRMED" ||
+        old.nativeIntent ||
+        old.native ||
+        old.sourceObservation ||
+        old.toolCalls.length ||
+        old.terminal ||
+        old.receipt ||
+        old.attachmentPreinputRejection ||
+        old.imageProviderCall)
+    )
+      unsafe();
+  }
   if (
     old.preinputRejection &&
     stableJson(old.preinputRejection) !== stableJson(current.preinputRejection)

@@ -1,7 +1,13 @@
 import { isModelDisplayName } from "../settings/contracts.ts";
+import { validImageInputProof } from "../workflow/image-content.ts";
 import { isId, isHash } from "../contracts.ts";
 import { serviceOrigin } from "../central-client.ts";
-import { validateBody, projectResponse, type DeviceAction } from "../workflow-contracts.ts";
+import {
+  validateBody,
+  projectResponse,
+  validImageDescriptor,
+  type DeviceAction,
+} from "../workflow-contracts.ts";
 import {
   codexVersion,
   claudeInterruptRequest,
@@ -177,6 +183,12 @@ const codes = one(
 );
 const closure: Check = (v) =>
   exact({
+    kind: one("SERVER_ATTACHMENT_REJECTED"),
+    claimOperationId: isId,
+    proofHash: isHash,
+    receipt: projected("fail-image-before-input"),
+  })(v) ||
+  exact({
     kind: one("SERVER_PREINPUT_REJECTED"),
     claimOperationId: isId,
     proofHash: isHash,
@@ -197,7 +209,7 @@ const nativeIntent = optionalExact(
     fence: positive,
     policyFingerprint: isHash,
   },
-  { toolPolicy: validToolPolicy },
+  { toolPolicy: validToolPolicy, imageInput: validImageInputProof },
 );
 const nativeToolCancellation = exact({
   callId: (v) => typeof v === "string" && v.length > 0 && Buffer.byteLength(v) <= 200,
@@ -274,6 +286,20 @@ const journalSchema = (terminalEvidence: Check, allowNativeIntent = false) =>
       sourceObservation: validSourceObservation,
       claimOperationId: isId,
       unstartedClosure: closure,
+      imageProviderCall: exact({ version: one(1), payloadHash: isHash }),
+      attachmentPreinputRejection: exact({
+        version: one(1),
+        kind: one("ATTACHMENT_PREINPUT_REJECTED"),
+        provider: one("claude", "codex"),
+        scope,
+        generation: isId,
+        requestId: isId,
+        attemptId: isId,
+        fence: positive,
+        descriptor: validImageDescriptor,
+        payloadHash: isHash,
+        reason: one("IMAGE_DOWNLOAD_FAILED", "IMAGE_CONTENT_MISMATCH", "IMAGE_HISTORY_CAPACITY"),
+      }),
       ...(allowNativeIntent
         ? {
             nativeIntent,
@@ -317,6 +343,7 @@ const operation: Check = (v) => {
         "interrupt-ack",
         "observe",
         "fail-before-input",
+        "fail-image-before-input",
       ),
       body: record,
       payloadHash: isHash,
@@ -425,6 +452,7 @@ const providerContext = optionalExact(
         {
           toolPolicy: validToolPolicy,
           promptHash: isHash,
+          imageInput: validImageInputProof,
           resultHash: isHash,
           nativeInterruption,
           nativeHistory: nativeHistoryEvidence,

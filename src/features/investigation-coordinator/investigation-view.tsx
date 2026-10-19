@@ -14,6 +14,10 @@ import { AdvancedControls } from "./advanced-controls";
 import { answerStatuses, nearTimelineBottom } from "./chat-presentation";
 import { Button } from "../../components/ui/button";
 import { ChatHeaderControls } from "../room-access/chat-shell";
+import { useImageDraft } from "../chat-attachments/use-image-draft";
+import { useImageCapabilities } from "../chat-attachments/controller";
+import { imageOnlyText } from "../chat-attachments/client";
+import { clearImageCache } from "../chat-attachments/image-cache";
 
 const labels: Record<string, string> = {
   QUEUED: "대기",
@@ -56,6 +60,11 @@ function RoomInvestigation({ userId, roomId, role }: Props) {
     mutate,
     loseAccess,
   } = useRoomChat({ userId, roomId, role });
+  useEffect(() => {
+    const scope = { protocol: 1 as const, expectedUserId: userId, roomId };
+    if (permissionDenied) clearImageCache(scope);
+    return () => clearImageCache(scope);
+  }, [userId, roomId, permissionDenied]);
   const [originId, setOriginId] = useState("");
   const [peerId, setPeerId] = useState("");
   const [targetPin, setTargetPin] = useState<{ agentId: string; epoch: number } | null | undefined>(
@@ -93,6 +102,23 @@ function RoomInvestigation({ userId, roomId, role }: Props) {
   const pairedCycle = cycle && !("mode" in cycle) ? cycle : null;
   const directCycle = cycle && "mode" in cycle ? cycle : null;
   const writable = role !== "observer" && !permissionDenied;
+  const imageScope = { protocol: 1 as const, roomId, expectedUserId: userId };
+  const image = useImageDraft(imageScope, writable, loseAccess);
+  const imageCapabilities = useImageCapabilities(
+    imageScope,
+    observedAt,
+    !!snapshot && !permissionDenied,
+    loseAccess,
+  );
+  const imageTargets = imageCapabilities
+    .filter((capability) =>
+      bindings.some(
+        (binding) =>
+          binding.agentId === capability.agentId &&
+          binding.bindingEpoch === capability.bindingEpoch,
+      ),
+    )
+    .map((capability) => capability.agentId);
   const cycleOwned =
     !!pairedCycle &&
     bindings.some((binding) => binding.agentId === pairedCycle.originAgentId && binding.owned);
@@ -181,18 +207,42 @@ function RoomInvestigation({ userId, roomId, role }: Props) {
   async function speak(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
     const form = event.currentTarget;
-    if (!draft.trim() || busy || pendingDirect) return false;
+    if (
+      (!draft.trim() && !image.draft?.descriptor) ||
+      busy ||
+      pendingDirect ||
+      image.busy ||
+      (image.draft && !image.draft.descriptor)
+    )
+      return false;
     const submittedDraft = draft;
     speechDraft.current = submittedDraft;
-    const sent = await mutate("speak", { publicText: String(new FormData(form).get("speech")) });
-    if (sent) setDraft((current) => (current === submittedDraft ? "" : current));
+    const publicText = image.draft?.descriptor
+      ? imageOnlyText("speak", String(new FormData(form).get("speech")))
+      : String(new FormData(form).get("speech"));
+    const sent = await mutate(
+      "speak",
+      {
+        publicText,
+        ...(image.draft?.descriptor ? { attachmentId: image.draft.descriptor.attachmentId } : {}),
+      },
+      undefined,
+      image.draft?.descriptor,
+    );
+    if (sent) {
+      setDraft((current) => (current === submittedDraft ? "" : current));
+      image.reset();
+    }
     return sent;
   }
   async function confirmSpeech() {
     if (pendingDirect?.action !== "speak") return false;
     const submittedDraft = speechDraft.current ?? (pendingDirect.body.publicText as string);
     const sent = await mutate("speak", {}, pendingDirect.body);
-    if (sent) setDraft((current) => (current === submittedDraft ? "" : current));
+    if (sent) {
+      setDraft((current) => (current === submittedDraft ? "" : current));
+      image.reset();
+    }
     return sent;
   }
   async function start(event: FormEvent<HTMLFormElement>, resume = false) {
@@ -215,18 +265,23 @@ function RoomInvestigation({ userId, roomId, role }: Props) {
   }
   async function ask(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
-    if (!target || !snapshot || askDisabled || !draft.trim()) return false;
+    if (!target || !snapshot || askDisabled || (!draft.trim() && !image.draft?.descriptor))
+      return false;
     const form = event.currentTarget;
     const sent = await mutate("ask", {
       targetAgentId: target.agentId,
       targetEpoch: target.bindingEpoch,
       expectedRoomRevision: snapshot.roomRevision,
-      publicText: String(new FormData(form).get("humanQuestion")),
+      publicText: image.draft?.descriptor
+        ? imageOnlyText("ask", String(new FormData(form).get("humanQuestion")))
+        : String(new FormData(form).get("humanQuestion")),
+      ...(image.draft?.descriptor ? { attachmentId: image.draft.descriptor.attachmentId } : {}),
       confirmed: true,
     });
     if (sent) {
       form.reset();
       setDraft("");
+      image.reset();
     }
     return sent;
   }
@@ -239,6 +294,9 @@ function RoomInvestigation({ userId, roomId, role }: Props) {
     );
   }
   const askDisabled =
+    image.busy ||
+    (!!image.draft &&
+      (!image.draft.descriptor || !target || !imageTargets.includes(target.agentId))) ||
     busy ||
     !!pendingDirect ||
     !target ||
@@ -455,6 +513,9 @@ function RoomInvestigation({ userId, roomId, role }: Props) {
         </section>
       )}
       <ChatTimeline
+        userId={userId}
+        roomId={roomId}
+        imagesEnabled={!permissionDenied && !!snapshot}
         events={history.events}
         loading={history.gap || !!history.snapshot?.hasMore}
         runs={snapshot?.runs ?? []}
@@ -554,6 +615,8 @@ function RoomInvestigation({ userId, roomId, role }: Props) {
       )}
       {writable ? (
         <ChatComposer
+          image={image}
+          imageTargets={imageTargets}
           roomId={roomId}
           readinessUnconfirmed={!snapshot || !!pollError}
           unavailableTargets={bindings.filter((binding) => !ready(binding))}

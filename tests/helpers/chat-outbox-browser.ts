@@ -20,7 +20,12 @@ export async function installOutboxHarness(page: Page) {
       const exports: Record<string, unknown> = {};
       modules[name] = exports;
       new Function("exports", "require", code[name])(exports, (path: string) =>
-        load(path.replace(/^\.\//, "").replace(/\.ts$/, "")),
+        load(
+          path
+            .replace(/^\.\//, "")
+            .replace(/\.ts$/, "")
+            .replace(/^workflow\//, ""),
+        ),
       );
       return exports;
     }
