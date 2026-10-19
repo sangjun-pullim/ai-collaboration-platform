@@ -18,7 +18,7 @@ export type SourceKind = "user" | "project" | "local" | "managed" | "instruction
 export interface ConfigurationSource {
   path: string;
   kind: SourceKind;
-  projection?: "native-global";
+  projection?: "native-global" | "native-credentials";
   projectionRoots?: readonly string[];
   nativeReadOnly?: boolean;
 }
@@ -281,7 +281,8 @@ export function snapshotSource(
   }
   if (prior?.identity === identity) return prior;
   const bytes = readConfigurationFile(source.path);
-  let projected: unknown = null,
+  // Token storage presence does not grant execution authority. Unknown fields remain pinned.
+  let projected: unknown = source.projection === "native-credentials" ? {} : null,
     env: Record<string, string> = {},
     plugins: string[] = [],
     managedConflict = false;

@@ -154,7 +154,11 @@ export function nativeSources(
   assertNoManagedSources(layout.home, layout.configDirectory);
   const sources: ConfigurationSource[] = [
     { path: join(layout.configDirectory, "settings.json"), kind: "user" },
-    { path: join(layout.configDirectory, ".credentials.json"), kind: "auth" },
+    {
+      path: join(layout.configDirectory, ".credentials.json"),
+      kind: "auth",
+      projection: "native-credentials",
+    },
     {
       path: join(layout.home, ".claude.json"),
       kind: "auth",
