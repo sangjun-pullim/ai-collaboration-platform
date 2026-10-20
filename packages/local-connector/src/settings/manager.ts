@@ -89,6 +89,22 @@ function recoveryAction(j: SetupJournal, serverState: Operation["state"]) {
     !j.applyBody &&
     j.receipt?.state === "LOCAL_CONFIRMATION" &&
     !!j.receipt.catalog;
+  // Root selection is persisted before any confirmation, catalog or AI preparation.
+  // Only this empty candidate proves that cancellation cannot conceal an AI execution.
+  const unstartedFolderChoice =
+    j.phase === "UNKNOWN" &&
+    j.operation.state === "REQUESTED" &&
+    j.root === null &&
+    j.settings === null &&
+    j.context === null &&
+    j.receipt === null &&
+    !j.catalogContext &&
+    !j.repositoryAccess &&
+    !j.files &&
+    !j.handoff &&
+    !j.applyBody &&
+    !j.applyHash &&
+    !j.commitBody;
   if (
     serverState === "CANCELLED" &&
     !["COMMITTED", "LOCAL_COMMITTED", "APPLIED"].includes(j.phase) &&
@@ -98,7 +114,8 @@ function recoveryAction(j: SetupJournal, serverState: Operation["state"]) {
       ["LOCAL_CONFIRMATION", "PREPARED", "FAILED"].includes(j.phase) ||
       j.receipt?.state === "CANCELLED" ||
       !!j.commitBody ||
-      restoreConfirmation
+      restoreConfirmation ||
+      unstartedFolderChoice
     )
       return "cancel";
     return "preserve-unknown";
