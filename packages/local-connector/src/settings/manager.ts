@@ -583,6 +583,30 @@ export class SettingsManager {
     this.reason = null;
   }
   /** This is the sole settings poll while a dialog, catalog or preparation is outstanding. */
+  /** A failed read is not evidence that the in-flight settings operation failed. */
+  private async pollStatus(): Promise<SettingsResponse | null> {
+    try {
+      const response = await this.call("poll");
+      if (this.reason === "UNAVAILABLE") this.reason = null;
+      this.pollSucceeded = true;
+      return response;
+    } catch (error) {
+      if (!(error instanceof SettingsError) || error.code !== "UNAVAILABLE") throw error;
+      this.pollSucceeded = false;
+      this.ready = false;
+      this.reason = "UNAVAILABLE";
+      this.reportStatus();
+      return null;
+    }
+  }
+  private async awaitStatus(): Promise<SettingsResponse> {
+    for (;;) {
+      if (this.signal.aborted) throw new RuntimeError("RUNTIME_CLOSED");
+      const response = await this.pollStatus();
+      if (response) return response;
+      await this.pause();
+    }
+  }
   private async watched<T>(
     run: (signal: AbortSignal, check: () => void) => Promise<T>,
   ): Promise<T> {
@@ -615,7 +639,9 @@ export class SettingsManager {
           await job;
           throw new RuntimeError("RUNTIME_CLOSED");
         }
-        const response = await this.call("poll");
+        // Keep the same local job, including a completed result, until its request is checked.
+        // Never rerun folder selection or AI work merely because a status read failed.
+        const response = await this.awaitStatus();
         const operation = this.sameOperation(response);
         if (operation.state === "CANCELLED") {
           abort.abort();
@@ -881,7 +907,7 @@ export class SettingsManager {
       };
       repositoryMode(settings, { generation: j.generation, root: j.root! });
       await new RuntimeFilePolicy(j.root!, settings.files).assertUnchanged(() => {});
-      const latest = await this.call("poll");
+      const latest = await this.awaitStatus();
       if (!same(this.applyBody(latest), body)) throw new SettingsError("CONFLICT");
       await this.save((_state, journal) => {
         journal.phase = "PREPARE_INTENT";
@@ -1121,7 +1147,7 @@ export class SettingsManager {
   private async closeUnpreparedFailure() {
     const j = this.state.journal!;
     await this.cleanupAdapter();
-    const response = await this.call("poll");
+    const response = await this.awaitStatus();
     const op = this.sameOperation(response);
     if (["COMMITTED", "APPLIED"].includes(op.state)) return this.adopt(response);
     this.assertBinding(response, j.previous ?? null);
@@ -1305,7 +1331,12 @@ export class SettingsManager {
         do {
           if (this.signal.aborted) break;
           try {
-            const response = await this.call("poll");
+            const response = await this.pollStatus();
+            if (!response) {
+              if (options.once && (!this.runnerJob || this.runnerSettled)) break;
+              await this.pause();
+              continue;
+            }
             this.pollSucceeded = true;
             const journal = this.state.journal;
             if (
