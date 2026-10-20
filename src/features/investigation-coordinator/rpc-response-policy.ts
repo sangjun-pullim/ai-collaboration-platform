@@ -11,9 +11,11 @@ export function projectRpcResponse(action: Action, value: unknown): unknown {
     if (
       action === "claim" &&
       Object.keys(value).length === 1 &&
-      (value as { claimDenied: unknown }).claimDenied === "INPUT_PAUSED"
+      ["INPUT_PAUSED", "REQUEST_CANCELLED"].includes((value as { claimDenied: string }).claimDenied)
     )
-      throw new WorkflowError("INPUT_PAUSED");
+      throw new WorkflowError(
+        (value as { claimDenied: "INPUT_PAUSED" | "REQUEST_CANCELLED" }).claimDenied,
+      );
     throw new WorkflowError("UNAVAILABLE");
   }
   return projectResponse(action, value);

@@ -130,6 +130,10 @@ Git 기준과 작업트리의 사람 cookie Auth·기기 bearer·내구 조사·
 
 일시정지로 거절한 claim은 기존 workflow receipt에 원래 operation/body로 저장한다. 재개 후 같은 claim을 재전달해도 `INPUT_PAUSED`/409이며 다른 action으로 해당 operation을 재사용하면 `CONFLICT`다. DB 내부의 정확한 denial marker는 [RPC 응답 정책](../src/features/investigation-coordinator/rpc-response-policy.ts)이 고정 HTTP 오류로 변환한다. 응답 유실·timeout·잘못된 marker를 실행되지 않았다는 증거로 삼지 않는다. 실제 설치·HTTP·브라우저 검증은 [검증 정본](planning/delivery-and-validation.md#현재-진행-상태)을 따른다.
 
+`claim`의 `REQUEST_CANCELLED`/409는 현재 인증·방·기기·agent·epoch가 일치하고, 요청이 CANCELLED이며 attempt와 성공 claim 기록이 없는 경우만 반환한다. 정확한 내부 marker `{claimDenied:"REQUEST_CANCELLED"}`를 원래 operation/body의 receipt에 저장한다. 기존 성공 receipt를 이 오류로 바꾸지 않는다. 이미지 capability 만료나 이미지 삭제는 이 취소 증거 조회를 막지 않지만, 실제 실행을 허용하는 이미지 검사는 유지한다. 이 코드를 모르는 연결 프로그램은 일반 실패로 처리한다.
+
+연결 프로그램은 입력 제어 조회가 회복되면 새 claim 전에 준비 보고를 먼저 확정한다. `REQUEST_CANCELLED`가 원래 전송된 claim과 일치하고 로컬 실행 증거가 없을 때만 `SERVER_REQUEST_CANCELLED` 근거와 claim CLOSED를 함께 저장한다. 저장 성공 뒤 다음 새 질문을 받을 수 있으며 취소된 질문은 자동 재실행하지 않는다.
+
 ## 사람의 기기 관리
 
 `/api/connections/<action>`은 `approve`, `revoke`, `remove`만 허용한다. 승인에는 일회용 code·organizationId·roomId·공개 범위 확인, 취소/제거에는 자기 deviceId를 받는다. 해당 사람의 현재 권한과 소유 관계를 DB에서 확인한다. observer는 승인할 수 없다. 승인 code만으로 connector credential을 가져갈 수 없다.

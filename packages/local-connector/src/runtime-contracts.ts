@@ -312,6 +312,7 @@ export interface AttemptJournal {
   unstartedClosure?:
     | { kind: "LOCAL_NOT_TRANSMITTED"; claimOperationId: string }
     | { kind: "SERVER_INPUT_PAUSED"; claimOperationId: string }
+    | { kind: "SERVER_REQUEST_CANCELLED"; claimOperationId: string }
     | { kind: "SERVER_ABANDONED"; claimOperationId: string; snapshot: AttemptSnapshot }
     | {
         kind: "SERVER_PREINPUT_REJECTED";
