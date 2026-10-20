@@ -108,6 +108,8 @@ room/org 삭제는 workflow 자식을 cascade한다. 과거 actor/binding 식별
 
 ## 사람의 직접 질문
 
+[실행 전 취소 복구 migration](../supabase/migrations/20261020002800-unstarted-claim-recovery.sql)은 새 테이블 없이 `workflow_private.receipts`에 정확한 취소 거절을 저장한다. `own_input_private.cancelled_claim`이 현재 인증·scope·원래 receipt를 확인하고 기존 방 잠금 아래 reconcile 및 CANCELLED·attempt 없음·성공 claim 없음 조건을 판정한다. 이 내부 함수는 lease를 생성하지 않는다. 일반 claim과 이미지 wrapper가 같은 함수를 사용하며 anon/authenticated의 직접 호출은 금지한다. 다른 action/body의 operation 재사용과 기존 성공 receipt 복원 규칙은 유지한다. [공개 계약](API-SPEC.md#내-ai의-새-답변-제어)을 따른다.
+
 [직접 질문 migration](../supabase/migrations/20261002000700-human-direct-questions.sql)은 기존 cycle에 `mode`를 추가하고 기존 행을 `AI_PAIR`로 유지한다. `DIRECT`는 실제 질문자를 `origin_owner_id`에 저장하고 `origin_agent_id`·`origin_epoch`는 null로 둔다. 대상은 기존 peer 식별자와 epoch로 고정한다. generation은 1, 실행 예약은 1, AI 간 질문 왕복 예약은 0이다.
 
 question의 `source:HUMAN`에는 `requester_user_id`가 있고 origin request·epoch는 null이다. transaction 종료 시 검사하는 graph 제약은 한 DIRECT cycle에 generation·HUMAN question·PEER request가 각각 하나인지 확인한다. 대상·질문자·revision과 질문 본문을 바꾸거나 가짜 origin·continuation을 추가할 수 없다. 직접 질문의 이력과 기존 AI_PAIR의 이력·receipt는 같은 정본 안에서 보존한다.

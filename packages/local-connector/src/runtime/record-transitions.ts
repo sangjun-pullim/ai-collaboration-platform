@@ -339,7 +339,11 @@ function validateAttemptIdentityAndClosureChange(
     )
   )
     unsafe();
-  if (!old.unstartedClosure && current.unstartedClosure?.kind === "SERVER_INPUT_PAUSED") {
+  if (
+    !old.unstartedClosure &&
+    (current.unstartedClosure?.kind === "SERVER_INPUT_PAUSED" ||
+      current.unstartedClosure?.kind === "SERVER_REQUEST_CANCELLED")
+  ) {
     const claim = previous.operations.find((o) => claimMatches(current, o));
     if (
       !claim ||

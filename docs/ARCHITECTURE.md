@@ -120,7 +120,7 @@ Vercel은 화면과 짧은 제어 API를 제공하고 AI 실행·지속 연결�
 
 같은 feature의 브라우저 코드에서는 `InvestigationView`가 공동 이력 조회·직접 질문 전송·미확정 질문의 저장/삭제·대상 선택을 소유한다. 본인 새 답변 제어는 `OwnInputControls`가 별도 상태와 intent를 소유한다. 상태가 없는 `investigation-client`는 공통 HTTP 응답 정책을, `direct-intents`와 `own-input-control-state`는 각 요청의 복원·검증 정책을 제공한다. 상세 책임은 [프런트엔드 모듈 경계](FRONTEND-ARCHITECTURE.md#상태-소유권과-입력)를 따른다.
 
-본인 새 답변 제어의 정본은 `own_input_private.states`의 desired 상태이며 연결 프로그램의 `InputAdmission`은 현재 revision/epoch의 조회·적용 보고로 새 claim 허용만 관리한다. 기존 실행의 도구 admission·lease·native ACK·종결과 분리한다. 최초 성공 claim commit 이후의 답변은 일시정지로 중단하지 않는다. 확정 거절은 공통 workflow receipt에 저장하고 정확한 미시작 proof와 원래 claim CLOSED를 로컬의 한 저장에서 확정한다. timeout과 저장 실패는 UNKNOWN으로 보존한다. [제어 계약](API-SPEC.md#내-ai의-새-답변-제어)·[저장 경계](DB-SCHEMA.md#본인-ai의-새-답변-상태)·[검증 정본](planning/delivery-and-validation.md#현재-진행-상태)을 따른다.
+본인 새 답변 제어의 정본은 `own_input_private.states`의 desired 상태이며 연결 프로그램의 `InputAdmission`은 현재 revision/epoch의 조회·적용 보고로 새 claim 허용만 관리한다. 기존 실행의 도구 admission·lease·native ACK·종결과 분리한다. 최초 성공 claim commit 이후의 답변은 일시정지로 중단하지 않는다. 확정 거절은 공통 workflow receipt에 저장하고 정확한 미시작 proof와 원래 claim CLOSED를 로컬의 한 저장에서 확정한다. timeout과 저장 실패는 UNKNOWN으로 보존한다. 준비 회복 시 claim 전 보고 순서와 실행 전 취소의 자동 정리 조건은 [제어 계약](API-SPEC.md#내-ai의-새-답변-제어)을 따른다. [저장 경계](DB-SCHEMA.md#본인-ai의-새-답변-상태)·[검증 정본](planning/delivery-and-validation.md#현재-진행-상태)을 따른다.
 
 - Postgres: 확정 메시지, 질문 상태, 실행 요청·상태, 방 revision, 참가자 권한, 명시적 개입, 근거·결론의 정본.
 - Realtime: 새 이벤트 알림, 온라인 표시, 작성 중 delta의 빠른 표시. 전달 완료나 실행 완료의 증명이 아니다.

@@ -25,3 +25,19 @@ test("should preserve normal RPC projections and reject malformed success data",
   assert.deepEqual(projectRpcResponse("pause", result), result);
   assert.throws(() => projectRpcResponse("claim", {}), { code: "UNAVAILABLE" });
 });
+
+test("should accept only the exact claim cancellation proof marker", () => {
+  assert.throws(() => projectRpcResponse("claim", { claimDenied: "REQUEST_CANCELLED" }), {
+    code: "REQUEST_CANCELLED",
+  });
+  for (const action of [...humanActions, ...deviceActions].filter((action) => action !== "claim"))
+    assert.throws(() => projectRpcResponse(action, { claimDenied: "REQUEST_CANCELLED" }), {
+      code: "UNAVAILABLE",
+    });
+  for (const value of [
+    { claimDenied: "REQUEST_CANCELLED", extra: true },
+    { claimDenied: ["REQUEST_CANCELLED"] },
+    { claimDenied: null },
+  ])
+    assert.throws(() => projectRpcResponse("claim", value), { code: "UNAVAILABLE" });
+});

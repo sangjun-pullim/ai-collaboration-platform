@@ -153,6 +153,7 @@ export async function runnerFixture(
     epoch = 1;
   let inputRevision = 1,
     inputPaused = false;
+  let reportedReady = true;
   let applied: { revision: number; epoch: number; at: string } | null = null;
   const inputState = () => ({
     agentId: f.scope.agentId,
@@ -206,7 +207,7 @@ export async function runnerFixture(
     roomMode,
     agentId: f.scope.agentId,
     bindingEpoch: epoch,
-    reportedReady: true,
+    reportedReady,
     validUntil: new Date(Date.now() + 60000).toISOString(),
     queuedRequest: queued,
     attempt: attempt?.state === "ABANDONED" ? null : attempt,
@@ -350,7 +351,8 @@ export async function runnerFixture(
               applied = { revision: inputRevision, epoch, at: new Date().toISOString() };
             result = inputState();
           } else if (action === "poll") result = poll();
-          else if (action === "ready")
+          else if (action === "ready") {
+            reportedReady = body.reportedReady === true;
             result = {
               agentId: f.scope.agentId,
               bindingEpoch: epoch,
@@ -358,10 +360,11 @@ export async function runnerFixture(
               validUntil: body.reportedReady ? new Date(Date.now() + 60000).toISOString() : null,
               verification: "reported",
             };
-          else if (action === "claim" && inputPaused) {
+          } else if (action === "claim" && inputPaused) {
             result = { claimDenied: "INPUT_PAUSED" };
           } else if (action === "claim") {
             if (
+              !reportedReady ||
               !queued ||
               body.requestId !== queued.requestId ||
               (attempt && ["LEASED", "EXECUTING", "UNKNOWN"].includes(attempt.state))

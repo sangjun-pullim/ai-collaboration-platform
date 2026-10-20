@@ -63,7 +63,7 @@ function closureValid(a: AttemptJournal, v: RuntimeRecord) {
       (claim && (!["PENDING", "CLOSED"].includes(claim.state) || claim.result !== null))
     )
       unsafe();
-  } else if (proof.kind === "SERVER_INPUT_PAUSED") {
+  } else if (proof.kind === "SERVER_INPUT_PAUSED" || proof.kind === "SERVER_REQUEST_CANCELLED") {
     if (
       !claim ||
       claim.state !== "CLOSED" ||
