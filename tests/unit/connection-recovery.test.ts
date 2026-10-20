@@ -531,7 +531,55 @@ test("should read later retirement pages before concluding that a preserved requ
   }
 });
 
-for (const outcome of ["retired", "unresolved", "offline", "selection-changed"] as const) {
+test("should reconcile retired old plus new active without ready or binding and keep it closed after reload", async () => {
+  const h = harness();
+  await h.controller.revoke(true);
+  await h.controller.mutate("retire", retirementFields());
+  h.controller.stop();
+  const original = JSON.parse([...h.saved.values()][0]);
+  const deviceId = "00000000-0000-4000-8000-000000000020";
+  const connected: ReadinessView = {
+    ...new AiReadinessController().getSnapshot(),
+    target: { expectedUserId: target.userId, roomId: target.roomId, deviceId },
+    state: "complete",
+    device: { ...h.current().device, deviceId, state: "active" },
+  };
+  const restored = new ConnectionRecoveryController(h.dependencies);
+  try {
+    restored.setContext(target.userId, target.roomId, deviceId);
+    const mutations = h.calls.filter((call) => call.action !== "read-recovery").length;
+    assert.equal(await restored.reconcileReplacement(connected), true);
+    assert.equal(restored.getSnapshot().phase, "closed");
+    assert.equal(connected.ready, false);
+    assert.equal(connected.binding, null);
+    const journal = JSON.parse([...h.saved.values()][0]);
+    assert.deepEqual(journal.target, original.target);
+    assert.deepEqual(journal.retireIntent, original.retireIntent);
+    assert.equal(journal.revokeAttempted, original.revokeAttempted);
+    assert.equal(journal.replacementDeviceId, deviceId);
+    assert.equal(h.calls.filter((call) => call.action !== "read-recovery").length, mutations);
+    const reloaded = new ConnectionRecoveryController(h.dependencies);
+    try {
+      reloaded.setContext(target.userId, target.roomId, deviceId);
+      assert.equal(reloaded.getSnapshot().phase, "closed");
+      assert.equal(reloaded.getSnapshot().target, null);
+    } finally {
+      reloaded.stop();
+    }
+  } finally {
+    restored.stop();
+  }
+});
+
+for (const outcome of [
+  "retired",
+  "unresolved",
+  "offline",
+  "selection-changed",
+  "account-changed",
+  "room-changed",
+  "journal-changed",
+] as const) {
   test(`should reconcile a restored recovery only with confirmed retirement: ${outcome}`, async () => {
     const h = harness();
     await h.controller.revoke(true);
@@ -542,12 +590,8 @@ for (const outcome of ["retired", "unresolved", "offline", "selection-changed"] 
     const ready: ReadinessView = {
       ...new AiReadinessController().getSnapshot(),
       target: { expectedUserId: target.userId, roomId: target.roomId, deviceId },
-      binding: { agentId: deviceId, bindingEpoch: 1, configRevision: 1, applied: true },
       state: "complete",
-      ready: true,
-      selectedReady: true,
       device: { ...h.current().device, deviceId, state: "active" },
-      validUntil: new Date(Date.now() + 60000).toISOString(),
     };
     try {
       restored.setContext(target.userId, target.roomId, deviceId);
@@ -555,17 +599,33 @@ for (const outcome of ["retired", "unresolved", "offline", "selection-changed"] 
       const mutations = h.calls.filter((call) => call.action !== "read-recovery").length;
       h.faults.read = outcome === "offline";
       let release = () => {};
-      if (outcome === "selection-changed")
+      if (
+        ["selection-changed", "account-changed", "room-changed", "journal-changed"].includes(
+          outcome,
+        )
+      )
         h.faults.waitStatus = new Promise<void>((resolve) => {
           release = resolve;
         });
       const pending = restored.reconcileReplacement(ready);
-      if (outcome === "selection-changed") {
+      if (h.faults.waitStatus) {
         await Promise.resolve();
-        restored.setContext(target.userId, target.roomId, target.deviceId);
+        if (outcome === "journal-changed") {
+          const [storageKey, raw] = [...h.saved.entries()][0];
+          h.saved.set(storageKey, `${raw} `);
+        } else
+          restored.setContext(
+            outcome === "account-changed" ? deviceId : target.userId,
+            outcome === "room-changed" ? deviceId : target.roomId,
+            outcome === "selection-changed" ? target.deviceId : deviceId,
+          );
         release();
       }
       assert.equal(await pending, outcome === "retired");
+      if (outcome === "account-changed" || outcome === "room-changed") {
+        assert.equal(restored.getSnapshot().target, null);
+        restored.setContext(target.userId, target.roomId, deviceId);
+      }
       assert.equal(restored.getSnapshot().phase === "closed", outcome === "retired");
       const journal = JSON.parse([...h.saved.values()][0]);
       assert.equal(journal.target.candidate.requestId, target.candidate.requestId);
@@ -577,7 +637,7 @@ for (const outcome of ["retired", "unresolved", "offline", "selection-changed"] 
   });
 }
 
-test("should finish the browser recovery only after a different owned device has current applied readiness", async () => {
+test("should finish the browser recovery only after a different owned device has a complete active connection check", async () => {
   const h = harness();
   try {
     await h.controller.revoke(true);
@@ -594,23 +654,30 @@ test("should finish the browser recovery only after a different owned device has
       validUntil: new Date(Date.now() + 60000).toISOString(),
     };
     h.controller.setContext(target.userId, target.roomId, deviceId);
-    assert.equal(h.controller.completeReplacement({ ...ready, ready: false }), false);
-    assert.equal(h.controller.completeReplacement({ ...ready, validUntil: null }), false);
+    for (const state of ["idle", "checking", "error", "expired"] as const)
+      assert.equal(h.controller.completeReplacement({ ...ready, state }), false);
+    for (const state of ["revoked", "removed"] as const)
+      assert.equal(
+        h.controller.completeReplacement({ ...ready, device: { ...ready.device!, state } }),
+        false,
+      );
+    for (const expiresAt of [null, new Date(Date.now() - 1).toISOString()])
+      assert.equal(
+        h.controller.completeReplacement({ ...ready, device: { ...ready.device!, expiresAt } }),
+        false,
+      );
     assert.equal(
       h.controller.completeReplacement({
         ...ready,
-        binding: { ...ready.binding!, applied: false },
+        ready: false,
+        selectedReady: false,
+        binding: null,
+        validUntil: null,
+        roomBlocked: true,
+        failure: { requestId: target.candidate.requestId, reason: "LOCAL_VALIDATION_FAILED" },
       }),
-      false,
+      true,
     );
-    assert.equal(
-      h.controller.completeReplacement({
-        ...ready,
-        validUntil: new Date(Date.now() - 1).toISOString(),
-      }),
-      false,
-    );
-    assert.equal(h.controller.completeReplacement(ready), true);
     assert.equal(h.controller.getSnapshot().phase, "closed");
     const journal = JSON.parse([...h.saved.values()][0]);
     assert.equal(journal.replacementDeviceId, deviceId);
