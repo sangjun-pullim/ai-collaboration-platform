@@ -56,6 +56,9 @@ function RoomInvestigation({ userId, roomId, role }: Props) {
     realtimeState,
     observedAt,
     cancelReceipts,
+    diagnostics,
+    diagnosticsError,
+    retryDiagnostics,
     requiredRecoveryRevision,
     mutate,
     loseAccess,
@@ -170,6 +173,7 @@ function RoomInvestigation({ userId, roomId, role }: Props) {
         gap: history.gap,
         role,
         cancelReceipts,
+        diagnostics,
         retirements: history.retirements,
       }),
     [
@@ -184,6 +188,7 @@ function RoomInvestigation({ userId, roomId, role }: Props) {
       history.gap,
       role,
       cancelReceipts,
+      diagnostics,
     ],
   );
   const cycleStatuses = cycle
@@ -552,7 +557,11 @@ function RoomInvestigation({ userId, roomId, role }: Props) {
         }}
       />
       {showAnswerStatus && (
-        <ChatAnswerStatusPanel statuses={currentStatuses}>
+        <ChatAnswerStatusPanel
+          statuses={currentStatuses}
+          diagnosticsError={diagnosticsError}
+          retryDiagnostics={retryDiagnostics}
+        >
           {writable && (
             <>
               <RequestRetirementControls

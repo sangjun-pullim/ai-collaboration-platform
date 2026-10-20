@@ -27,6 +27,13 @@ import { cacheChatHistory, cachedChatHistory, clearChatHistory } from "./chat-hi
 import type { RealtimeState } from "./room-realtime.ts";
 import { pollingDelay } from "./polling-policy.ts";
 import { projectHistoryWindow, type HistoryWindowRequest } from "./history-window-contracts.ts";
+import { answerStatuses } from "./chat-presentation.ts";
+import {
+  projectRunDiagnostics,
+  RUN_DIAGNOSTICS_LIMIT,
+  type RunDiagnostic,
+  type RunDiagnosticsRequest,
+} from "./run-diagnostics-contracts.ts";
 
 export type RoomChatActor = {
   userId: string;
@@ -53,6 +60,8 @@ export type RoomChatState = {
   cancelReceipts: CancelReceipt[];
   olderBusy: boolean;
   olderError: string | null;
+  diagnostics: RunDiagnostic[];
+  diagnosticsError: string | null;
 };
 export type CancelReceipt = {
   requestId: string;
@@ -90,6 +99,13 @@ export class RoomChatController {
   private preserveSavedIntent = false;
   private cached: HistoryState | null = null;
   private olderAbort: AbortController | null = null;
+  private diagnosticsAbort: AbortController | null = null;
+  private diagnosticsVersions = new Map<string, string>();
+  private diagnosticsObservation = "";
+  private diagnosticsAttempts = new Map<
+    string,
+    { version: string; count: number; after: number }
+  >();
 
   constructor(
     private readonly actor: RoomChatActor,
@@ -103,6 +119,10 @@ export class RoomChatController {
     },
     private readonly windowRequest?: (
       body: HistoryWindowRequest,
+      signal: AbortSignal,
+    ) => Promise<unknown>,
+    private readonly diagnosticsRequest?: (
+      body: RunDiagnosticsRequest,
       signal: AbortSignal,
     ) => Promise<unknown>,
   ) {
@@ -122,6 +142,8 @@ export class RoomChatController {
       cancelReceipts: [],
       olderBusy: false,
       olderError: null,
+      diagnostics: [],
+      diagnosticsError: null,
     };
   }
 
@@ -136,9 +158,157 @@ export class RoomChatController {
     this.listeners.forEach((listener) => listener());
   }
 
+  private clearDiagnostics() {
+    this.diagnosticsAbort?.abort();
+    this.diagnosticsAbort = null;
+    this.diagnosticsVersions.clear();
+    this.diagnosticsAttempts.clear();
+    this.diagnosticsObservation = "";
+    this.update({ diagnostics: [], diagnosticsError: null });
+  }
+
+  retryDiagnostics = () => {
+    if (!this.active || this.state.permissionDenied) return;
+    this.diagnosticsAttempts.clear();
+    void this.refreshDiagnostics();
+  };
+
+  private async refreshDiagnostics() {
+    const snapshot = this.state.history.snapshot;
+    if (!this.diagnosticsRequest || !this.active || this.state.permissionDenied || !snapshot)
+      return;
+    const history = this.state.history;
+    const presentation = answerStatuses({
+      events: history.events,
+      runs: snapshot.runs,
+      historicalRuns: history.runs,
+      bindings: snapshot.bindings,
+      cycle: snapshot.cycle,
+      observedAt: this.state.observedAt,
+      now: this.environment.now(),
+      retirements: history.retirements,
+      cancelReceipts: this.state.cancelReceipts,
+    });
+    // Bound the per-controller cache to the most recent loaded status targets.
+    const statuses = [
+      ...new Map(
+        [...presentation.statuses, ...[...presentation.byQuestion.values()].flat()].map(
+          (status) => [status.requestId, status],
+        ),
+      ).values(),
+    ]
+      .sort(
+        (left, right) =>
+          Number(left.cycleId === snapshot.cycle?.cycleId) -
+            Number(right.cycleId === snapshot.cycle?.cycleId) ||
+          (left.question?.sequence ?? 0) - (right.question?.sequence ?? 0) ||
+          Date.parse(left.updatedAt ?? "1970-01-01") - Date.parse(right.updatedAt ?? "1970-01-01"),
+      )
+      .slice(-200);
+    const targets = new Map(
+      statuses.map((status) => {
+        const events = history.events
+          .filter(
+            (event) =>
+              (event.requestId === status.requestId ||
+                (event.cycleId === status.cycleId && event.kind === "HUMAN_INPUT_REQUIRED")) &&
+              ["HUMAN_INPUT_REQUIRED", "INTERRUPT_REQUESTED", "INTERRUPT_ACKNOWLEDGED"].includes(
+                event.kind,
+              ),
+          )
+          .map((event) => event.eventId)
+          .sort();
+        const cycle = snapshot.cycle?.cycleId === status.cycleId ? snapshot.cycle : null;
+        return [
+          status.requestId,
+          JSON.stringify([status.state, status.updatedAt, events, cycle]),
+        ] as const;
+      }),
+    );
+    const observation = JSON.stringify([...targets]);
+    if (observation !== this.diagnosticsObservation) {
+      this.diagnosticsAbort?.abort();
+      this.diagnosticsAbort = null;
+      this.diagnosticsObservation = observation;
+      this.update({
+        diagnostics: this.state.diagnostics.filter(
+          (item) =>
+            targets.has(item.requestId) &&
+            this.diagnosticsVersions.get(item.requestId) === targets.get(item.requestId),
+        ),
+      });
+      for (const id of this.diagnosticsVersions.keys())
+        if (!targets.has(id)) this.diagnosticsVersions.delete(id);
+      for (const id of this.diagnosticsAttempts.keys())
+        if (!targets.has(id)) this.diagnosticsAttempts.delete(id);
+    }
+    if (this.diagnosticsAbort) return;
+    const pending = [...targets].filter(([id, version]) => {
+      if (this.diagnosticsVersions.get(id) === version) return false;
+      const attempt = this.diagnosticsAttempts.get(id);
+      return (
+        !attempt ||
+        attempt.version !== version ||
+        (attempt.count < 3 && attempt.after <= this.environment.now())
+      );
+    });
+    if (!pending.length) return;
+    const abort = new AbortController(),
+      generation = this.generation;
+    this.diagnosticsAbort = abort;
+    let batch: typeof pending = [];
+    try {
+      for (let offset = 0; offset < pending.length; offset += RUN_DIAGNOSTICS_LIMIT) {
+        batch = pending.slice(offset, offset + RUN_DIAGNOSTICS_LIMIT);
+        const body: RunDiagnosticsRequest = {
+          protocol: 1,
+          roomId: this.actor.roomId,
+          expectedUserId: this.actor.userId,
+          requestIds: batch.map(([id]) => id),
+        };
+        const result = projectRunDiagnostics(
+          await this.diagnosticsRequest(body, abort.signal),
+          body,
+        );
+        if (!this.current(generation, abort) || this.diagnosticsObservation !== observation) return;
+        for (const [id, version] of batch) {
+          this.diagnosticsVersions.set(id, version);
+          this.diagnosticsAttempts.delete(id);
+        }
+        const ids = new Set(body.requestIds);
+        this.update({
+          diagnostics: [
+            ...this.state.diagnostics.filter((item) => !ids.has(item.requestId)),
+            ...result.diagnostics,
+          ],
+          diagnosticsError: null,
+        });
+      }
+    } catch (error) {
+      if (!this.current(generation, abort) || this.diagnosticsObservation !== observation) return;
+      if (accessDenied(codeOf(error))) {
+        this.loseAccess();
+        return;
+      }
+      for (const [id, version] of batch) {
+        const prior = this.diagnosticsAttempts.get(id);
+        const count = prior?.version === version ? prior.count + 1 : 1;
+        this.diagnosticsAttempts.set(id, {
+          version,
+          count,
+          after: this.environment.now() + pollingDelay(false, this.environment.hidden(), count),
+        });
+      }
+      this.update({ diagnosticsError: "응답 기한과 중단 원인을 확인하지 못했습니다." });
+    } finally {
+      if (this.diagnosticsAbort === abort) this.diagnosticsAbort = null;
+    }
+  }
+
   start() {
     if (this.active) return;
     this.active = true;
+    this.clearDiagnostics();
     this.generation++;
     this.failures = 0;
     this.resyncRequested = false;
@@ -175,6 +345,7 @@ export class RoomChatController {
     )
       cacheChatHistory(this.actor, this.state.history, this.environment.now());
     this.active = false;
+    this.clearDiagnostics();
     this.resyncRequested = false;
     this.generation++;
     this.clearTimer();
@@ -227,6 +398,7 @@ export class RoomChatController {
   invalidateSession = (nextUserId?: string) => this.revokeAccess(nextUserId === this.actor.userId);
 
   private revokeAccess(preserveSavedIntent: boolean) {
+    this.clearDiagnostics();
     this.preserveSavedIntent = preserveSavedIntent;
     clearChatHistory(this.actor.userId, this.actor.roomId);
     this.cached = null;
@@ -352,6 +524,7 @@ export class RoomChatController {
         return !state || !["COMPLETED", "FAILED", "INTERRUPTED", "CANCELLED"].includes(state);
       });
       this.update({ history, cancelReceipts, observedAt: this.environment.now(), pollError: null });
+      void this.refreshDiagnostics();
       this.failures = 0;
       this.resyncNotBefore = this.environment.now() + 1000;
       backfill = page.hasMore || page.recovery.hasMoreRetirements || history.gap;
@@ -414,6 +587,7 @@ export class RoomChatController {
       );
       if (!this.current(generation, abort)) return;
       this.update({ history: prependHistoryWindow(this.state.history, page) });
+      void this.refreshDiagnostics();
     } catch (error) {
       if (!this.current(generation, abort)) return;
       if (accessDenied(codeOf(error))) {

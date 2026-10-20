@@ -108,6 +108,7 @@ export function questionForReply(event: PublicEvent, events: PublicEvent[]) {
 }
 
 export interface AnswerStatusContext {
+  diagnostics?: import("./run-diagnostics-contracts.ts").RunDiagnostic[];
   events: PublicEvent[];
   runs: RunSummary[];
   historicalRuns?: HistoricalRun[];
@@ -520,6 +521,24 @@ function projectStatus(
       ? cycle.targetAgentId === agentId && cycle.targetEpoch === epoch
       : (cycle.originAgentId === agentId && cycle.originEpoch === epoch) ||
         (cycle.peerAgentId === agentId && cycle.peerEpoch === epoch));
+  const diagnostic = !at ? context.diagnostics?.find((item) => item.requestId === requestId) : null;
+  const stopLabels = {
+    RESPONSE_TIMEOUT: "응답 제한 시간 초과",
+    EXECUTION_LEASE_EXPIRED: "실행 상태 갱신 중단",
+    BINDING_CHANGED: "연결 변경",
+    CONTEXT_CHANGED: "설정 변경",
+  };
+  const diagnosticDetail = diagnostic
+    ? diagnostic.stopReason
+      ? ` 현재 서버 관찰: ${stopLabels[diagnostic.stopReason]} (${new Date(diagnostic.stopObservedAt!).toLocaleString("ko-KR", { timeZone: "Asia/Seoul" })}).`
+      : state === "UNKNOWN" || terminal || interruptPending
+        ? " 중단 원인 기록 없음."
+        : ""
+    : "";
+  const responseDeadline =
+    diagnostic && ["QUEUED", "LEASED", "RUNNING"].includes(state)
+      ? ` 응답 기한: ${new Date(diagnostic.deadline).toLocaleString("ko-KR", { timeZone: "Asia/Seoul" })}.`
+      : "";
   return {
     requestId,
     cycleId,
@@ -537,14 +556,16 @@ function projectStatus(
       : guidance,
     label: retirement
       ? "답변 미확인 · 이전 기록"
-      : interruptPending
-        ? state === "UNKNOWN"
-          ? interruptStage === "ACKNOWLEDGED"
-            ? "중단 수신 확인 · 종료 확인 대기"
-            : "중단 요청 접수 · 종료 확인 대기"
-          : "중단 요청 중 · 종료 확인 대기"
-        : answerLabels[state],
-    detail: `${answerDetails[state]}${
+      : diagnostic?.stopReason && !terminal
+        ? `${stopLabels[diagnostic.stopReason]} · 종료 확인 대기`
+        : interruptPending
+          ? state === "UNKNOWN"
+            ? interruptStage === "ACKNOWLEDGED"
+              ? "중단 수신 확인 · 종료 확인 대기"
+              : "중단 요청 접수 · 종료 확인 대기"
+            : "중단 요청 중 · 종료 확인 대기"
+          : answerLabels[state],
+    detail: `${answerDetails[state]}${state === "UNKNOWN" ? " 실제 종료 확인 대기." : ""}${diagnosticDetail}${responseDeadline}${
       interruptPending
         ? `${interruptStage === "ACKNOWLEDGED" ? " 대상 Mac이 중단 요청 수신을 확인했습니다." : " 서버가 중단 요청을 접수했습니다. 대상 Mac의 수신 확인을 기다립니다."} 중단 요청의 수신 확인은 실제 실행 종료를 뜻하지 않습니다. 연결이 끊겼거나 연결이 바뀐 대상은 소유자가 기존 AI 연결 터미널에서 실제 종료를 확인하고 종료 상태를 보고해야 합니다.`
         : cancelReceiptState === "NO_ACTIVE_RUN"

@@ -15,9 +15,13 @@ import {
 export function ChatAnswerStatusPanel({
   statuses,
   children,
+  diagnosticsError,
+  retryDiagnostics,
 }: {
   statuses: AnswerStatus[];
   children: ReactNode;
+  diagnosticsError?: string | null;
+  retryDiagnostics?: () => void;
 }) {
   const [open, setOpen] = useState(false);
   const summary =
@@ -49,6 +53,14 @@ export function ChatAnswerStatusPanel({
           {statuses.map((status) => (
             <ChatAnswerStatus key={status.requestId} status={status} />
           ))}
+          {diagnosticsError && (
+            <p role="status">
+              {diagnosticsError}{" "}
+              <Button variant="ghost" size="sm" onClick={retryDiagnostics}>
+                다시 확인
+              </Button>
+            </p>
+          )}
           {children}
         </DialogContent>
       </Dialog>

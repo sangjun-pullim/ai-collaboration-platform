@@ -14,6 +14,67 @@ import type { HistoryPage } from "../../src/features/investigation-coordinator/c
 const fixture = JSON.parse(readFileSync("tests/fixtures/human-direct-contracts.json", "utf8"));
 const page = fixture.history as HistoryPage;
 
+test("should show only observed stop reasons and retain actual termination uncertainty", () => {
+  for (const [stopReason, label] of [
+    ["RESPONSE_TIMEOUT", "응답 제한 시간 초과"],
+    ["EXECUTION_LEASE_EXPIRED", "실행 상태 갱신 중단"],
+    ["BINDING_CHANGED", "연결 변경"],
+    ["CONTEXT_CHANGED", "설정 변경"],
+    [null, "중단 원인 기록 없음"],
+  ] as const) {
+    const status = presentation.answerStatuses(
+      context({
+        runs: [{ ...page.runs[0], state: "UNKNOWN" }],
+        diagnostics: [
+          {
+            requestId: page.runs[0].requestId,
+            deadline: "2030-01-01T00:00:00Z",
+            stopReason,
+            stopObservedAt: stopReason ? "2030-01-01T00:00:00Z" : null,
+          },
+        ],
+      }),
+    ).statuses[0];
+    assert.match(status.detail, new RegExp(label));
+    if (stopReason) assert.match(status.label, new RegExp(label));
+    assert.match(status.detail, /실제 종료 확인 대기/);
+    assert.equal(status.state, "UNKNOWN");
+    assert.equal(status.spinning, false);
+  }
+  const status = presentation.answerStatuses(
+    context({
+      runs: [{ ...page.runs[0], state: "RUNNING" }],
+      diagnostics: [
+        {
+          requestId: page.runs[0].requestId,
+          deadline: "2030-01-01T00:00:00Z",
+          stopReason: null,
+          stopObservedAt: null,
+        },
+      ],
+    }),
+  ).statuses[0];
+  assert.match(status.detail, /응답 기한/);
+  assert.doesNotMatch(status.detail, /제한 시간 초과/);
+});
+
+test("should prioritize terminal receipts and never rewrite event-time labels with current diagnostics", () => {
+  const diagnostics = [
+    {
+      requestId: page.runs[0].requestId,
+      deadline: "2030-01-01T00:00:00Z",
+      stopReason: "RESPONSE_TIMEOUT" as const,
+      stopObservedAt: "2030-01-01T00:00:00Z",
+    },
+  ];
+  for (const state of ["COMPLETED", "INTERRUPTED", "CANCELLED", "FAILED"] as const) {
+    const status = presentation.answerStatuses(
+      context({ runs: [{ ...page.runs[0], state }], diagnostics }),
+    ).statuses[0];
+    assert.doesNotMatch(status.label, /제한 시간 초과/);
+  }
+});
+
 test("should distinguish persisted target identity from matching current metadata", () => {
   const event = page.events[0];
   const run = page.runs[0];
@@ -185,6 +246,7 @@ test("should use the source-read PEER snapshot rather than the agent question or
 });
 
 type StatusContext = {
+  diagnostics?: import("../../src/features/investigation-coordinator/run-diagnostics-contracts.ts").RunDiagnostic[];
   events: HistoryPage["events"];
   runs: HistoryPage["runs"];
   historicalRuns?: import("../../src/features/investigation-coordinator/history-state.ts").HistoricalRun[];
@@ -545,10 +607,20 @@ test("should explain human input using only evidence in the same cycle before th
     context({
       events: [...page.events, report, required],
       runs: [{ ...page.runs[0], state: "COMPLETED", updatedAt: "2026-10-01T00:00:10.000Z" }],
+      diagnostics: [
+        {
+          requestId: page.runs[0].requestId,
+          deadline: "2030-01-01T00:00:00Z",
+          stopReason: "RESPONSE_TIMEOUT",
+          stopObservedAt: "2030-01-01T00:00:00Z",
+        },
+      ],
     }),
   );
   assert.match(result.explanation, /정확한 사유.*기록되지/);
   assert.equal(result.statuses[0].state, "UNKNOWN");
+  assert.doesNotMatch(result.statuses[0].label, /제한 시간 초과/);
+  assert.doesNotMatch(result.statuses[0].detail, /현재 서버 관찰/);
   assert.match(result.statuses[0].guidance, /같은 질문의 현재 답변 상태/);
   assert.doesNotMatch(result.statuses[0].guidance, /실행 종료가 확인될 때까지/);
   for (const evidence of [

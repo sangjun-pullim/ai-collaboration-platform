@@ -2,7 +2,6 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import { randomUUID } from "node:crypto";
 import { createClient } from "@supabase/supabase-js";
-import { setTimeout as delay } from "node:timers/promises";
 import {
   workflowCase,
   type WorkflowFixture,
@@ -12,18 +11,15 @@ import { assertOwnedStack } from "../helpers/local-access-stack.js";
 
 const options = { timeout: 300000 };
 
-test("should recover the original rejected claim after its real queue deadline", options, () =>
+test("should recover the original rejected claim after its effective queue deadline", options, () =>
   workflowCase("unstarted-deadline", async (f) => {
     const s = await f.directScene("unstarted-deadline");
-    const requestId = (await f.ask(s)).requestId!;
+    const admission = await f.ask(s);
+    const requestId = admission.requestId!;
     await f.device(s.responder, "ready", { operationId: randomUUID(), reportedReady: false });
     const body = { requestId, operationId: randomUUID() };
     assert.deepEqual((await f.device(s.responder, "claim", body)).data.error, { code: "CONFLICT" });
-    const deadline = await f.stack.db.query(
-      "select deadline from workflow_private.requests where id=$1",
-      [requestId],
-    );
-    await delay(Math.max(0, new Date(deadline.rows[0].deadline).getTime() - Date.now()) + 100);
+    await f.expire("cycle", admission.cycleId);
     cancelled(await f.device(s.responder, "claim", body));
     const attempts = await f.stack.db.query(
       "select count(*)::int n from workflow_private.attempts where request_id=$1",
