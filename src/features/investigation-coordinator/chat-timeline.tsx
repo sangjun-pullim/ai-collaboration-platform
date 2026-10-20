@@ -1,5 +1,5 @@
 "use client";
-import { memo, useMemo, useState, type RefObject, type UIEventHandler } from "react";
+import { memo, useMemo, useRef, useState, type RefObject, type UIEventHandler } from "react";
 import { useVirtualHistory } from "./use-virtual-history";
 import { Dialog, DialogContent, DialogDescription, DialogTitle } from "../../components/ui/dialog";
 import type { PublicBinding, PublicEvent, RunSummary } from "./contracts";
@@ -40,6 +40,10 @@ export function ChatTimeline({
   userId,
   roomId,
   imagesEnabled = false,
+  hasOlder = false,
+  olderBusy = false,
+  olderError = null,
+  onLoadOlder,
 }: {
   events: PublicEvent[];
   loading?: boolean;
@@ -62,7 +66,13 @@ export function ChatTimeline({
   userId?: string;
   roomId?: string;
   imagesEnabled?: boolean;
+  hasOlder?: boolean;
+  olderBusy?: boolean;
+  olderError?: string | null;
+  onLoadOlder?: () => void;
 }) {
+  const olderGesture = useRef(false);
+  const previousTop = useRef(0);
   const context = {
     events,
     runs,
@@ -77,23 +87,8 @@ export function ChatTimeline({
   };
   const projected = presentation ?? answerStatuses(context);
   const visible = useMemo(() => timelineEvents(events), [events]);
-  const orphanStatuses = projected.statuses.filter(
-    (status) =>
-      !status.question &&
-      ["COMPLETED", "FAILED", "INTERRUPTED", "CANCELLED"].includes(status.state),
-  );
-  const orphanKey = orphanStatuses.map((status) => status.requestId).join(":");
-  const ids = useMemo(
-    () => [
-      ...visible.map((event) => event.eventId),
-      ...orphanKey
-        .split(":")
-        .filter(Boolean)
-        .map((id) => `result:${id}`),
-    ],
-    [visible, orphanKey],
-  );
-  const { virtualizer, items, jump } = useVirtualHistory(ids, scrollRef);
+  const ids = useMemo(() => visible.map((event) => event.eventId), [visible]);
+  const { virtualizer, items, jump, missingTarget } = useVirtualHistory(ids, scrollRef);
   const imageScope = { protocol: 1 as const, roomId: roomId ?? "", expectedUserId: userId ?? "" };
   const imageIds = items
     .map((item) => visible[item.index])
@@ -113,6 +108,13 @@ export function ChatTimeline({
   const sourceValid = source && eventIds.has(source.eventId) ? source : null;
   return (
     <div className="relative flex min-h-0 flex-1 flex-col">
+      {missingTarget && (
+        <p role="status" className="shrink-0 px-4 py-1 text-xs text-neutral-500">
+          {hasOlder
+            ? "이 메시지는 이전 대화에 있습니다. 위로 스크롤하거나 이전 대화 보기를 눌러 불러오세요."
+            : "이 대화에서 해당 메시지를 찾을 수 없습니다."}
+        </p>
+      )}
       {loading && (
         <p role="status" className="shrink-0 px-4 py-1 text-xs text-neutral-500">
           공동 이력을 계속 불러오는 중입니다.
@@ -121,11 +123,69 @@ export function ChatTimeline({
       <div
         ref={scrollRef}
         tabIndex={-1}
-        onScroll={onScroll}
+        onWheel={(event) => {
+          olderGesture.current = event.deltaY < 0;
+          if (
+            event.deltaY < 0 &&
+            event.currentTarget.scrollTop < 240 &&
+            hasOlder &&
+            !olderBusy &&
+            !olderError
+          ) {
+            olderGesture.current = false;
+            onLoadOlder?.();
+          }
+        }}
+        onTouchStart={() => {
+          olderGesture.current = true;
+        }}
+        onKeyDown={(event) => {
+          olderGesture.current = ["ArrowUp", "PageUp", "Home"].includes(event.key);
+        }}
+        onScroll={(event) => {
+          const top = event.currentTarget.scrollTop;
+          if (
+            olderGesture.current &&
+            top <= previousTop.current &&
+            top < 240 &&
+            hasOlder &&
+            !olderBusy &&
+            !olderError
+          ) {
+            olderGesture.current = false;
+            onLoadOlder?.();
+          }
+          previousTop.current = top;
+          onScroll(event);
+        }}
         aria-label="대화 기록 스크롤"
         className="min-h-0 flex-1 overflow-y-auto overscroll-contain px-4 py-6 md:px-8 md:py-8"
         style={{ overflowAnchor: "none" }}
       >
+        {(events.length > 0 || hasOlder || olderBusy || olderError) && (
+          <div className="mx-auto mb-3 flex min-h-8 max-w-4xl items-center justify-center gap-2 text-xs text-neutral-500">
+            {olderError && <span role="alert">{olderError}</span>}
+            {!hasOlder && !olderBusy && !olderError ? (
+              <span>대화 시작</span>
+            ) : (
+              <button
+                type="button"
+                disabled={olderBusy}
+                onClick={() => {
+                  olderGesture.current = false;
+                  onLoadOlder?.();
+                }}
+                className="rounded px-3 py-1 hover:bg-neutral-100 disabled:opacity-60"
+              >
+                {olderBusy
+                  ? "이전 대화 불러오는 중…"
+                  : olderError
+                    ? "다시 불러오기"
+                    : "이전 대화 보기"}
+              </button>
+            )}
+          </div>
+        )}
         <ol
           aria-label="확정 공동 이력"
           className="relative mx-auto max-w-4xl"
@@ -149,25 +209,7 @@ export function ChatTimeline({
           )}
           {items.map((item) => {
             const event = visible[item.index];
-            if (!event) {
-              const status = orphanStatuses[item.index - visible.length];
-              return (
-                <li
-                  key={`result:${status.requestId}`}
-                  data-index={item.index}
-                  ref={virtualizer.measureElement}
-                  className="absolute top-0 left-0 w-full min-w-0"
-                  style={{ transform: `translateY(${item.start}px)` }}
-                >
-                  <details className="text-xs text-neutral-600">
-                    <summary>
-                      {status.target} · {status.label} · 실행 기록
-                    </summary>
-                    <ChatAnswerStatus status={status} />
-                  </details>
-                </li>
-              );
-            }
+            if (!event) return null;
             return (
               <li
                 key={event.eventId}
@@ -177,6 +219,7 @@ export function ChatTimeline({
                 style={{ transform: `translateY(${item.start}px)` }}
               >
                 <ChatTimelineRow
+                  hasOlder={hasOlder}
                   image={images.get(event.eventId)}
                   imageScope={imageScope}
                   onAccessLost={onAccessLost}
@@ -261,6 +304,7 @@ const ChatTimelineRow = memo(function ChatTimelineRow({
   image,
   imageScope,
   onAccessLost,
+  hasOlder = false,
 }: {
   event: PublicEvent;
   question: PublicEvent | null;
@@ -274,6 +318,7 @@ const ChatTimelineRow = memo(function ChatTimelineRow({
   image?: AttachmentView;
   imageScope: UserScope;
   onAccessLost: () => void;
+  hasOlder?: boolean;
 }) {
   const sender = event.senderKind === "SYSTEM" ? "시스템" : event.senderAlias;
   const isAgent = event.senderKind === "AGENT";
@@ -316,6 +361,11 @@ const ChatTimelineRow = memo(function ChatTimelineRow({
             #{event.sequence}
           </span>
         </header>
+        {!question && hasOlder && event.kind === "ANSWER" && (
+          <p className="my-2 text-xs text-neutral-500">
+            질문 원문은 위로 스크롤해 이전 대화를 불러오면 확인할 수 있습니다.
+          </p>
+        )}
         {question && (
           <a
             href={`#message-${question.eventId}`}

@@ -8,6 +8,7 @@ import {
   type RequestKind,
   type Terminal,
 } from "./contracts.ts";
+import type { HistoryWindow } from "./history-window-contracts.ts";
 
 export interface HistoricalRun {
   requestId: string;
@@ -31,6 +32,31 @@ export interface HistoryState {
   runs: HistoricalRun[];
   snapshot: HistoryPage | null;
   gap: boolean;
+  window?: { oldest: number | null; hasOlder: boolean };
+}
+export function initialHistoryWindow(page: HistoryWindow): HistoryState {
+  const base = { ...emptyHistory(page.roomId), cursor: (page.oldestSequence ?? 1) - 1 };
+  return {
+    ...mergeHistory(base, { ...page.snapshot, events: page.events }),
+    window: { oldest: page.oldestSequence, hasOlder: page.hasOlder },
+  };
+}
+export function prependHistoryWindow(state: HistoryState, page: HistoryWindow): HistoryState {
+  if (
+    !state.snapshot ||
+    !state.window?.hasOlder ||
+    page.roomId !== state.roomId ||
+    page.beforeSequence !== state.window.oldest
+  )
+    throw new WorkflowError("UNAVAILABLE");
+  const merged = mergeHistory(state, { ...state.snapshot, events: page.events });
+  return {
+    ...merged,
+    snapshot: state.snapshot,
+    cursor: state.cursor,
+    gap: state.gap,
+    window: { oldest: page.oldestSequence, hasOlder: page.hasOlder },
+  };
 }
 export function emptyHistory(roomId: string): HistoryState {
   return {
@@ -187,6 +213,7 @@ export function mergeHistory(state: HistoryState, page: HistoryPage): HistorySta
     runs: [...runs.values()],
     snapshot,
     gap: cursor < Math.max(page.nextCursor, snapshot.nextCursor),
+    ...(state.window ? { window: state.window } : {}),
   };
 }
 

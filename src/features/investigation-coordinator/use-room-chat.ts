@@ -5,11 +5,18 @@ import { outboxCleanupKey } from "./chat-outbox";
 import { RoomRealtime } from "./room-realtime";
 import { chatSessionEvent } from "./chat-session-cleanup";
 import { callInvestigation } from "./investigation-client";
+import { callHistoryWindow } from "./history-window-client";
 import { RoomChatController, type RoomChatActor } from "./room-chat-controller";
 
 export function useRoomChat({ userId, roomId, role }: RoomChatActor) {
   const controller = useMemo(
-    () => new RoomChatController({ userId, roomId, role }, callInvestigation),
+    () =>
+      new RoomChatController(
+        { userId, roomId, role },
+        callInvestigation,
+        undefined,
+        callHistoryWindow,
+      ),
     [userId, roomId, role],
   );
   const state = useSyncExternalStore(
@@ -95,5 +102,6 @@ export function useRoomChat({ userId, roomId, role }: RoomChatActor) {
     mutate: controller.mutate,
     loseAccess: controller.loseAccess,
     confirmStoredConflict: controller.confirmStoredConflict,
+    loadOlder: controller.loadOlder,
   };
 }

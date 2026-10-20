@@ -59,6 +59,9 @@ function RoomInvestigation({ userId, roomId, role }: Props) {
     requiredRecoveryRevision,
     mutate,
     loseAccess,
+    loadOlder,
+    olderBusy,
+    olderError,
   } = useRoomChat({ userId, roomId, role });
   useEffect(() => {
     const scope = { protocol: 1 as const, expectedUserId: userId, roomId };
@@ -513,6 +516,10 @@ function RoomInvestigation({ userId, roomId, role }: Props) {
         </section>
       )}
       <ChatTimeline
+        hasOlder={history.window?.hasOlder ?? false}
+        olderBusy={olderBusy}
+        olderError={olderError}
+        onLoadOlder={loadOlder}
         userId={userId}
         roomId={roomId}
         imagesEnabled={!permissionDenied && !!snapshot}

@@ -5,6 +5,7 @@ import { runInNewContext } from "node:vm";
 import ts from "typescript";
 import * as contracts from "../../src/features/investigation-coordinator/contracts.ts";
 import * as intents from "../../src/features/investigation-coordinator/direct-intents.ts";
+import * as historyWindows from "../../src/features/investigation-coordinator/history-window-contracts.ts";
 import {
   emptyHistory,
   mergeHistory,
@@ -219,6 +220,14 @@ async function harness(
             }),
         };
       if (["./contracts", "./contracts.ts"].includes(name)) return contracts;
+      if (name === "./history-window-client")
+        return {
+          callHistoryWindow: () => {
+            throw new Error("Unexpected history window request");
+          },
+        };
+      if (["./history-window-contracts", "./history-window-contracts.ts"].includes(name))
+        return historyWindows;
       if (["./direct-intents", "./direct-intents.ts"].includes(name)) return intents;
       if (["./history-state", "./history-state.ts"].includes(name))
         return { emptyHistory, mergeHistory, recordRetirements, recoverySnapshot };
@@ -910,6 +919,22 @@ test("should keep exact request confirmation available without a current answer 
   h.succeed();
   await (retry.props.onClick as () => Promise<boolean>)();
   assert.deepEqual(h.calls[1].body, h.calls[0].body);
+  assert.equal(labeled(h.render(), "AI 답변 상태"), undefined);
+});
+
+test("should not append old terminal summaries whose questions are outside the loaded history", async (t) => {
+  const h = await harness(t);
+  const page = fixture.history as contracts.HistoryPage;
+  await h.snapshot({
+    ...page,
+    runs: ["COMPLETED", "FAILED", "INTERRUPTED", "CANCELLED"].map((state, index) => ({
+      ...page.runs[0],
+      requestId: uuid(501 + index),
+      cycleId: uuid(601 + index),
+      state: state as contracts.RunState,
+    })),
+  });
+  assert.doesNotMatch(visibleText(h.renderTimeline()), /실행 기록/);
   assert.equal(labeled(h.render(), "AI 답변 상태"), undefined);
 });
 

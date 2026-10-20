@@ -12,6 +12,8 @@ import {
   mergeHistory,
   recordRetirements,
   recoverySnapshot,
+  initialHistoryWindow,
+  prependHistoryWindow,
   type HistoryState,
 } from "./history-state.ts";
 import {
@@ -24,6 +26,7 @@ import { speechOutbox, speechIntent, announceOutbox, type SpeechOutbox } from ".
 import { cacheChatHistory, cachedChatHistory, clearChatHistory } from "./chat-history-cache.ts";
 import type { RealtimeState } from "./room-realtime.ts";
 import { pollingDelay } from "./polling-policy.ts";
+import { projectHistoryWindow, type HistoryWindowRequest } from "./history-window-contracts.ts";
 
 export type RoomChatActor = {
   userId: string;
@@ -48,6 +51,8 @@ export type RoomChatState = {
   observedAt: number;
   requiredRecoveryRevision: number;
   cancelReceipts: CancelReceipt[];
+  olderBusy: boolean;
+  olderError: string | null;
 };
 export type CancelReceipt = {
   requestId: string;
@@ -84,6 +89,7 @@ export class RoomChatController {
   private validated = false;
   private preserveSavedIntent = false;
   private cached: HistoryState | null = null;
+  private olderAbort: AbortController | null = null;
 
   constructor(
     private readonly actor: RoomChatActor,
@@ -95,6 +101,10 @@ export class RoomChatController {
       outbox: speechOutbox,
       cache: true,
     },
+    private readonly windowRequest?: (
+      body: HistoryWindowRequest,
+      signal: AbortSignal,
+    ) => Promise<unknown>,
   ) {
     this.pendingKey = directIntentKey(actor.userId, actor.roomId);
     this.state = {
@@ -110,6 +120,8 @@ export class RoomChatController {
       observedAt: 0,
       requiredRecoveryRevision: 0,
       cancelReceipts: [],
+      olderBusy: false,
+      olderError: null,
     };
   }
 
@@ -135,9 +147,11 @@ export class RoomChatController {
       !this.state.permissionDenied && this.state.history.snapshot ? this.state.history : null;
     this.restored = false;
     this.validated = false;
-    this.cached = this.environment.cache
-      ? (cachedChatHistory(this.actor, this.environment.now()) ?? previousHistory)
-      : previousHistory;
+    this.cached = this.windowRequest
+      ? null
+      : this.environment.cache
+        ? (cachedChatHistory(this.actor, this.environment.now()) ?? previousHistory)
+        : previousHistory;
     this.update({
       busy: false,
       history: emptyHistory(this.actor.roomId),
@@ -146,12 +160,19 @@ export class RoomChatController {
       cancelReceipts: [],
       observedAt: 0,
       realtimeState: "connecting",
+      olderBusy: false,
+      olderError: null,
     });
     this.schedule(0);
   }
 
   stop() {
-    if (this.environment.cache && this.validated && !this.state.permissionDenied)
+    if (
+      !this.windowRequest &&
+      this.environment.cache &&
+      this.validated &&
+      !this.state.permissionDenied
+    )
       cacheChatHistory(this.actor, this.state.history, this.environment.now());
     this.active = false;
     this.resyncRequested = false;
@@ -159,6 +180,8 @@ export class RoomChatController {
     this.clearTimer();
     this.pollAbort?.abort();
     this.mutationAbort?.abort();
+    this.olderAbort?.abort();
+    this.olderAbort = null;
     this.pollAbort = null;
     this.mutationAbort = null;
   }
@@ -224,6 +247,8 @@ export class RoomChatController {
     this.clearTimer();
     this.pollAbort?.abort();
     this.mutationAbort?.abort();
+    this.olderAbort?.abort();
+    this.olderAbort = null;
     this.update({
       history: emptyHistory(this.actor.roomId),
       requiredRecoveryRevision: 0,
@@ -232,6 +257,8 @@ export class RoomChatController {
       outboxConflict: null,
       busy: false,
       cancelReceipts: [],
+      olderBusy: false,
+      olderError: null,
       pollError: "접근 권한을 확인해 주세요.",
     });
   }
@@ -249,19 +276,33 @@ export class RoomChatController {
       const previousHistory = this.cached ?? this.state.history;
       const afterSequence = previousHistory.cursor;
       const afterRetirementSequence = previousHistory.retirementCursor;
-      const result = await this.request(
-        "read-recovery",
-        {
-          protocol: 1,
-          roomId: this.actor.roomId,
-          expectedUserId: this.actor.userId,
-          afterSequence,
-          afterRetirementSequence,
-        },
-        abort.signal,
-      );
+      const initial = !!this.windowRequest && !this.validated;
+      const result = initial
+        ? await this.windowRequest!(
+            {
+              protocol: 1,
+              roomId: this.actor.roomId,
+              expectedUserId: this.actor.userId,
+              beforeSequence: null,
+            },
+            abort.signal,
+          )
+        : await this.request(
+            "read-recovery",
+            {
+              protocol: 1,
+              roomId: this.actor.roomId,
+              expectedUserId: this.actor.userId,
+              afterSequence,
+              afterRetirementSequence,
+            },
+            abort.signal,
+          );
       if (!this.current(generation, abort)) return;
-      const page = projectResponse("read-recovery", result) as RecoveryHistoryPage;
+      const window = initial ? projectHistoryWindow(result) : null;
+      if (window && window.beforeSequence !== null) throw new WorkflowError("UNAVAILABLE");
+      const page =
+        window?.snapshot ?? (projectResponse("read-recovery", result) as RecoveryHistoryPage);
       if (
         page.roomId !== this.actor.roomId ||
         page.nextCursor < afterSequence ||
@@ -272,7 +313,10 @@ export class RoomChatController {
           page.recovery.nextRetirementCursor !== afterRetirementSequence)
       )
         throw new WorkflowError("UNAVAILABLE");
-      const history = mergeHistory(previousHistory, page);
+      // An older page may have completed while this live request was in flight.
+      const history = window
+        ? initialHistoryWindow(window)
+        : mergeHistory(this.cached ?? this.state.history, page);
       this.cached = null;
       this.validated = true;
       if (!this.restored) {
@@ -340,6 +384,50 @@ export class RoomChatController {
       }
     }
   }
+
+  loadOlder = async () => {
+    const before = this.state.history.window?.oldest;
+    if (
+      !this.active ||
+      this.state.permissionDenied ||
+      !this.windowRequest ||
+      this.olderAbort ||
+      !this.state.history.window?.hasOlder ||
+      !before
+    )
+      return;
+    const abort = new AbortController(),
+      generation = this.generation;
+    this.olderAbort = abort;
+    this.update({ olderBusy: true, olderError: null });
+    try {
+      const page = projectHistoryWindow(
+        await this.windowRequest(
+          {
+            protocol: 1,
+            roomId: this.actor.roomId,
+            expectedUserId: this.actor.userId,
+            beforeSequence: before,
+          },
+          abort.signal,
+        ),
+      );
+      if (!this.current(generation, abort)) return;
+      this.update({ history: prependHistoryWindow(this.state.history, page) });
+    } catch (error) {
+      if (!this.current(generation, abort)) return;
+      if (accessDenied(codeOf(error))) {
+        this.loseAccess();
+        return;
+      }
+      this.update({ olderError: "이전 대화를 불러오지 못했습니다. 다시 시도해 주세요." });
+    } finally {
+      if (this.olderAbort === abort) {
+        this.olderAbort = null;
+        this.update({ olderBusy: false });
+      }
+    }
+  };
 
   setRealtimeState = (realtimeState: RealtimeState) => {
     if (!this.active || this.state.permissionDenied) return;
