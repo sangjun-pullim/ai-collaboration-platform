@@ -1471,6 +1471,10 @@ export class WorkflowRunner {
     }
     if (!(await this.refreshInput())) return;
     this.check();
+    // A recovered input check must restore the server prerequisite before any claim intent.
+    await this.refreshReady();
+    this.check();
+    if (!this.record.ready || !this.inputAdmission?.allowed) return;
     const requestId = payload.requestId,
       claimOperationId = randomUUID(),
       journalId = claimOperationId;
@@ -1490,8 +1494,11 @@ export class WorkflowRunner {
       try {
         snapshot = (await this.transmit(claim)) as AttemptSnapshot;
       } catch (error) {
-        if (error instanceof WorkflowError && error.code === "INPUT_PAUSED") {
-          await this.sealInputPaused(journalId, claim);
+        if (
+          error instanceof WorkflowError &&
+          (error.code === "INPUT_PAUSED" || error.code === "REQUEST_CANCELLED")
+        ) {
+          await this.sealClaimDenied(journalId, claim, error.code);
           return;
         }
         throw error;
@@ -2664,7 +2671,12 @@ export class WorkflowRunner {
           o.state = "CLOSED";
     });
   }
-  private async sealInputPaused(key: string, claim: RuntimeOperation, guard = this.check) {
+  private async sealClaimDenied(
+    key: string,
+    claim: RuntimeOperation,
+    reason: "INPUT_PAUSED" | "REQUEST_CANCELLED",
+    guard = this.check,
+  ) {
     let closedAttempt: AttemptJournal | undefined;
     let closedClaim: RuntimeOperation | undefined;
     try {
@@ -2691,7 +2703,10 @@ export class WorkflowRunner {
             a.toolCalls.length
           )
             throw new RuntimeError("UNKNOWN");
-          a.unstartedClosure = { kind: "SERVER_INPUT_PAUSED", claimOperationId: op.operationId };
+          a.unstartedClosure = {
+            kind: reason === "INPUT_PAUSED" ? "SERVER_INPUT_PAUSED" : "SERVER_REQUEST_CANCELLED",
+            claimOperationId: op.operationId,
+          };
           a.state = "NOT_STARTED";
           a.reason = null;
           op.state = "CLOSED";
@@ -2791,11 +2806,11 @@ export class WorkflowRunner {
           if (
             !sealed &&
             error instanceof WorkflowError &&
-            error.code === "INPUT_PAUSED" &&
+            (error.code === "INPUT_PAUSED" || error.code === "REQUEST_CANCELLED") &&
             claim.state === "TRANSMITTED" &&
             claim.result === null
           ) {
-            await this.sealInputPaused(key, claim, guard);
+            await this.sealClaimDenied(key, claim, error.code, guard);
             continue;
           }
           throw error;

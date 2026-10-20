@@ -58,6 +58,7 @@ export const errorStatus = {
   NOT_FOUND: 404,
   CONFLICT: 409,
   INPUT_PAUSED: 409,
+  REQUEST_CANCELLED: 409,
   QUOTA: 429,
   UNAVAILABLE: 503,
 } as const;

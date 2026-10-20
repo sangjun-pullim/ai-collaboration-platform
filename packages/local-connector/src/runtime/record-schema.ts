@@ -196,6 +196,7 @@ const closure: Check = (v) =>
   })(v) ||
   exact({ kind: one("LOCAL_NOT_TRANSMITTED"), claimOperationId: isId })(v) ||
   exact({ kind: one("SERVER_INPUT_PAUSED"), claimOperationId: isId })(v) ||
+  exact({ kind: one("SERVER_REQUEST_CANCELLED"), claimOperationId: isId })(v) ||
   exact({ kind: one("SERVER_ABANDONED"), claimOperationId: isId, snapshot: projected("claim") })(v);
 const nativeIntent = optionalExact(
   {
