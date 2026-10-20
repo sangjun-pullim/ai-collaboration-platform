@@ -49,6 +49,261 @@ import {
 } from "../src/cli/connection-recovery.ts";
 import { withSettingsDeviceLock } from "../src/cli/settings-lock.ts";
 
+test("should preserve one folder selection across a transient status outage", async (t) => {
+  const f = await fixture();
+  const selected = deferred();
+  let folders = 0;
+  let polls = 0;
+  const original = f.client.call.bind(f.client);
+  t.mock.method(f.client, "call", async (...args: Parameters<typeof original>) => {
+    if (args[0] === "poll") {
+      polls++;
+      if (polls === 2) throw new SettingsError("UNAVAILABLE");
+      if (polls === 3) selected.resolve();
+    }
+    return original(...args);
+  });
+  try {
+    const status = await f
+      .manager({
+        folder: async (signal) => {
+          folders++;
+          signal.addEventListener("abort", () => selected.resolve(), { once: true });
+          await selected.promise;
+          return signal.aborted
+            ? { status: "CANCELLED" }
+            : { status: "SELECTED", root: f.policy.root };
+        },
+      })
+      .run({ once: true });
+    assert.equal(status.state, "LOCAL_CONFIRMATION");
+    assert.equal(folders, 1);
+    assert.equal(f.catalogs, 1);
+    assert.equal(f.prepares, 0);
+    assert.equal(
+      f.requests.some((r) => r.body.state === "UNKNOWN"),
+      false,
+    );
+  } finally {
+    await f.close();
+  }
+});
+
+for (const outcome of ["CANCELLED", "FORBIDDEN", "UNAUTHENTICATED"] as const) {
+  test(`should respect ${outcome} after a folder finishes during a status outage`, async (t) => {
+    const f = await fixture();
+    const selected = deferred();
+    let polls = 0;
+    let confirmations = 0;
+    const original = f.client.call.bind(f.client);
+    t.mock.method(f.client, "call", async (...args: Parameters<typeof original>) => {
+      if (args[0] === "poll") {
+        polls++;
+        if (polls === 2) {
+          selected.resolve();
+          throw new SettingsError("UNAVAILABLE");
+        }
+        if (polls >= 3) {
+          if (outcome === "CANCELLED") f.response.operation!.state = "CANCELLED";
+          else throw new SettingsError(outcome);
+        }
+      }
+      return original(...args);
+    });
+    try {
+      const status = await f
+        .manager({
+          folder: async () => {
+            await selected.promise;
+            return { status: "SELECTED", root: f.policy.root };
+          },
+          confirm: async (...args) => {
+            confirmations++;
+            return f.options.confirm!(...args);
+          },
+        })
+        .run({ once: true });
+      assert.equal(status.state, outcome === "CANCELLED" ? "CANCELLED" : "UNKNOWN");
+      assert.equal(confirmations, 0);
+      assert.equal(f.catalogs, 0);
+      assert.equal(f.prepares, 0);
+      assert.ok(polls >= 3);
+    } finally {
+      await f.close();
+    }
+  });
+}
+
+test("should preserve confirmed settings when only the outer status poll is unavailable", async (t) => {
+  const f = await fixture();
+  try {
+    await f.manager().run({ once: true });
+    const before = await f.store.read();
+    const original = f.client.call.bind(f.client);
+    t.mock.method(f.client, "call", async (...args: Parameters<typeof original>) => {
+      if (args[0] === "poll") throw new SettingsError("UNAVAILABLE");
+      return original(...args);
+    });
+    await f.manager().run({ once: true });
+    assert.deepEqual(await f.store.read(), before);
+    assert.equal(
+      f.requests.some((r) => r.body.state === "UNKNOWN"),
+      false,
+    );
+  } finally {
+    await f.close();
+  }
+});
+
+for (const configured of [false, true]) {
+  for (const rootChosen of [false, true]) {
+    test(`should ${rootChosen ? "preserve" : "close"} cancelled unknown folder setup with root ${rootChosen} and configured AI ${configured}`, async () => {
+      const f = await fixture();
+      try {
+        if (configured) {
+          await local(f);
+          await f.manager().run({ once: true });
+          const operationId = uuid();
+          f.response.operation = {
+            operationId,
+            deviceId: f.response.deviceId,
+            expectedConfigRevision: f.response.configRevision,
+            state: "REQUESTED",
+            receipt: null,
+            requested: {
+              operationId,
+              deviceId: f.response.deviceId,
+              expectedConfigRevision: f.response.configRevision,
+              runtime: "codex",
+            },
+          };
+        }
+        const current = (await f.store.read())?.current ?? null;
+        const prepares = f.prepares,
+          catalogs = f.catalogs;
+        await f
+          .manager({
+            folder: async () => {
+              if (!rootChosen) throw new SettingsError("UNAVAILABLE");
+              return { status: "SELECTED", root: f.policy.root };
+            },
+            confirm: async () => {
+              throw new SettingsError("UNAVAILABLE");
+            },
+          })
+          .run({ once: true });
+        assert.equal((await f.store.read())!.journal!.phase, "UNKNOWN");
+        // An unknown request is never implicitly cancelled without an owner's cancellation.
+        await f.manager().run({ once: true });
+        assert.equal((await f.store.read())!.journal!.phase, "UNKNOWN");
+        f.response.operation!.state = "CANCELLED";
+        const status = await f
+          .manager({
+            folder: async () => assert.fail("recovery must not reopen the picker"),
+            adapter: () => assert.fail("recovery must not create AI work"),
+          })
+          .run({ once: true });
+        assert.equal(status.state, rootChosen ? "UNKNOWN" : "CANCELLED");
+        assert.deepEqual((await f.store.read())!.current, current);
+        assert.equal(f.prepares, prepares);
+        assert.equal(f.catalogs, catalogs);
+      } finally {
+        await f.close();
+      }
+    });
+  }
+}
+
+for (const mismatch of [false, true]) {
+  test(`should recover the ${mismatch ? "cleanup" : "preparation"} status read without replaying AI work`, async (t) => {
+    const f = await fixture();
+    try {
+      await local(f);
+      if (mismatch)
+        f.observedCaps = {
+          ...f.settings.capabilities,
+          models: f.settings.capabilities.models.slice(1),
+          defaultSettings: { model: "test-b", effort: "medium" },
+        };
+      const original = f.client.call.bind(f.client);
+      let failed = false;
+      t.mock.method(f.client, "call", async (...args: Parameters<typeof original>) => {
+        if (
+          args[0] === "poll" &&
+          (await f.store.read())?.journal?.phase === "APPLYING" &&
+          !failed
+        ) {
+          failed = true;
+          throw new SettingsError("UNAVAILABLE");
+        }
+        return original(...args);
+      });
+      const status = await f.manager().run({ once: true });
+      assert.equal(failed, true);
+      assert.equal(status.state, mismatch ? "CANCELLED" : "APPLIED", JSON.stringify(status));
+      assert.equal(f.prepares, mismatch ? 0 : 1);
+      assert.equal(
+        f.requests.some((r) => r.body.state === "UNKNOWN"),
+        false,
+      );
+    } finally {
+      await f.close();
+    }
+  });
+}
+
+test("should finish the same once runner after a transient status read failure", async (t) => {
+  const f = await fixture();
+  try {
+    await local(f);
+    await f.manager().run({ once: true });
+    let started = false,
+      finished = false,
+      aborted = false,
+      calls = 0,
+      failed = false;
+    const complete = deferred();
+    const original = f.client.call.bind(f.client);
+    t.mock.method(f.client, "call", async (...args: Parameters<typeof original>) => {
+      if (args[0] === "poll" && started) {
+        if (!failed) {
+          failed = true;
+          throw new SettingsError("UNAVAILABLE");
+        }
+        finished = true;
+        complete.resolve();
+      }
+      return original(...args);
+    });
+    await f
+      .manager({
+        runner: () => ({
+          run: async ({ signal }) => {
+            calls++;
+            started = true;
+            signal!.addEventListener(
+              "abort",
+              () => {
+                if (!finished) aborted = true;
+                complete.resolve();
+              },
+              { once: true },
+            );
+            await complete.promise;
+            return { ready: true };
+          },
+        }),
+      })
+      .run({ once: true });
+    assert.equal(failed, true);
+    assert.equal(aborted, false);
+    assert.equal(finished, true);
+    assert.equal(calls, 1);
+  } finally {
+    await f.close();
+  }
+});
+
 /** This HTTP fixture exercises the real client's projection, not an actual DB transaction. */
 async function fixture(provider: "codex" | "claude" = "codex", profileName = "one") {
   const f = await runtimeFixture();
