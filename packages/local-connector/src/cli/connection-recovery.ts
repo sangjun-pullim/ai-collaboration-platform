@@ -732,7 +732,7 @@ export async function prepareRecovery(
         );
       if (unresolvedCount > 0) {
         interaction.write(
-          `이전 답변 ${unresolvedCount}건은 결과 확인 불가로 보존합니다. 이전 질문을 자동 재실행하지 않습니다. 원래 연결 터미널을 종료하고 웹에서 이전 기기를 연결 취소한 뒤 새 대화로 연결하세요.\n`,
+          `이전 답변 ${unresolvedCount}건은 실행 결과 확인 불가 또는 서버 반영 미확인 상태로 보존합니다. 이전 질문을 자동 재실행하지 않습니다. 원래 연결 터미널을 종료하고 웹에서 이전 기기를 연결 취소한 뒤 새 대화로 연결하세요.\n`,
         );
         if (!(await interaction.confirmUnresolved?.(unresolvedCount, interaction.signal)))
           throw new ConnectionError("CONFLICT");

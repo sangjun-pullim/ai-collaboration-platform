@@ -256,12 +256,15 @@ function protectedUnresolvedCount(record: RuntimeRecord, mode: "idle" | "fresh-a
     record.attempts.some(
       (attempt) =>
         !["UPLOADED", "NOT_STARTED"].includes(attempt.state) &&
-        !(attempt.state === "UNKNOWN" && attempt.terminal === null && attempt.receipt === null),
+        !(attempt.state === "UNKNOWN" && attempt.terminal === null && attempt.receipt === null) &&
+        !(attempt.state === "TERMINAL" && attempt.terminal !== null && attempt.receipt === null),
     )
   )
     throw new RuntimeError("RUNTIME_BUSY");
-  // UNKNOWN tools and native inputs stay untouched; no result or completion is inferred.
-  return record.attempts.filter((attempt) => attempt.state === "UNKNOWN").length;
+  // Preserve unknown execution and unacknowledged terminal records without replay or mutation.
+  return record.attempts.filter(
+    (attempt) => attempt.state === "UNKNOWN" || attempt.state === "TERMINAL",
+  ).length;
 }
 
 export function revokeConfiguredProfile(profile: StateStore, settings: SettingsStore) {

@@ -132,6 +132,11 @@ test("should require device confirmation, reuse existing retirement controls and
   assert.match(text(tree), /브라우저는 종료 여부를 확인할 수 없습니다/);
   props.view.phase = "retired";
   tree = f.render(props);
+  assert.doesNotMatch(
+    text(tree),
+    /이전 결과를 확인할 수 없음|대상 방:|UNKNOWN 기록|연결 취소는 서버 인증/,
+  );
+  assert.ok(!nodes(tree).some((node) => String(node.props.className).includes("bg-amber-50")));
   assert.match(text(tree), /새 연결과 AI 설정·응답 준비 확인이 필요/);
   assert.doesNotMatch(text(tree), /복구 완료|실행 종료 확인 완료/);
   assert.ok(
