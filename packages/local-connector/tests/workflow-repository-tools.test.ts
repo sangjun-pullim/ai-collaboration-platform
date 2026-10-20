@@ -18,6 +18,121 @@ import { capabilityHash } from "../src/settings/contracts.ts";
 import { uuid } from "./runtime-fixture.ts";
 import { RepositoryTools } from "../src/workflow/repository-tools.ts";
 
+test("should read Markdown authentication header documentation without treating formatting as a secret", async () => {
+  const f = await runnerFixture({}, automatic);
+  try {
+    const documentation =
+      "Headers: `Authorization: Bearer`·`x-client: mobile` are described here.\n";
+    await writeFile(join(f.root, "architecture.md"), documentation, { mode: 0o644 });
+    const tools = new RepositoryTools(f.record.context!, f.record.settings!, () => {});
+    const { result, observation } = await tools.execute(
+      "read_workspace_file",
+      { path: "architecture.md" },
+      () => {},
+    );
+    assert.equal(result.success, true);
+    assert.equal(observation.files.length, 1);
+    assert.equal(JSON.parse(result.contentItems[0].text).text, documentation);
+  } finally {
+    await f.close();
+  }
+});
+
+test("should skip a content-blocked file without exposing its content or stopping the answer", async () => {
+  const f = await runnerFixture({}, automatic),
+    adapter = new SyntheticAdapter();
+  try {
+    const secret = "synthetic-private-value";
+    await writeFile(join(f.root, "private-example.md"), `password: \`${secret}\`\n`, {
+      mode: 0o644,
+    });
+    await writeFile(join(f.root, "overview.md"), "Public overview.\n", { mode: 0o644 });
+    f.queue();
+    adapter.executeHook = async (authority) => {
+      const call = await ownedCall(f, authority, "read_workspace_file", {
+        path: "private-example.md",
+      });
+      const result = await authority.tool(call);
+      assert.equal(result.success, false);
+      assert.doesNotMatch(JSON.stringify(result), new RegExp(secret));
+      assert.equal(JSON.parse(result.contentItems[0].text).error, "REPOSITORY_CONTENT_BLOCKED");
+      const saved = (await f.store.read())!.attempts[0].toolCalls[0];
+      assert.deepEqual(saved.result, result);
+      assert.deepEqual(saved.repositoryObservation!.files, []);
+      assert.deepEqual(await authority.tool(call), result);
+      const next = await authority.tool(
+        await ownedCall(f, authority, "read_workspace_file", { path: "overview.md" }),
+      );
+      assert.equal(next.success, true);
+    };
+    await f.runner(adapter).run({ once: true });
+    const record = (await f.store.read())!;
+    assert.equal(record.attempts[0].state, "UPLOADED");
+    assert.equal(record.attempts[0].terminal!.terminal, "COMPLETED");
+  } finally {
+    await f.close();
+  }
+});
+
+test("should keep authority loss fatal when it coincides with a content refusal", async (t) => {
+  const f = await runnerFixture({}, automatic);
+  try {
+    await writeFile(join(f.root, "private-example.md"), "password: synthetic-private-value\n", {
+      mode: 0o644,
+    });
+    const reader = new RepositoryReader(f.record.context!.root, () => {});
+    const blocked = await reader.read({ path: "private-example.md" }).then(
+      () => assert.fail("content must remain protected"),
+      (error: unknown) => error,
+    );
+    let closed = false;
+    const lost = new RuntimeError("TOOL_REJECTED");
+    const guard = () => {
+      if (closed) throw lost;
+    };
+    const tools = new RepositoryTools(f.record.context!, f.record.settings!, guard);
+    t.mock.method(RepositoryReader.prototype, "read", async () => {
+      closed = true;
+      throw blocked;
+    });
+    await assert.rejects(
+      tools.execute("read_workspace_file", { path: "private-example.md" }, guard),
+      (error) => error === lost,
+    );
+  } finally {
+    await f.close();
+  }
+});
+
+test("should keep backticks inside actual credential values protected in reads and search", async () => {
+  const f = await runnerFixture({}, automatic);
+  try {
+    for (const content of [
+      'password: "abc`defghijk"\n',
+      "password: abc`defghijk\n",
+      'password: "`Authorization: Bearer`"\n',
+      "`Authorization: Bearer`·`password: synthetic-private-value`\n",
+    ]) {
+      await writeFile(join(f.root, "configuration.yaml"), content, { mode: 0o644 });
+      await writeFile(join(f.root, "example.md"), content, { mode: 0o644 });
+      const tools = new RepositoryTools(f.record.context!, f.record.settings!, () => {});
+      const read = await tools.execute(
+        "read_workspace_file",
+        { path: "configuration.yaml" },
+        () => {},
+      );
+      assert.equal(read.result.success, false, content);
+      assert.deepEqual(read.observation.files, []);
+      const markdown = await tools.execute("read_workspace_file", { path: "example.md" }, () => {});
+      assert.equal(markdown.result.success, false, content);
+      const search = await tools.execute("search_workspace", { query: "password" }, () => {});
+      assert.deepEqual(JSON.parse(search.result.contentItems[0].text).matches, []);
+    }
+  } finally {
+    await f.close();
+  }
+});
+
 test("should propagate ordinary capacity failures and cancellation after a reader timeout", async (t) => {
   const f = await runnerFixture({}, automatic);
   let closed = false,
