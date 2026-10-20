@@ -246,6 +246,12 @@ test("should preserve the original target and block commands when revocation rem
     )(target);
     await controller.revoke(true);
     props.devices[0].state = "revoked";
+    props.devices.push({
+      ...props.devices[0],
+      deviceId: "00000000-0000-4000-8000-000000000020",
+      deviceAlias: "새 Mac",
+      state: "active",
+    });
     tree = f.render(props);
     const panel = nodes(tree).find((node) => node.type === "recovery-panel")!;
     assert.equal((panel.props.view as recovery.RecoveryView).phase, "retire-ready");
@@ -266,6 +272,145 @@ test("should preserve the original target and block commands when revocation rem
     cleanup?.();
   }
 });
+
+for (const staleSelection of [false, true]) {
+  test(`should reconcile the displayed new device before AI setup with a stale selection: ${staleSelection}`, async () => {
+    const deviceId = "00000000-0000-4000-8000-000000000020";
+    const device: contracts.OwnedDevice = {
+      deviceId,
+      deviceAlias: "새 Mac",
+      roomId: target.roomId,
+      organizationId: target.userId,
+      state: "active",
+      lastSeenAt: null,
+      expiresAt: new Date(Date.now() + 60000).toISOString(),
+    };
+    const connected: readiness.ReadinessView = {
+      ...new readiness.AiReadinessController().getSnapshot(),
+      target: { expectedUserId: target.userId, roomId: target.roomId, deviceId },
+      state: "complete",
+      device,
+    };
+    const saved = new Map([
+      [
+        `connection-preserved-recovery:${target.userId}:${target.roomId}`,
+        JSON.stringify({ target, retireIntent: fixture.retire, revokeAttempted: true }),
+      ],
+    ]);
+    const reads: string[] = [];
+    const selections: (string | null)[] = [];
+    const reconciled: readiness.ReadinessView[] = [];
+    const controller = new recovery.ConnectionRecoveryController({
+      storage: {
+        getItem: (key) => saved.get(key) ?? null,
+        setItem: (key, value) => {
+          saved.set(key, value);
+        },
+      },
+      status: async (scope) => {
+        reads.push(scope.deviceId);
+        return {
+          ...scope,
+          device: { ...device, deviceId: target.deviceId, state: "revoked" },
+          executionStatus: null,
+          checkedAt: new Date().toISOString(),
+        };
+      },
+      workflow: async (action) => {
+        assert.equal(action, "read-recovery");
+        const page = structuredClone(fixture.history);
+        const { sequence, requestId, cycleId, agentId, bindingEpoch, retiredAt } = fixture.receipt;
+        page.recovery.candidate = null;
+        page.recovery.hasBlockingRuns = false;
+        page.recovery.retirements = [
+          { sequence, requestId, cycleId, agentId, bindingEpoch, retiredAt },
+        ];
+        page.recovery.nextRetirementCursor = sequence;
+        page.recovery.highWaterRetirementSequence = sequence;
+        return page;
+      },
+      revoke: async () => assert.fail("replacement reconciliation must only read"),
+    });
+    const originalReconcile = controller.reconcileReplacement.bind(controller);
+    controller.reconcileReplacement = (view) => {
+      reconciled.push(view);
+      return originalReconcile(view);
+    };
+    const router = { refresh() {} };
+    const f = ui("src/features/device-binding/connection-manager.tsx", "ConnectionManager", {
+      "next/link": { default: "link" },
+      "next/navigation": { useRouter: () => router },
+      "./contracts": contracts,
+      "../../components/ui/input": { Input: "input" },
+      "../runtime-settings/runtime-settings-form": { RuntimeSettingsForm: "settings-form" },
+      "./local-connection-guide": { LocalConnectionGuide: "guide" },
+      "./connection-presence": { connectionSnapshot },
+      "./local-connection-command": {},
+      "../room-access/chat-shell": { ChatShell: "shell" },
+      "./ai-readiness-controller": {
+        ...readiness,
+        AiReadinessController: class extends readiness.AiReadinessController {
+          getSnapshot = () => connected;
+          select(value: readiness.ReadinessView["target"]) {
+            selections.push(value?.deviceId ?? null);
+          }
+        },
+      },
+      "./connection-recovery-controller": {
+        ConnectionRecoveryController: class {
+          constructor() {
+            return controller;
+          }
+        },
+      },
+      "./connection-recovery-panel": { ConnectionRecoveryPanel: "recovery-panel" },
+      "../room-access/access.module.css": { default: {} },
+    });
+    const props = {
+      userId: staleSelection ? deviceId : target.userId,
+      origin: "https://example.test",
+      rooms: [
+        {
+          roomId: target.roomId,
+          organizationId: target.userId,
+          roomTitle: "방",
+          organizationName: "팀",
+        },
+      ],
+      devices: staleSelection ? [{ ...device, deviceId: target.deviceId }] : [device],
+    };
+    let tree = f.render(props);
+    if (staleSelection) {
+      const selector = nodes(tree).find((node) => node.props["aria-label"] === "설정할 본인 기기")!;
+      (selector.props.onChange as (event: unknown) => void)({ target: { value: target.deviceId } });
+      props.userId = target.userId;
+      props.devices = [device];
+      tree = f.render(props);
+    }
+    const selector = nodes(tree).find((node) => node.props["aria-label"] === "설정할 본인 기기")!;
+    assert.equal(selector.props.value, deviceId);
+    const readinessCleanup = f.effects[2]();
+    const recoveryCleanup = f.effects[3]();
+    try {
+      f.effects[4]();
+      await new Promise<void>((resolve) => setImmediate(resolve));
+      assert.equal(selections.at(-1), deviceId);
+      assert.equal(reconciled.length, 1);
+      assert.equal(reconciled[0].target?.deviceId, deviceId);
+      assert.equal(reconciled[0].ready, false);
+      assert.equal(reconciled[0].binding, null);
+      assert.equal(controller.getSnapshot().phase, "closed");
+      assert.deepEqual(reads, [target.deviceId]);
+      assert.equal(JSON.parse([...saved.values()][0]).replacementDeviceId, deviceId);
+      tree = f.render(props);
+      assert.doesNotMatch(text(tree), /AI 준비 완료/);
+      assert.match(text(tree), /응답 준비 미확인/);
+    } finally {
+      readinessCleanup?.();
+      recoveryCleanup?.();
+    }
+  });
+}
 
 test("should retain the original retirement dialog confirmation boundary and exact fields", async () => {
   const calls: unknown[] = [];

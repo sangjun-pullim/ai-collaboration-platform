@@ -280,7 +280,8 @@ export function ConnectionManager({
       readinessController.stop();
     };
   }, [readinessController, userId, roomId, selectedDeviceId]);
-  const recoverySelectionId = settingsDeviceId || selectedDeviceId || null;
+  const recoverySelectionId =
+    selectedDeviceId ?? (pinnedRecovery?.deviceId === settingsDeviceId ? settingsDeviceId : null);
   useEffect(() => {
     let previousPhase = recoveryController.getSnapshot().phase;
     const unsubscribe = recoveryController.subscribe(() => {
@@ -307,7 +308,8 @@ export function ConnectionManager({
       : null;
   const observedDevice = currentReadiness?.device ?? settingsDevice;
   useEffect(() => {
-    if (currentReadiness?.ready) void recoveryController.reconcileReplacement(currentReadiness);
+    if (currentReadiness?.state === "complete")
+      void recoveryController.reconcileReplacement(currentReadiness);
   }, [currentReadiness, recoveryController, recoverySelectionId]);
   const recent =
     !!observedDevice &&

@@ -413,7 +413,7 @@ export class ConnectionRecoveryController {
     });
   }
   async reconcileReplacement(ready: ReadinessView): Promise<boolean> {
-    if (!this.isReplacementReady(ready) || this.view.busy) return false;
+    if (!this.isReplacementConnected(ready) || this.view.busy) return false;
     if (this.view.phase === "retired") return this.completeReplacement(ready);
     return this.run(
       async (target, signal, guard) => {
@@ -423,22 +423,16 @@ export class ConnectionRecoveryController {
         this.adopt(result);
         return true;
       },
-      () => this.isReplacementReady(ready),
+      () => this.isReplacementConnected(ready),
     ).then((retired) => (retired ? this.completeReplacement(ready) : false));
   }
-  private isReplacementReady(ready: ReadinessView): boolean {
+  private isReplacementConnected(ready: ReadinessView): boolean {
     const target = this.view.target;
     const replacement = ready.target;
     if (
       !target ||
       !replacement ||
-      !ready.ready ||
-      !ready.selectedReady ||
-      ready.roomBlocked ||
-      ready.failure ||
-      !ready.binding?.applied ||
       ready.state !== "complete" ||
-      !(Date.parse(ready.validUntil ?? "") > Date.now()) ||
       !ready.device ||
       ready.device.state !== "active" ||
       !(Date.parse(ready.device.expiresAt ?? "") > Date.now()) ||
@@ -455,7 +449,7 @@ export class ConnectionRecoveryController {
     return true;
   }
   completeReplacement(ready: ReadinessView): boolean {
-    if (this.view.phase !== "retired" || this.view.busy || !this.isReplacementReady(ready))
+    if (this.view.phase !== "retired" || this.view.busy || !this.isReplacementConnected(ready))
       return false;
     try {
       this.replacementDeviceId = ready.target!.deviceId;
@@ -466,7 +460,7 @@ export class ConnectionRecoveryController {
       this.replacementDeviceId = null;
       this.update({
         error:
-          "새 연결의 준비는 확인했지만 복구 진행 상태를 저장하지 못했습니다. 브라우저 저장소와 다른 탭의 선택을 확인하세요.",
+          "새 연결은 확인했지만 복구 진행 상태를 저장하지 못했습니다. 브라우저 저장소와 다른 탭의 선택을 확인하세요.",
       });
       return false;
     }
