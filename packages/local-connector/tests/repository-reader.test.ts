@@ -57,7 +57,7 @@ async function coldRead(root: string, path: string) {
 }
 const size = (value: unknown) => Buffer.byteLength(JSON.stringify(value));
 
-test("should allow a repository search beyond three seconds and reject at fifteen seconds", async (t) => {
+test("should allow a repository search beyond fifteen seconds and reject at thirty seconds", async (t) => {
   let time = 0,
     duration = 4000;
   const f = await fixture(
@@ -78,9 +78,9 @@ test("should allow a repository search beyond three seconds and reject at fiftee
   syncBuiltinESMExports();
   try {
     assert.equal((await f.reader.search({ query: "evidence" })).matches.length, 1);
-    duration = 14999;
+    duration = 29999;
     assert.equal((await f.reader.search({ query: "evidence" })).matches.length, 1);
-    duration = 15000;
+    duration = 30000;
     await assert.rejects(f.reader.search({ query: "evidence" }), isRepositoryTimeLimit);
   } finally {
     mocked.mock.restore();
@@ -125,7 +125,7 @@ test("should preserve a root verification failure that coincides with the search
   );
   const failure = new RuntimeError("SNAPSHOT_CHANGED");
   const mocked = t.mock.method(fsPromises, "opendir", async () => {
-    time = 15000;
+    time = 30000;
     throw failure;
   });
   syncBuiltinESMExports();
@@ -517,7 +517,7 @@ test("should preserve authority errors and refuse late successful I/O with handl
       async (...args: Parameters<typeof fsPromises.open>) => {
         opened = await original(...args);
         if (failure === "authority") lost = true;
-        else time = 15000;
+        else time = 30000;
         return opened;
       },
     );
@@ -584,7 +584,7 @@ test("should accumulate call and byte budgets including failed reads and exclude
   }
 });
 
-test("should allow active intervals beyond thirty seconds and stop at one hundred twenty seconds excluding idle time", async (t) => {
+test("should stop at three hundred active seconds excluding idle time", async (t) => {
   let time = 0;
   const f = await fixture(
     () => {},
@@ -603,7 +603,7 @@ test("should allow active intervals beyond thirty seconds and stop at one hundre
   );
   syncBuiltinESMExports();
   try {
-    for (let i = 0; i < 11; i++) {
+    for (let i = 0; i < 29; i++) {
       await f.reader.read({ path: "a.ts" });
       time += 100000;
     }
@@ -749,7 +749,7 @@ test("should count parallel active time once and retain concurrency during delay
     await assert.rejects(f.reader.list(), { code: "RUNTIME_BUSY" });
     cleanup();
     await Promise.all(reads);
-    for (let i = 0; i < 10; i++) await f.reader.read({ path: "a.ts" });
+    for (let i = 0; i < 28; i++) await f.reader.read({ path: "a.ts" });
     await assert.rejects(f.reader.read({ path: "a.ts" }), { code: "RUNTIME_CAPACITY" });
   } finally {
     release();
@@ -784,7 +784,7 @@ test("should close streaming handles before preserving authority loss and delaye
           closed = true;
         });
         if (failure === "authority") lost = true;
-        else time = 15000;
+        else time = 30000;
         return handle;
       },
     );

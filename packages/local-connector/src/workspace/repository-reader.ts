@@ -16,8 +16,8 @@ const limits = {
   entries: 20000,
   directories: 512,
   bytes: 32 * 1024 * 1024,
-  callMs: 15000,
-  activeMs: 120000,
+  callMs: 30000,
+  activeMs: 300000,
 } as const;
 interface Entry {
   path: string;
