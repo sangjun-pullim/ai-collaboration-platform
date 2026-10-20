@@ -4,6 +4,7 @@ export type ConnectionPresence = "connected" | "unconfirmed" | "unavailable";
 export type ConnectionSnapshot = {
   state: ConnectionPresence;
   checkedAt: string | null;
+  validUntil?: string;
   activeCount: number;
   connectedCount: number;
   devices: {
@@ -56,13 +57,33 @@ export function connectionSnapshot(
     };
   });
   const connectedCount = devices.filter((device) => device.state === "connected").length;
+  const deadlines = active.flatMap((device, index) =>
+    devices[index].state === "connected"
+      ? [Math.min(timestamp(device.lastSeenAt) + 90_000, timestamp(device.expiresAt))]
+      : [],
+  );
   return {
     state: connectedCount > 0 ? "connected" : "unconfirmed",
     checkedAt: Number.isFinite(now) ? new Date(now).toISOString() : null,
+    ...(deadlines.length ? { validUntil: new Date(Math.min(...deadlines)).toISOString() } : {}),
     activeCount: active.length,
     connectedCount,
     devices: devices.slice(0, 5),
   };
+}
+
+/** An expired observation cannot establish whether the connector is still running. */
+export function connectionObservationExpired(snapshot: ConnectionSnapshot, now: number): boolean {
+  if (snapshot.state !== "connected") return false;
+  const deadline = snapshot.validUntil
+    ? timestamp(snapshot.validUntil)
+    : Math.min(
+        timestamp(snapshot.checkedAt) + 90_000,
+        ...snapshot.devices
+          .filter((device) => device.state === "connected")
+          .map((device) => timestamp(device.lastSeenAt) + 90_000),
+      );
+  return !Number.isFinite(deadline) || now >= deadline;
 }
 
 export function unavailableConnectionSnapshot(checkedAt: string | null): ConnectionSnapshot {

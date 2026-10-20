@@ -78,7 +78,11 @@ test("should refresh only after an explicit status action and distinguish device
         },
       }),
     },
-    react: { useTransition: () => [false, (action: () => void) => action()] },
+    react: {
+      useTransition: () => [false, (action: () => void) => action()],
+      useState: () => [Date.now(), () => {}],
+      useEffect: () => {},
+    },
     "./connection-presence": presence,
   });
   const render = exports.ConnectionStatusBar as (props: {
@@ -116,7 +120,9 @@ test("should refresh only after an explicit status action and distinguish device
   assert.match(text(initial), /90초 미만/);
   assert.match(text(initial), /현재 AI 답변을 보장하지 않습니다/);
   t.mock.timers.tick(120_000);
-  assert.match(text(render({ snapshot })), /최근 통신 확인 1\/2대/);
+  const expired = render({ snapshot });
+  assert.doesNotMatch(text(expired), /최근 통신 확인 1\/2대/);
+  assert.ok(!nodes(expired).some((node) => String(node.props.className).includes("bg-green-600")));
   assert.equal(refreshes, 0);
   const button = nodes(initial).find((node) => node.type === "button")!;
   (button.props.onClick as () => void)();
@@ -225,6 +231,75 @@ test("should project only the owned connection snapshot and fail closed without 
   assert.equal(calls, 2);
   assert.equal(authenticated, 3);
   assert.equal(sessionWrites, 0);
+});
+
+test("should age the mounted status without network requests and dispose its clock and focus listener", () => {
+  let now: number | null = null;
+  let effect: (() => () => void) | undefined;
+  let tick: (() => void) | undefined;
+  let focus: (() => void) | undefined;
+  let cleared = false;
+  let removed = false;
+  let time = Date.parse(checkedAt);
+  const exports = load(
+    "src/features/device-binding/connection-status-bar.tsx",
+    {
+      "next/link": { default: "a" },
+      "next/navigation": {
+        useRouter: () => ({ refresh: () => assert.fail("unexpected request") }),
+      },
+      react: {
+        useTransition: () => [false, () => {}],
+        useState: () => [
+          now,
+          (value: number) => {
+            now = value;
+          },
+        ],
+        useEffect: (callback: () => () => void) => {
+          effect = callback;
+        },
+      },
+      "./connection-presence": presence,
+    },
+    {
+      Date: { now: () => time },
+      setInterval: (callback: () => void, delay: number) => {
+        assert.equal(delay, 1_000);
+        tick = callback;
+        return 7;
+      },
+      clearInterval: (id: number) => {
+        assert.equal(id, 7);
+        cleared = true;
+      },
+      window: {
+        addEventListener: (name: string, callback: () => void) => {
+          assert.equal(name, "focus");
+          focus = callback;
+        },
+        removeEventListener: (name: string, callback: () => void) => {
+          assert.equal(name, "focus");
+          assert.equal(callback, focus);
+          removed = true;
+        },
+      },
+    },
+  );
+  const render = exports.ConnectionStatusBar as (props: {
+    snapshot: presence.ConnectionSnapshot;
+  }) => Node;
+  render({ snapshot });
+  const cleanup = effect!();
+  time += 90_000;
+  tick!();
+  assert.match(text(render({ snapshot })), /통신 확인 만료/);
+  time += 90_000;
+  focus!();
+  assert.equal(now, time);
+  cleanup();
+  assert.equal(cleared, true);
+  assert.equal(removed, true);
 });
 
 test("should stream status independently while preserving the page node and available height", () => {

@@ -681,7 +681,7 @@ test("should discover a terminal registration and show the approved room AI sett
   props.devices[0].lastSeenAt = new Date(time + 1).toISOString();
   for (const tick of timers.values()) tick();
   assert.equal(refreshed, beforeHeartbeat, "same-ID heartbeat should end the independent recheck");
-  assert.match(textContent(render()), /Mac과 통신하고 있습니다/);
+  assert.match(textContent(render()), /최근 Mac 통신 기록이 있습니다/);
   time += 300001;
   for (const tick of timers.values()) tick();
   assert.equal(refreshed, beforeHeartbeat);

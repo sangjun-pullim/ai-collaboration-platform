@@ -1,10 +1,12 @@
 "use client";
 
 import Link from "next/link";
-import { useTransition } from "react";
+import { useEffect, useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
 import {
   connectionTime,
+  connectionObservationExpired,
+  unavailableConnectionSnapshot,
   type ConnectionPresence,
   type ConnectionSnapshot,
 } from "./connection-presence";
@@ -15,11 +17,25 @@ const color: Record<ConnectionPresence, string> = {
   unavailable: "bg-neutral-400",
 };
 
-export function ConnectionStatusBar({ snapshot }: { snapshot: ConnectionSnapshot }) {
+export function ConnectionStatusBar({ snapshot: observed }: { snapshot: ConnectionSnapshot }) {
   const router = useRouter();
   const [pending, startTransition] = useTransition();
-  const label =
-    snapshot.state === "unavailable"
+  const [now, setNow] = useState<number | null>(null);
+  useEffect(() => {
+    const update = () => setNow(Date.now());
+    update();
+    const timer = setInterval(update, 1_000);
+    window.addEventListener("focus", update);
+    return () => {
+      clearInterval(timer);
+      window.removeEventListener("focus", update);
+    };
+  }, []);
+  const expired = now !== null && connectionObservationExpired(observed, now);
+  const snapshot = expired ? unavailableConnectionSnapshot(observed.checkedAt) : observed;
+  const label = expired
+    ? "통신 확인 만료 · 다시 확인"
+    : snapshot.state === "unavailable"
       ? "확인 불가"
       : snapshot.connectedCount > 0
         ? `최근 통신 확인 ${snapshot.connectedCount}/${snapshot.activeCount}대`
@@ -64,8 +80,8 @@ export function ConnectionStatusBar({ snapshot }: { snapshot: ConnectionSnapshot
                 뜻입니다. 현재 AI 답변을 보장하지 않습니다.
               </p>
               <p>
-                연결 종료는 즉시 반영되지 않습니다. 화면은 마지막 조회 결과이며 ‘다시 확인’을 누르면
-                갱신합니다.
+                터미널 종료는 즉시 확인할 수 없습니다. 통신 기록이 만료되면 초록 표시가 자동으로
+                꺼집니다. ‘다시 확인’으로 최신 상태를 조회하세요.
               </p>
               {snapshot.state === "unavailable" ? (
                 <p>연결 정보를 확인할 수 없습니다. 직접 다시 확인하세요.</p>
