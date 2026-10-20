@@ -1,5 +1,5 @@
 ---
-status: active
+status: done
 date: 2026-10-20
 risk-surface: public-api, permission
 ---
@@ -60,7 +60,7 @@ risk-surface: public-api, permission
 - 확인 불가 복구 재시도는 기존 관리 루프를 이용하며 무한 즉시 재시도는 만들지 않는다.
 - 아직 QUEUED인 기존 요청을 이번 복구로 다시 실행하지 않는다. 기존 기한에 따라 CANCELLED가 된 뒤 증거를 확보한다. NOT_STARTED-only 기록의 장기 보관 정책은 기존 동작을 유지하며 이번 범위에 아카이브 정책 변경을 섞지 않는다.
 
-### [ ] Step 5: 검증·출시
+### [x] Step 5: 검증·출시
 - 독립 reviewer 구현 검토 및 차단 지적 해소.
 - SQL → 웹 API → 연결 프로그램 순으로 호환성을 확인한다. 구버전 연결기는 새 오류를 일반 실패로 다루며 잘못된 종결로 해석하지 않아야 한다.
 - 버전별 공개 artifact의 digest 검증과 운영 미인증 차단 확인. 새 로컬 코드는 기존 터미널에 자동 반영되지 않으므로 새 명령으로 재실행이 필요함을 보고한다. 실행 중인 사용자 터미널을 임의 종료하지 않는다.
@@ -94,3 +94,12 @@ risk-surface: public-api, permission
 | 2 | 수정 결과 및 영향 범위 재검토 | — | 통과 | No issues found. 열린 차단 지적 없음. |
 
 구현 독립 리뷰 1회차: PASS / No issues found. 현재 권한 해제 뒤 proof 재조회 거절, 이미지 capability가 유효해도 삭제 상태의 새 실행 거절, 기존 QUEUED 요청의 native 실행 0회 검사를 포함해 검토했다. 미해결 지적 없음.
+
+## Verification Results
+- 기존 readiness 순서 실패 재현 후 수정 통과. 자동복구 connector 6개 검사 통과.
+- 실제 격리 DB/HTTP의 복구·이미지·입력 일시정지 검사 13개 통과. 추가 device removal, ABANDONED, capability 유효+이미지 삭제 거절 검사 통과. 실제 120초 큐 기한을 기다린 원래 claim 자동복구 검사 통과(127초). 실제 AI 입력 없음.
+- 웹 단위 검사 831개 중 종료 신호 타이밍에 민감한 기존 3개가 최초 실행에서 실패했고 별도 실행에서 통과했다. 별도 실행의 missing-proof 타이밍 실패도 해당 테스트 단독 실행에서 통과했다. 연결 프로그램 전체 1291개 중 기존 timeout/250ms 상태 관찰 2개는 단독 재검사에서 통과했다. 실패를 숨기기 위한 timeout 변경이나 관련 없는 코드 수정은 하지 않았다.
+- format/format:check/typecheck/lint/build 및 기존 PR65/66 보존 통합 build 완료. lint는 기존 use-virtual-history의 TanStack Virtual 경고 1건, 오류 0건이다.
+- 독립 구현 리뷰 PASS, C/H/M/L 지적 없음. PR67 생성, main 병합하지 않음.
+- SQL028 운영 적용 후 통합 배포 `dpl_2n4VimVFGrYP93Tgi6bafutueSkA` READY. 서비스 login 200, 미인증 history 401, 공개 connector 파일 전체가 검증 빌드와 일치했다. 공개 artifact SHA256 `46e8003bbc1bf2748b7be709f0256d444b36682f87ebbe3fdafd9297f4eaf5a0`.
+- 테스트 서버와 Docker 7개 종료. 사용자 연결 터미널은 유지했으며 새 로컬 코드 적용에는 최신 명령 재실행이 필요하다.
