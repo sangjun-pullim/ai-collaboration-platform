@@ -11,6 +11,17 @@ export const selectedFileLimit = 65536;
 export const repositoryFileLimit = 2 * 1024 * 1024;
 export type Check = () => void;
 
+class RepositoryContentBlocked extends RuntimeError {
+  constructor() {
+    super("TOOL_REJECTED");
+  }
+}
+
+/** Only the local content inspection creates this recoverable refusal. */
+export function isRepositoryContentBlocked(error: unknown): boolean {
+  return error instanceof RepositoryContentBlocked;
+}
+
 async function checked<T>(check: Check, action: () => Promise<T>): Promise<T> {
   check();
   const result = await action();
@@ -206,7 +217,7 @@ export async function readSafeFile(
     )
       throw new RuntimeError("TOOL_REJECTED");
     if (mode === "repository" && automaticSecretMaterial(text, path))
-      throw new RuntimeError("TOOL_REJECTED");
+      throw new RepositoryContentBlocked();
     result = {
       text,
       bytes,

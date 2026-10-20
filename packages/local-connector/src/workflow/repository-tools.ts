@@ -1,5 +1,6 @@
 import { AsyncLocalStorage } from "node:async_hooks";
 import { RepositoryReader, isRepositoryTimeLimit } from "../workspace/repository-reader.ts";
+import { isRepositoryContentBlocked } from "../workspace/safe-file-reader.ts";
 import { repositoryMode } from "../workspace/repository-access.ts";
 import { isRepositoryTool, validateToolArguments } from "../workspace/tool-contracts.ts";
 import {
@@ -99,13 +100,15 @@ export class RepositoryTools {
         } else throw new RuntimeError("TOOL_REJECTED");
       } catch (error) {
         guard();
-        if (!isRepositoryTimeLimit(error)) throw error;
+        const contentBlocked = isRepositoryContentBlocked(error);
+        if (!isRepositoryTimeLimit(error) && !contentBlocked) throw error;
         success = false;
         files = [];
         data = {
-          error: "REPOSITORY_TIME_LIMIT",
-          message:
-            "Repository access stopped at its time limit. Narrow the directory or use evidence already returned. If further reads are unavailable, explain the incomplete inspection.",
+          error: contentBlocked ? "REPOSITORY_CONTENT_BLOCKED" : "REPOSITORY_TIME_LIMIT",
+          message: contentBlocked
+            ? "This file was withheld by the content protection check. Do not retry or bypass this restriction. Continue with other permitted files and explain that this file could not be inspected."
+            : "Repository access stopped at its time limit. Narrow the directory or use evidence already returned. If further reads are unavailable, explain the incomplete inspection.",
         };
       }
       guard();
