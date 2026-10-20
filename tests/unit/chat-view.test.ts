@@ -4,6 +4,7 @@ import { readFileSync } from "node:fs";
 import { runInNewContext } from "node:vm";
 import ts from "typescript";
 import * as contracts from "../../src/features/investigation-coordinator/contracts.ts";
+import * as diagnosticsContracts from "../../src/features/investigation-coordinator/run-diagnostics-contracts.ts";
 import * as intents from "../../src/features/investigation-coordinator/direct-intents.ts";
 import * as historyWindows from "../../src/features/investigation-coordinator/history-window-contracts.ts";
 import {
@@ -226,12 +227,14 @@ async function harness(
             throw new Error("Unexpected history window request");
           },
         };
+      if (name === "./run-diagnostics-client") return { callRunDiagnostics: undefined };
+      if (name === "./run-diagnostics-contracts.ts") return diagnosticsContracts;
       if (["./history-window-contracts", "./history-window-contracts.ts"].includes(name))
         return historyWindows;
       if (["./direct-intents", "./direct-intents.ts"].includes(name)) return intents;
       if (["./history-state", "./history-state.ts"].includes(name))
         return { emptyHistory, mergeHistory, recordRetirements, recoverySnapshot };
-      if (name === "./chat-presentation")
+      if (["./chat-presentation", "./chat-presentation.ts"].includes(name))
         return {
           ...presentation,
           answerStatuses: (context: presentation.AnswerStatusContext) => {

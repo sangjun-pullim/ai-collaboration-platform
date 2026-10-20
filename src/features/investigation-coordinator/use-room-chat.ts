@@ -6,6 +6,7 @@ import { RoomRealtime } from "./room-realtime";
 import { chatSessionEvent } from "./chat-session-cleanup";
 import { callInvestigation } from "./investigation-client";
 import { callHistoryWindow } from "./history-window-client";
+import { callRunDiagnostics } from "./run-diagnostics-client";
 import { RoomChatController, type RoomChatActor } from "./room-chat-controller";
 
 export function useRoomChat({ userId, roomId, role }: RoomChatActor) {
@@ -16,6 +17,7 @@ export function useRoomChat({ userId, roomId, role }: RoomChatActor) {
         callInvestigation,
         undefined,
         callHistoryWindow,
+        callRunDiagnostics,
       ),
     [userId, roomId, role],
   );
@@ -103,5 +105,6 @@ export function useRoomChat({ userId, roomId, role }: RoomChatActor) {
     loseAccess: controller.loseAccess,
     confirmStoredConflict: controller.confirmStoredConflict,
     loadOlder: controller.loadOlder,
+    retryDiagnostics: controller.retryDiagnostics,
   };
 }
