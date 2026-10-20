@@ -155,7 +155,65 @@ test("should preserve confirmed settings when only the outer status poll is unav
   }
 });
 
-/** This HTTP fixture exercises the real client's projection, not an actual DB transaction. */
+for (const configured of [false, true]) {
+  for (const rootChosen of [false, true]) {
+    test(`should ${rootChosen ? "preserve" : "close"} cancelled unknown folder setup with root ${rootChosen} and configured AI ${configured}`, async () => {
+      const f = await fixture();
+      try {
+        if (configured) {
+          await local(f);
+          await f.manager().run({ once: true });
+          const operationId = uuid();
+          f.response.operation = {
+            operationId,
+            deviceId: f.response.deviceId,
+            expectedConfigRevision: f.response.configRevision,
+            state: "REQUESTED",
+            receipt: null,
+            requested: {
+              operationId,
+              deviceId: f.response.deviceId,
+              expectedConfigRevision: f.response.configRevision,
+              runtime: "codex",
+            },
+          };
+        }
+        const current = (await f.store.read())?.current ?? null;
+        const prepares = f.prepares,
+          catalogs = f.catalogs;
+        await f
+          .manager({
+            folder: async () => {
+              if (!rootChosen) throw new SettingsError("UNAVAILABLE");
+              return { status: "SELECTED", root: f.policy.root };
+            },
+            confirm: async () => {
+              throw new SettingsError("UNAVAILABLE");
+            },
+          })
+          .run({ once: true });
+        assert.equal((await f.store.read())!.journal!.phase, "UNKNOWN");
+        // An unknown request is never implicitly cancelled without an owner's cancellation.
+        await f.manager().run({ once: true });
+        assert.equal((await f.store.read())!.journal!.phase, "UNKNOWN");
+        f.response.operation!.state = "CANCELLED";
+        const status = await f
+          .manager({
+            folder: async () => assert.fail("recovery must not reopen the picker"),
+            adapter: () => assert.fail("recovery must not create AI work"),
+          })
+          .run({ once: true });
+        assert.equal(status.state, rootChosen ? "UNKNOWN" : "CANCELLED");
+        assert.deepEqual((await f.store.read())!.current, current);
+        assert.equal(f.prepares, prepares);
+        assert.equal(f.catalogs, catalogs);
+      } finally {
+        await f.close();
+      }
+    });
+  }
+}
+
 for (const mismatch of [false, true]) {
   test(`should recover the ${mismatch ? "cleanup" : "preparation"} status read without replaying AI work`, async (t) => {
     const f = await fixture();
@@ -182,7 +240,7 @@ for (const mismatch of [false, true]) {
       });
       const status = await f.manager().run({ once: true });
       assert.equal(failed, true);
-      assert.equal(status.state, mismatch ? "CANCELLED" : "APPLIED");
+      assert.equal(status.state, mismatch ? "CANCELLED" : "APPLIED", JSON.stringify(status));
       assert.equal(f.prepares, mismatch ? 0 : 1);
       assert.equal(
         f.requests.some((r) => r.body.state === "UNKNOWN"),
@@ -246,6 +304,7 @@ test("should finish the same once runner after a transient status read failure",
   }
 });
 
+/** This HTTP fixture exercises the real client's projection, not an actual DB transaction. */
 async function fixture(provider: "codex" | "claude" = "codex", profileName = "one") {
   const f = await runtimeFixture();
   const profile = new StateStore(f.stateDir, profileName);
