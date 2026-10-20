@@ -495,7 +495,9 @@ export function ConnectionManager({
                 Mac 연결
               </h2>
               <div className="flex items-center gap-2">
-                {recent && <span className="text-sm text-emerald-700">최근 통신 확인</span>}
+                <span className={`text-sm ${recent ? "text-emerald-700" : "text-amber-700"}`}>
+                  {recent ? "최근 90초 내 통신 기록 있음" : "현재 통신 확인 필요"}
+                </span>
                 {recent && (
                   <Button
                     type="button"
@@ -522,6 +524,23 @@ export function ConnectionManager({
                 </Button>
               </div>
             </div>
+            {observedDevice && (
+              <div className="space-y-1 text-xs text-neutral-600">
+                <p>
+                  마지막 PC 통신:{" "}
+                  {observedDevice.lastSeenAt
+                    ? new Date(observedDevice.lastSeenAt).toLocaleString("ko-KR", {
+                        timeZone: "Asia/Seoul",
+                      })
+                    : "기록 없음"}{" "}
+                  (한국 시간)
+                </p>
+                <p>
+                  이 표시는 마지막 통신 기록입니다. 터미널을 종료했다면 연결 프로그램도 종료될 수
+                  있습니다. AI 사용 가능 여부와 설정 취소 완료는 별도로 확인합니다.
+                </p>
+              </div>
+            )}
             <ConnectionRecoveryPanel
               userId={userId}
               roomId={roomId}
@@ -611,14 +630,9 @@ export function ConnectionManager({
                 : awaitingRegistration
                   ? "다음: 실행 중인 터미널에서 내 계정과 방을 확인하고 yes를 입력하세요."
                   : recent
-                    ? "Mac과 통신하고 있습니다. 아래에서 AI와 폴더를 설정하세요."
+                    ? "최근 Mac 통신 기록이 있습니다. 아래에서 AI와 폴더를 설정하세요."
                     : "Mac에서 연결 명령을 실행하세요. 실행한 터미널은 계속 열어 두세요."}
             </p>
-            {!recent && settingsDevice?.lastSeenAt && (
-              <p className="text-xs text-neutral-500">
-                마지막 수신: {new Date(settingsDevice.lastSeenAt).toLocaleString("ko-KR")}
-              </p>
-            )}
             <div
               tabIndex={-1}
               id="mac-connection"

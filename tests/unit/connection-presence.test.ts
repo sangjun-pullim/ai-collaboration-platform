@@ -3,6 +3,7 @@ import assert from "node:assert/strict";
 import {
   connectionSnapshot,
   connectionTime,
+  connectionObservationExpired,
   unavailableConnectionSnapshot,
 } from "../../src/features/device-binding/connection-presence.ts";
 import type { OwnedDevice } from "../../src/features/device-binding/contracts.ts";
@@ -17,6 +18,26 @@ const device = (changes: Partial<OwnedDevice> = {}): OwnedDevice => ({
   lastSeenAt: now,
   expiresAt: "2026-10-12T03:00:00.000Z",
   ...changes,
+});
+
+test("should expire observations at the earliest heartbeat or credential deadline including hidden devices", () => {
+  const devices = Array.from({ length: 6 }, () => device());
+  devices[5] = device({ expiresAt: "2026-10-12T02:00:10.000Z" });
+  const snapshot = connectionSnapshot({ devices, rooms: [] }, now);
+  assert.equal(snapshot.devices.length, 5);
+  assert.equal(connectionObservationExpired(snapshot, Date.parse(now) + 9_999), false);
+  assert.equal(connectionObservationExpired(snapshot, Date.parse(now) + 10_000), true);
+  const oldHeartbeat = connectionSnapshot(
+    { devices: [device({ lastSeenAt: "2026-10-12T01:58:31.000Z" })], rooms: [] },
+    now,
+  );
+  assert.equal(connectionObservationExpired(oldHeartbeat, Date.parse(now) + 1_000), true);
+  assert.equal(connectionObservationExpired(snapshot, Date.parse(now) + 90_000), true);
+  assert.equal(snapshot.connectedCount, 6);
+  assert.equal(
+    connectionObservationExpired(unavailableConnectionSnapshot(now), Date.parse(now)),
+    false,
+  );
 });
 
 test("should mark only a current authenticated recent device green", () => {
