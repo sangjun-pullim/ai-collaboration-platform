@@ -1,5 +1,5 @@
 ---
-status: active
+status: done
 date: 2026-10-19
 risk-surface: permission, public-api, db-schema
 ---
@@ -65,7 +65,7 @@ risk-surface: permission, public-api, db-schema
 - 아래에서 최신을 읽는 사용자는 기존 follow 동작을 유지한다. 과거 기록을 읽는 사용자는 새 메시지가 와도 아래로 강제 이동하지 않는다.
 - 아직 불러오지 않은 원문으로 이동하려는 경우 이전 내역 로딩 안내를 보여 준다. 과거 데이터를 현재 상태라고 오인시키는 안내를 만들지 않는다.
 
-### [ ] Step 4: 검증·문서·배포
+### [x] Step 4: 검증·문서·배포
 
 - 아래 필수 검사를 수행하고 독립 reviewer가 권한·커서·상태·경쟁 조건을 검토한다. 수정 후 영향받는 검사를 반복한다.
 - 기존 승인된 운영 배포 절차로 DB 확장 → 웹 배포 순서로 반영한다. 기존 복구 수정 PR65가 배포에서 빠지지 않도록 배포 통합 기준을 확인한다. main 병합은 별도 명시적 승인 없이 하지 않는다.
@@ -100,3 +100,14 @@ risk-surface: permission, public-api, db-schema
 구현 리뷰 1회차: 마지막 이전 페이지에서 목록 앞의 버튼 영역이 사라져 읽던 메시지가44px 위로 이동하는 지적을 ACCEPTED했다. 실제 브라우저 테스트 `should preserve the reading anchor when the final older page removes the loader`에서 delta -44로 재현했다. 마지막 페이지에서도 같은 높이에 `대화 시작`을 표시하여 가상 목록의 시작 위치를 유지한다. 2회차 독립 reviewer가 RESOLVED를 확인했다.
 
 같은 1회차의 최근 초기화 분기 이후 gap 복구·독립 정리 커서 검증 누락도 ACCEPTED했다. 초기61..100/정리32 → 이벤트102 먼저 도착/정리64 → 이전21..60 → 이벤트101복구를 controller 테스트로 추가했다. cursor102·정리64·gapfalse·이전floor21을 확인했다. 2회차 독립 reviewer가 RESOLVED를 확인했다. 다른 C/H 지적 없음. 변경되지 않은 권한·계약 코드는 1회차 리뷰를 재사용했다.
+
+## Completion Evidence
+
+- 단위835개, format/check, typecheck, build 통과. lint 오류0이며 기존 TanStack Virtual 메모이제이션 경고1개는 유지했다.
+- 실제 격리 DB·브라우저2건 통과: 합성1만 이벤트, 1440/390px, 최대40개·256KiB, 이전 strict 경계, 접근 철회·정지 계정·사용자 불일치, 동시 새 메시지, 마지막 페이지, 늦은 이미지 높이, 미로딩 원문 안내, 재입장.
+- 기존2천개 가변 높이 대화 회귀 통과. 로컬 최초 표시644/433ms, 재입장228/317ms. 테스트 준비 실패는 로컬 REST가 ES256만 허용하는데 HS256 테스트 키를 사용한 환경 문제였으며 해당 격리 스택의 ES256 키로 재검증했다. 운영 인증 설정은 변경하지 않았다.
+- 기존 PR65와 통합한 배포본 빌드 및 관련43개 테스트 통과. 기존 연결기 변경의 독립 리뷰·1287개 검사 결과는 코드가 같아 재사용했다. 사용자 원본 next-env.d.ts는 변경하지 않았다.
+- 운영 migration027 SHA-256 `d18509c11b7ac218d6a3be0794fa8a91e5aa28610e475871cf32c5e086fb937e` 적용 후 SQL 내용 일치, anon 실행 불가·authenticated 실행 가능 확인.
+- Vercel `dpl_5cTx7VqjoprNbeBSEJxGiqb49TNd` Ready, 운영 alias 반영 확인. 로그인200·미인증 history401/private-no-store, 공개 연결기 아카이브 무결성과 검토한 통합본의 모든 파일 내용 일치 확인.
+- PR66: https://github.com/sangjun-pullim/ai-collaboration-platform/pull/66 . main은 병합하지 않았다. 기존 PR65를 포함한 `release/chat-history-20261019`의 `10ed2aa`를 운영 배포했다.
+- 앱 전용 로컬 Docker7개와 검사 웹 서버를 종료했다. 실제 AI 호출과 운영 채팅 변경은 하지 않았다.
