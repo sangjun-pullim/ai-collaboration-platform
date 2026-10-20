@@ -200,7 +200,12 @@ function numericLiteralEnd(text: string, start: number): number | null {
 // Pure inspection: no I/O, evaluation, clock access, or externally visible initialization changes.
 // The outer cursor only advances; literal/bare-value scans consume their region once.
 export function automaticSecretMaterial(text: string, path: string): boolean {
-  if (otherSecretPattern.test(text) || jwtMaterial(text)) return true;
+  // This complete Markdown span contains a scheme name, not a credential.
+  // Separate its closing delimiter from following prose without altering real values.
+  const credentialText = /\.mdx?$/i.test(path)
+    ? text.replace(/(`Authorization:[ \t]*Bearer`)/gi, "$1 ")
+    : text;
+  if (otherSecretPattern.test(credentialText) || jwtMaterial(text)) return true;
   const yaml = /\.ya?ml$/i.test(path);
   let index = 0;
   while (index < text.length) {
